@@ -1,0 +1,56 @@
+import { db } from "../db";
+import { eq, and, desc, count } from "drizzle-orm";
+import { products, productCategories, type InsertProduct, type InsertProductCategory } from "@shared/schema";
+
+export const productStorage = {
+  async getProductCategories(tenantId: number) {
+    return db
+      .select()
+      .from(productCategories)
+      .where(eq(productCategories.tenantId, tenantId))
+      .orderBy(productCategories.sortOrder);
+  },
+  async createProductCategory(data: InsertProductCategory) {
+    const [cat] = await db.insert(productCategories).values(data).returning();
+    return cat;
+  },
+  async getProducts(tenantId: number) {
+    return db
+      .select()
+      .from(products)
+      .where(eq(products.tenantId, tenantId))
+      .orderBy(desc(products.createdAt));
+  },
+  async getProductById(id: number, tenantId: number) {
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.id, id), eq(products.tenantId, tenantId)));
+    return product;
+  },
+  async createProduct(data: InsertProduct) {
+    const [product] = await db.insert(products).values(data).returning();
+    return product;
+  },
+  async updateProduct(id: number, tenantId: number, data: Partial<InsertProduct>) {
+    const [product] = await db
+      .update(products)
+      .set(data)
+      .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
+      .returning();
+    return product;
+  },
+  async toggleProductActive(id: number, tenantId: number, isActive: boolean) {
+    await db
+      .update(products)
+      .set({ isActive })
+      .where(and(eq(products.id, id), eq(products.tenantId, tenantId)));
+  },
+  async countProducts(tenantId: number) {
+    const [result] = await db
+      .select({ count: count() })
+      .from(products)
+      .where(eq(products.tenantId, tenantId));
+    return result?.count || 0;
+  },
+};
