@@ -21,9 +21,14 @@ function parseLocalFile(logoUrl?: string | null) {
   return null;
 }
 
-function resolveColumns(columns: string[]) {
+function resolveColumns(columns: string[]): InvoiceColumnKey[] {
   const unique = Array.from(new Set(columns));
-  return unique.filter((col) => ALLOWED_COLUMNS.includes(col as InvoiceColumnKey)) as InvoiceColumnKey[];
+  const filtered = unique.filter((col) => ALLOWED_COLUMNS.includes(col as InvoiceColumnKey)) as InvoiceColumnKey[];
+  return filtered.length ? filtered : (["code", "quantity", "product", "price", "discount", "total"] as InvoiceColumnKey[]);
+}
+
+function resolveInvoiceTemplate(templateKey?: string | null) {
+  return templateKey === "B_COMPACT" ? "B_COMPACT" : "B_STANDARD";
 }
 
 export async function generateInvoiceBPdf(tenantId: number) {
@@ -62,6 +67,8 @@ export async function generateInvoiceBPdf(tenantId: number) {
     tableHeaderSize: number;
     rowHeight: number;
   };
+  const invoiceTemplate = resolveInvoiceTemplate(settings.templateKey);
+  const isCompact = invoiceTemplate === "B_COMPACT";
 
   const PDFDocument = (await import("pdfkit")).default;
   const doc = new PDFDocument({
@@ -79,9 +86,15 @@ export async function generateInvoiceBPdf(tenantId: number) {
   const subheader = sanitizeText(settings.subheaderText || "", 120);
   const footerText = sanitizeText(settings.footerText || "", 160);
 
-  doc.rect(doc.page.margins.left, doc.page.margins.top - 10, pageWidth, 48).fill(primaryColor);
-  doc.fillColor("#ffffff").fontSize(styles.headerSize).text(businessName, doc.page.margins.left + 12, doc.page.margins.top + 4);
-  doc.fontSize(styles.subheaderSize).text(headerTitle, doc.page.margins.left + 12, doc.page.margins.top + 24);
+  if (isCompact) {
+    doc.rect(doc.page.margins.left, doc.page.margins.top - 12, pageWidth, 5).fill(primaryColor);
+    doc.fillColor(primaryColor).fontSize(styles.headerSize).text(headerTitle, doc.page.margins.left, doc.page.margins.top + 6);
+    doc.fillColor("#111111").fontSize(Math.max(10, styles.subheaderSize - 1)).text(businessName, doc.page.margins.left, doc.page.margins.top + 24);
+  } else {
+    doc.rect(doc.page.margins.left, doc.page.margins.top - 10, pageWidth, 48).fill(primaryColor);
+    doc.fillColor("#ffffff").fontSize(styles.headerSize).text(businessName, doc.page.margins.left + 12, doc.page.margins.top + 4);
+    doc.fontSize(styles.subheaderSize).text(headerTitle, doc.page.margins.left + 12, doc.page.margins.top + 24);
+  }
   doc.fillColor("#000000");
 
   if (logoPath) {
@@ -92,7 +105,7 @@ export async function generateInvoiceBPdf(tenantId: number) {
     }
   }
 
-  let cursorY = doc.page.margins.top + 60;
+  let cursorY = doc.page.margins.top + (isCompact ? 48 : 60);
 
   doc.fontSize(10).fillColor("#111111");
   doc.text(`Fecha: ${new Date().toLocaleDateString("es-AR")}`, doc.page.margins.left, cursorY);
@@ -108,13 +121,13 @@ export async function generateInvoiceBPdf(tenantId: number) {
 
   fiscalLines.forEach((line) => {
     doc.text(line, doc.page.margins.left, cursorY);
-    cursorY += 14;
+    cursorY += isCompact ? 12 : 14;
   });
 
   if (subheader) {
     cursorY += 6;
     doc.fontSize(9).fillColor("#444444").text(subheader, doc.page.margins.left, cursorY);
-    cursorY += 18;
+    cursorY += isCompact ? 14 : 18;
   }
 
   const columnWeights: Record<InvoiceColumnKey, number> = {
@@ -128,6 +141,8 @@ export async function generateInvoiceBPdf(tenantId: number) {
 
   const totalWeight = columns.reduce((sum, col) => sum + columnWeights[col], 0);
   const columnWidths = columns.map((col) => (pageWidth * columnWeights[col]) / totalWeight);
+
+  const rowHeight = isCompact ? Math.max(14, styles.rowHeight - 3) : styles.rowHeight;
 
   doc.fontSize(styles.tableHeaderSize).fillColor("#111111");
   let x = doc.page.margins.left;
@@ -143,14 +158,14 @@ export async function generateInvoiceBPdf(tenantId: number) {
     doc.text(columnLabels[col], x + 4, cursorY, { width: columnWidths[idx] - 8, align: "left" });
     x += columnWidths[idx];
   });
-  cursorY += styles.rowHeight;
+  cursorY += rowHeight;
   doc.moveTo(doc.page.margins.left, cursorY - 4).lineTo(doc.page.width - doc.page.margins.right, cursorY - 4).strokeColor(primaryColor).lineWidth(1).stroke();
 
   doc.fontSize(styles.fontSize).fillColor("#111111");
   let totalAmount = 0;
 
   for (const item of items) {
-    if (cursorY + styles.rowHeight > doc.page.height - doc.page.margins.bottom - 50) {
+    if (cursorY + rowHeight > doc.page.height - doc.page.margins.bottom - 50) {
       doc.addPage();
       cursorY = doc.page.margins.top;
     }
@@ -167,12 +182,12 @@ export async function generateInvoiceBPdf(tenantId: number) {
     columns.forEach((col, idx) => {
       doc.text(rowValues[col], x + 4, cursorY, {
         width: columnWidths[idx] - 8,
-        height: styles.rowHeight,
+        height: rowHeight,
         ellipsis: true,
       });
       x += columnWidths[idx];
     });
-    cursorY += styles.rowHeight;
+    cursorY += rowHeight;
   }
 
   if (settings.showFooterTotals) {
