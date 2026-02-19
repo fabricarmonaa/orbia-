@@ -230,6 +230,7 @@ export default function DeliveryPanel() {
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex items-center justify-between gap-4 h-14">
             <div className="flex items-center gap-3">
+              <img src="/icons/tenant/icon-180.png" alt="Orbia" className="w-6 h-6 rounded" />
               <Truck className="w-5 h-5 text-primary" />
               <div className="min-w-0">
                 <p className="font-bold text-sm truncate">{agent.firstName} {agent.lastName}</p>

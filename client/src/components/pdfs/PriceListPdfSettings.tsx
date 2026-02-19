@@ -31,11 +31,15 @@ const columnLabels: Record<PdfColumnKey, string> = {
   branch_stock: "Stock por sucursal",
 };
 
-const templateOptions = [
+const priceListTemplateOptions = [
   { value: "CLASSIC", label: "Clásico" },
   { value: "MODERN", label: "Moderno" },
   { value: "MINIMAL", label: "Minimal" },
-  { value: "INVOICE_B", label: "Factura B" },
+];
+
+const invoiceTemplateOptions = [
+  { value: "B_STANDARD", label: "B estándar" },
+  { value: "B_COMPACT", label: "B compacto" },
 ];
 
 const invoiceColumnLabels: Record<InvoiceColumnKey, string> = {
@@ -55,18 +59,25 @@ export function PriceListPdfSettings() {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const { toast } = useToast();
-  const { plan } = usePlan();
+  const { plan, loading: loadingPlan } = usePlan();
   const isEscala = (plan?.planCode || "").toUpperCase() === "ESCALA";
   const isEconomic = (plan?.planCode || "").toUpperCase() === "ECONOMICO";
 
   useEffect(() => {
+    if (loadingPlan) return;
     fetchSettings();
-  }, []);
+  }, [loadingPlan, isEscala, isEconomic]);
 
   async function fetchSettings() {
     try {
       const data = await getPdfSettings();
       if (!isEscala && data.documentType === "INVOICE_B") data.documentType = "PRICE_LIST";
+      if (data.documentType === "INVOICE_B" && !["B_STANDARD", "B_COMPACT"].includes(data.templateKey)) {
+        data.templateKey = "B_STANDARD";
+      }
+      if (data.documentType === "PRICE_LIST" && !["CLASSIC", "MODERN", "MINIMAL"].includes(data.templateKey)) {
+        data.templateKey = "CLASSIC";
+      }
       if (isEconomic) data.showLogo = false;
       setSettings(data);
     } catch (err: any) {
@@ -99,6 +110,15 @@ export function PriceListPdfSettings() {
       active = false;
     };
   }, [settings?.documentType, previewKey]);
+
+  useEffect(() => {
+    if (!settings) return;
+    const isInvoice = settings.documentType === "INVOICE_B";
+    const allowed = isInvoice ? ["B_STANDARD", "B_COMPACT"] : ["CLASSIC", "MODERN", "MINIMAL"];
+    if (!allowed.includes(settings.templateKey)) {
+      setSettings({ ...settings, templateKey: isInvoice ? "B_STANDARD" : "CLASSIC" });
+    }
+  }, [settings]);
 
   function updateColumnOrder(listKey: "columns" | "invoiceColumns", index: number, direction: "up" | "down") {
     if (!settings) return;
@@ -154,6 +174,7 @@ export function PriceListPdfSettings() {
   }
 
   const isInvoice = settings.documentType === "INVOICE_B";
+  const availableTemplates = isInvoice ? invoiceTemplateOptions : priceListTemplateOptions;
 
   return (
     <Card>
@@ -204,7 +225,7 @@ export function PriceListPdfSettings() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {templateOptions.map((opt) => (
+                    {availableTemplates.map((opt) => (
                       <SelectItem key={opt.value} value={opt.value}>
                         {opt.label}
                       </SelectItem>

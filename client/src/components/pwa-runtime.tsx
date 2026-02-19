@@ -15,7 +15,7 @@ function getPanelMeta(path: string): PanelMeta {
     return {
       manifestHref: "/manifest-delivery.json",
       themeColor: "#0f172a",
-      faviconHref: "/icons/delivery/favicon.ico",
+      faviconHref: "/icons/tenant/favicon.ico?v=20260219",
       appleTouchHref: "/icons/delivery/icon-180.png",
       defaultTitle: "ORBIA - DELIVERY",
     };
@@ -25,7 +25,7 @@ function getPanelMeta(path: string): PanelMeta {
     return {
       manifestHref: "/manifest-owner.json",
       themeColor: "#111827",
-      faviconHref: "/icons/admin/favicon.ico",
+      faviconHref: "/icons/tenant/favicon.ico?v=20260219",
       appleTouchHref: "/icons/admin/icon-180.png",
       defaultTitle: "ORBIA - ADMINISTRACIÓN",
     };
@@ -34,7 +34,7 @@ function getPanelMeta(path: string): PanelMeta {
   return {
     manifestHref: "/manifest-tenant.json",
     themeColor: "#0f172a",
-    faviconHref: "/icons/tenant/favicon.ico",
+    faviconHref: "/icons/tenant/favicon.ico?v=20260219",
     appleTouchHref: "/icons/tenant/icon-180.png",
     defaultTitle: "ORBIA - PANEL CENTRAL",
   };

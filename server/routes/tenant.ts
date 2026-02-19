@@ -1,11 +1,19 @@
 import type { Express } from "express";
 import { storage } from "../storage";
-import { tenantAuth, getTenantPlan, enforceBranchScope, blockBranchScope, requireTenantAdmin } from "../auth";
+import { tenantAuth, getTenantPlan, enforceBranchScope, blockBranchScope, requireTenantAdmin, comparePassword } from "../auth";
 import { profileUpload } from "./uploads";
 import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
+import bcrypt from "bcryptjs";
+
+
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(6).max(128),
+  newPassword: z.string().min(8).max(128),
+  confirmPassword: z.string().min(8).max(128),
+});
 
 const tenantConfigSchema = z.object({
   businessName: z.string().trim().max(80).optional(),
@@ -47,6 +55,27 @@ export function registerTenantRoutes(app: Express) {
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/me/password", tenantAuth, async (req, res) => {
+    try {
+      const { currentPassword, newPassword, confirmPassword } = changePasswordSchema.parse(req.body || {});
+      if (newPassword !== confirmPassword) {
+        return res.status(400).json({ error: "La confirmación no coincide", code: "PASSWORD_CONFIRM_MISMATCH" });
+      }
+      const user = await storage.getUserById(req.auth!.userId, req.auth!.tenantId!);
+      if (!user) return res.status(404).json({ error: "Usuario no encontrado", code: "USER_NOT_FOUND" });
+      const ok = await comparePassword(currentPassword, user.password);
+      if (!ok) return res.status(401).json({ error: "La contraseña actual es incorrecta", code: "PASSWORD_CURRENT_INVALID" });
+      const hashed = await bcrypt.hash(newPassword, 12);
+      await storage.updateUser(user.id, req.auth!.tenantId!, { password: hashed });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "PASSWORD_INVALID" });
+      }
+      return res.status(500).json({ error: "No se pudo cambiar la contraseña", code: "PASSWORD_CHANGE_ERROR" });
     }
   });
 
@@ -154,8 +183,15 @@ export function registerTenantRoutes(app: Express) {
         allOrders = await storage.getOrders(tenantId);
       }
       const statuses = await storage.getOrderStatuses(tenantId);
-      const finalStatusIds = statuses.filter((s) => s.isFinal).map((s) => s.id);
-      const openOrders = allOrders.filter((o) => !finalStatusIds.includes(o.statusId!)).length;
+      const pendingLikeStatusIds = new Set(
+        statuses
+          .filter((s) => {
+            const normalized = (s.name || "").trim().toUpperCase();
+            return normalized === "PENDIENTE" || normalized === "EN_PROCESO" || normalized === "EN PROCESO";
+          })
+          .map((s) => s.id)
+      );
+      const openOrders = allOrders.filter((o) => o.statusId && pendingLikeStatusIds.has(o.statusId)).length;
 
       res.json({
         data: {
