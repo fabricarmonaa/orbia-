@@ -64,6 +64,26 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
   const handleStartRecording = useCallback(async () => {
     setError(null);
     try {
+
+      if (!window.isSecureContext) {
+        setError("El micrófono requiere HTTPS o localhost seguro.");
+        return;
+      }
+
+      if (window.self !== window.top) {
+        setError("El micrófono no se puede usar dentro de iframes.");
+        return;
+      }
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError("Tu navegador no soporta captura de audio.");
+        return;
+      }
+      const permissionsPolicy = (document as any).permissionsPolicy || (document as any).featurePolicy;
+      if (permissionsPolicy?.allowsFeature && !permissionsPolicy.allowsFeature("microphone")) {
+        setError("El navegador bloqueó el micrófono por política de permisos del sitio. Abrí Orbia en una pestaña normal (no embebido) y verificá que el servidor permita microphone.");
+        return;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           channelCount: 1,  // Mono
@@ -110,6 +130,8 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
         }
 
         setProcessing(true);
+        const estimatedDurationSec = Math.max(1, Math.round(blob.size / 3000));
+        console.debug("[stt] audio_blob", { size: blob.size, type: blob.type, estimatedDurationSec });
         try {
           const arrayBuffer = await blob.arrayBuffer();
           const base64 = btoa(
@@ -124,8 +146,14 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
             return;
           }
 
+          console.debug("[stt] request", { base64Bytes: base64.length, context });
           const res = await apiRequest("POST", "/api/ai/stt", { audio: base64, context });
+          const contentType = res.headers.get("content-type") || "";
+          if (!contentType.includes("application/json")) {
+            throw new Error("Respuesta inválida del backend (no JSON)");
+          }
           const data = await res.json();
+          console.debug("[stt] response", { ok: true, context, hasIntent: !!data?.data?.intent });
           setResult(data.data);
           setEditedIntent({ ...data.data.intent });
         } catch (err: any) {
@@ -141,7 +169,11 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
       recorder.start();
       setMediaRecorder(recorder);
       setRecording(true);
-    } catch {
+    } catch (err: any) {
+      if (err?.name === "NotAllowedError") {
+        setError("El navegador bloqueó el micrófono por política de permisos del sitio. Abrí Orbia en una pestaña normal (no embebido) y verificá que el servidor permita microphone.");
+        return;
+      }
       setError("No se pudo acceder al micrófono. Verificá los permisos del navegador.");
     }
   }, [context]);

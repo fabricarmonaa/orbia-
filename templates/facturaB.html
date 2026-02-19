@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>Factura B</title>
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; }
+  </style>
+</head>
+<body>
+  <h1>FACTURA B</h1>
+  <section>
+    <p><strong>Emisor:</strong> {{fiscalName}}</p>
+    <p><strong>CUIT:</strong> {{fiscalCuit}}</p>
+    <p><strong>Domicilio:</strong> {{fiscalAddress}}</p>
+    <p><strong>Condición IVA:</strong> {{fiscalIvaCondition}}</p>
+    <p><strong>Fecha:</strong> {{invoiceDate}}</p>
+    <p><strong>Punto de venta:</strong> {{pointOfSale}}</p>
+    <p><strong>Comprobante:</strong> {{voucherNumber}}</p>
+  </section>
+  <section>
+    <p><strong>Receptor:</strong> {{receiverName}}</p>
+    <p><strong>CUIT/DNI:</strong> {{receiverTaxId}}</p>
+    <p><strong>Domicilio:</strong> {{receiverAddress}}</p>
+  </section>
+  <table>
+    <thead>
+      <tr><th>Cantidad</th><th>Descripción</th><th>Precio Unitario</th><th>Bonificación</th><th>Importe</th></tr>
+    </thead>
+    <tbody>{{rows}}</tbody>
+  </table>
+  <p><strong>Subtotal:</strong> {{subtotal}}</p>
+  <p><strong>Impuestos:</strong> {{taxes}}</p>
+  <p><strong>TOTAL:</strong> {{grandTotal}}</p>
+  <p>{{observations}}</p>
+</body>
+</html>

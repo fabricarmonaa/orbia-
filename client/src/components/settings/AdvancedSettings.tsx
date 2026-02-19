@@ -24,7 +24,7 @@ export function AdvancedSettings() {
         </Card>
         <Card>
           <CardHeader>
-            <h3 className="font-semibold">Usuarios / Sub-tenants</h3>
+            <h3 className="font-semibold">Usuarios de sucursales</h3>
             <p className="text-sm text-muted-foreground">Gestiona usuarios por sucursal</p>
           </CardHeader>
           <CardContent>

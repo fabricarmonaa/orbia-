@@ -27,16 +27,18 @@ if BACKEND_URL:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[BACKEND_URL],
-        allow_methods=["POST", "GET"],
-        allow_headers=["*"],
+        allow_methods=["POST", "GET", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        allow_credentials=True,
     )
 else:
     # Development fallback
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["POST", "GET"],
-        allow_headers=["*"],
+        allow_methods=["POST", "GET", "OPTIONS"],
+        allow_headers=["Content-Type", "Authorization"],
+        allow_credentials=True,
     )
 
 
