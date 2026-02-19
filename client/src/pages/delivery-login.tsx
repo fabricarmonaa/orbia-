@@ -51,7 +51,7 @@ export default function DeliveryLogin() {
             <Truck className="w-6 h-6 text-primary-foreground" />
           </div>
           <h1 className="text-xl font-bold">Panel de Delivery</h1>
-          <p className="text-sm text-muted-foreground">Ingresá con tu código de negocio, DNI y PIN</p>
+          <p className="text-sm text-muted-foreground">Ingresá con tu código de negocio, DNI y PIN: 6 dígitos</p>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
@@ -76,11 +76,11 @@ export default function DeliveryLogin() {
               />
             </div>
             <div className="space-y-2">
-              <Label>PIN</Label>
+              <Label>PIN: 6 dígitos</Label>
               <Input
                 type="password"
-                maxLength={4}
-                placeholder="1234"
+                maxLength={6}
+                placeholder="123456"
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 required

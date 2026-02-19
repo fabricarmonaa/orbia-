@@ -8,12 +8,16 @@ import { generatePriceListPdf } from "../services/pdf/price-list";
 import { generateInvoiceBPdf } from "../services/pdf/invoice-b";
 import { productFiltersSchema, queryProductsByFilters } from "../services/product-filters";
 
-const allowedTemplates = ["CLASSIC", "MODERN", "MINIMAL", "INVOICE_B"] as const;
+const allowedTemplates = ["CLASSIC", "MODERN", "MINIMAL", "B_STANDARD", "B_COMPACT"] as const;
 const allowedPageSizes = ["A4", "LETTER"] as const;
 const allowedOrientations = ["portrait", "landscape"] as const;
 const allowedDocumentTypes = ["PRICE_LIST", "INVOICE_B"] as const;
 const allowedColumns = ["name", "sku", "description", "price", "stock_total", "branch_stock"] as const;
 const allowedInvoiceColumns = ["code", "quantity", "product", "price", "discount", "total"] as const;
+
+const priceListTemplates = new Set(["CLASSIC", "MODERN", "MINIMAL"]);
+const invoiceBTemplates = new Set(["B_STANDARD", "B_COMPACT"]);
+
 
 const stylesSchema = z.object({
   fontSize: z.number().min(8).max(16).optional(),
@@ -102,6 +106,15 @@ function canUseInvoiceB(planCode?: string | null) {
   return (planCode || "").toUpperCase() === "ESCALA";
 }
 
+function normalizeTemplateByDocumentType(documentType: string, templateKey?: string) {
+  if (documentType === "INVOICE_B") {
+    if (templateKey && invoiceBTemplates.has(templateKey)) return templateKey;
+    return "B_STANDARD";
+  }
+  if (templateKey && priceListTemplates.has(templateKey)) return templateKey;
+  return "CLASSIC";
+}
+
 function normalizeInvoiceColumns(columns?: string[]) {
   if (!columns?.length) return DEFAULT_PDF_SETTINGS.invoiceColumns;
   const unique = Array.from(new Set(columns));
@@ -165,9 +178,10 @@ export function registerPdfRoutes(app: Express) {
       if (payload.documentType === "INVOICE_B" && !canUseInvoiceB(plan?.planCode)) {
         return res.status(403).json({ error: "Tu plan no incluye Factura B.", code: "PLAN_BLOCKED" });
       }
+      const documentType = economic ? "PRICE_LIST" : (payload.documentType || (await storage.getTenantPdfSettings(req.auth!.tenantId!)).documentType);
       await storage.upsertTenantPdfSettings(req.auth!.tenantId!, {
-        documentType: economic ? "PRICE_LIST" : payload.documentType,
-        templateKey: payload.templateKey,
+        documentType,
+        templateKey: normalizeTemplateByDocumentType(documentType, payload.templateKey),
         pageSize: payload.pageSize,
         orientation: payload.orientation,
         showLogo: economic ? false : payload.showLogo,

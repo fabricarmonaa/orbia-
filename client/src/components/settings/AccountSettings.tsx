@@ -12,6 +12,10 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   const { toast } = useToast();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   if (!user) return null;
 
   const initials = user.fullName
@@ -51,13 +55,40 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
     }
   }
 
+  async function handleChangePassword() {
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      toast({ title: "Completá todos los campos", variant: "destructive" });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      toast({ title: "La confirmación no coincide", variant: "destructive" });
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await apiRequest("PUT", "/api/me/password", {
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      toast({ title: "Contraseña actualizada" });
+    } catch (err: any) {
+      toast({ title: "No se pudo cambiar la contraseña", description: err.message, variant: "destructive" });
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <h3 className="font-semibold">Perfil de usuario</h3>
         <p className="text-sm text-muted-foreground">Información básica de tu cuenta</p>
       </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-6">
         <div className="flex items-center gap-4">
           <Avatar className="h-14 w-14">
             <AvatarImage src={user.avatarUrl || undefined} alt={user.fullName} />
@@ -75,6 +106,27 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
           <Input id="avatar-upload" ref={inputRef} type="file" accept="image/*" onChange={handleAvatarUpload} disabled={uploading} />
           <Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>
             {uploading ? "Subiendo..." : "Seleccionar foto"}
+          </Button>
+        </div>
+
+        <div className="space-y-3 border rounded-md p-4">
+          <h4 className="font-medium">Cambiar contraseña</h4>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="space-y-1">
+              <Label>Contraseña actual</Label>
+              <Input type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Nueva contraseña</Label>
+              <Input type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Confirmar nueva contraseña</Label>
+              <Input type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
+            </div>
+          </div>
+          <Button onClick={handleChangePassword} disabled={changingPassword}>
+            {changingPassword ? "Guardando..." : "Actualizar contraseña"}
           </Button>
         </div>
       </CardContent>

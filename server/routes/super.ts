@@ -467,7 +467,14 @@ export function registerSuperRoutes(app: Express) {
       if (!totp) {
         return res.status(400).json({ error: "Primero configurá 2FA", code: "SUPERADMIN_2FA_NOT_SETUP" });
       }
-      if (!(await verifyTotp({ token, secret: totp.secret, strategy: "totp" }))) {
+      if (!totp.secret || !totp.secret.trim()) {
+        return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
+      }
+      const normalizedToken = String(token || "").trim();
+      if (!/^\d{6,8}$/.test(normalizedToken)) {
+        return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
+      }
+      if (!(await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any))) {
         return res.status(400).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
       await db.update(superAdminTotp).set({ enabled: true, verifiedAt: new Date(), updatedAt: new Date() }).where(eq(superAdminTotp.superAdminId, req.auth!.userId));
@@ -495,7 +502,14 @@ export function registerSuperRoutes(app: Express) {
       if (!totp?.enabled) {
         return res.status(400).json({ error: "2FA no está habilitado", code: "SUPERADMIN_2FA_NOT_ENABLED" });
       }
-      if (!(await verifyTotp({ token, secret: totp.secret, strategy: "totp" }))) {
+      if (!totp.secret || !totp.secret.trim()) {
+        return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
+      }
+      const normalizedToken = String(token || "").trim();
+      if (!/^\d{6,8}$/.test(normalizedToken)) {
+        return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
+      }
+      if (!(await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any))) {
         return res.status(400).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
 

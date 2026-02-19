@@ -1,7 +1,7 @@
 import { apiRequest, getToken } from "@/lib/auth";
 import { parseApiError } from "@/lib/api-errors";
 
-export type PdfTemplateKey = "CLASSIC" | "MODERN" | "MINIMAL" | "INVOICE_B";
+export type PdfTemplateKey = "CLASSIC" | "MODERN" | "MINIMAL" | "B_STANDARD" | "B_COMPACT";
 export type PdfPageSize = "A4" | "LETTER";
 export type PdfOrientation = "portrait" | "landscape";
 export type PdfDocumentType = "PRICE_LIST" | "INVOICE_B";

@@ -19,6 +19,9 @@ import { registerAuditRoutes } from "./audit";
 import { registerReportRoutes } from "./reports";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  app.get("/health", (_req, res) => {
+    res.status(200).json({ ok: true });
+  });
   registerStaticUploads(app);
   registerUploadRoutes(app);
   registerAuthRoutes(app);
