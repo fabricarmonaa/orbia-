@@ -27,9 +27,23 @@ const limitLabels: Record<string, string> = {
   tracking_retention_max_hours: "Tracking máx. (horas)",
 };
 
+
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-AR");
+}
+
+function mapSubscriptionState(status?: string | null) {
+  if (status === "blocked") return "VENCIDA";
+  return "ACTIVA";
+}
+
 export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
   const [addons, setAddons] = useState<Record<string, boolean>>({});
   const [tenantCode, setTenantCode] = useState<string>("");
+  const [subscriptionStatus, setSubscriptionStatus] = useState<any>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -42,6 +56,11 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
       .then((res) => res.json())
       .then((data) => setTenantCode(data?.data?.code || ""))
       .catch(() => setTenantCode(""));
+
+    apiRequest("GET", "/api/subscription/status")
+      .then((res) => res.json())
+      .then((data) => setSubscriptionStatus(data?.data || null))
+      .catch(() => setSubscriptionStatus(null));
   }, []);
 
   function openUpgradeWhatsApp() {
@@ -93,6 +112,14 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
                 </div>
               </div>
             )}
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Suscripción</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Fecha inicio</span><span>{formatDate(subscriptionStatus?.subscriptionStartDate)}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Fecha vencimiento</span><span>{formatDate(subscriptionStatus?.subscriptionEndDate)}</span></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Estado</span><span>{mapSubscriptionState(subscriptionStatus?.status)}</span></div>
+              </div>
+            </div>
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Addons activos</p>
               <div className="flex flex-wrap gap-2 text-sm">

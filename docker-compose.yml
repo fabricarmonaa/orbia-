@@ -1,0 +1,42 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orbia}
+      POSTGRES_USER: ${POSTGRES_USER:-orbia}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-orbia_change_me}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - ai
+    env_file:
+      - .env.production
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./uploads:/app/uploads
+
+  ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    ports:
+      - "127.0.0.1:8001:8001"
+
+volumes:
+  pgdata:

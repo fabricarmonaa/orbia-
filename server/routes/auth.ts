@@ -167,7 +167,14 @@ export function registerAuthRoutes(app: Express) {
         if (!totpCode) {
           return res.status(401).json({ error: "Ingresá el código de verificación de 2 factores", code: "SUPERADMIN_2FA_REQUIRED" });
         }
-        const ok = await verifyTotp({ token: totpCode, secret: totp.secret, strategy: "totp" });
+        if (!totp.secret || !totp.secret.trim()) {
+          return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
+        }
+        const normalizedToken = String(totpCode || "").trim();
+        if (!/^\d{6,8}$/.test(normalizedToken)) {
+          return res.status(401).json({ error: "Código de verificación inválido", code: "SUPERADMIN_2FA_INVALID" });
+        }
+        const ok = await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any);
         if (!ok) {
           markFailure(superLoginByIp, ipKey);
           markFailure(superLoginByEmail, emailKey);
