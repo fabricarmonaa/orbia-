@@ -105,7 +105,7 @@ function toInputDate(date: Date | string | null | undefined): string {
 export default function OwnerDashboard() {
   const { user, isAuthenticated, logout } = useAuth();
   const [, setLocation] = useLocation();
-  const [tenants, setTenants] = useState<(Tenant & { plan?: Plan })[]>([]);
+  const [tenants, setTenants] = useState<(Tenant & { plan?: Plan; ownerName?: string | null; ownerEmail?: string | null; planName?: string | null; addonsActive?: string[]; status?: string })[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -150,7 +150,7 @@ export default function OwnerDashboard() {
     adminPassword: "",
     adminName: "",
   });
-  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "security">("tenants");
+  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "emails" | "security">("tenants");
 
   const [securityEmail, setSecurityEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -163,6 +163,14 @@ export default function OwnerDashboard() {
   const [twoFactorOtpAuthUrl, setTwoFactorOtpAuthUrl] = useState<string | null>(null);
   const [twoFactorManualSecret, setTwoFactorManualSecret] = useState<string | null>(null);
   const [twoFactorToken, setTwoFactorToken] = useState("");
+
+  const [emailMode, setEmailMode] = useState<"one" | "many" | "all">("one");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBody, setEmailBody] = useState("");
+  const [emailText, setEmailText] = useState("");
+  const [selectedTenantIds, setSelectedTenantIds] = useState<number[]>([]);
+  const [sendingEmails, setSendingEmails] = useState(false);
+  const [sendSummary, setSendSummary] = useState<{ sent: number; failed: number; campaignId?: number; failures?: any[] } | null>(null);
 
   useEffect(() => {
     if (!isAuthenticated || !user?.isSuperAdmin) {
@@ -187,6 +195,10 @@ export default function OwnerDashboard() {
     }
     if (ownerTab === "tenants") {
       document.title = "ORBIA - NEGOCIOS";
+      return;
+    }
+    if (ownerTab === "emails") {
+      document.title = "ORBIA - CORREOS";
       return;
     }
     document.title = "ORBIA - ADMINISTRACIÓN";
@@ -455,7 +467,7 @@ export default function OwnerDashboard() {
     if (!actionTenant) return;
     setProcessingTenantAction(true);
     try {
-      const res = await apiRequest("POST", `/api/super/tenants/${actionTenant.id}/admin/reset-password`);
+      const res = await apiRequest("POST", `/api/super/tenants/${actionTenant.id}/reset-password`);
       const data = await res.json();
       setTempPassword(data.tempPassword || null);
       toast({ title: "Contraseña reseteada" });
@@ -498,6 +510,46 @@ export default function OwnerDashboard() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
       setProcessingTenantAction(false);
+    }
+  }
+
+  function toggleTenantSelection(tenantId: number, checked: boolean) {
+    setSelectedTenantIds((prev) => checked ? Array.from(new Set([...prev, tenantId])) : prev.filter((id) => id !== tenantId));
+  }
+
+  function selectAllVisibleTenants() {
+    const ids = filteredTenants.filter((t) => !t.deletedAt).map((t) => t.id);
+    setSelectedTenantIds(ids);
+  }
+
+  async function submitBulkEmail() {
+    if (!emailSubject.trim() || !emailBody.trim()) {
+      toast({ title: "Asunto y cuerpo requeridos", variant: "destructive" });
+      return;
+    }
+    const sendToAll = emailMode === "all";
+    if (!sendToAll && selectedTenantIds.length === 0) {
+      toast({ title: "Seleccioná al menos un negocio", variant: "destructive" });
+      return;
+    }
+
+    setSendingEmails(true);
+    try {
+      const payload = {
+        subject: emailSubject.trim(),
+        html: emailBody.trim(),
+        text: emailText.trim() || undefined,
+        sendToAll,
+        tenantIds: sendToAll ? [] : (emailMode === "one" ? selectedTenantIds.slice(0, 1) : selectedTenantIds),
+      };
+      const res = await apiRequest("POST", "/api/super/emails/send", payload);
+      const data = await res.json();
+      setSendSummary(data);
+      toast({ title: "Correo procesado", description: `Enviados: ${data.sent} / Fallidos: ${data.failed}` });
+    } catch (err: any) {
+      toast({ title: "Error enviando correos", description: err.message, variant: "destructive" });
+    } finally {
+      setSendingEmails(false);
     }
   }
 
@@ -847,10 +899,11 @@ export default function OwnerDashboard() {
           </DialogContent>
         </Dialog>
 
-        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "security")} data-testid="tabs-owner">
+        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "emails" | "security")} data-testid="tabs-owner">
           <TabsList>
             <TabsTrigger value="tenants" data-testid="tab-tenants">Negocios</TabsTrigger>
             <TabsTrigger value="subscriptions" data-testid="tab-subscriptions">Suscripciones</TabsTrigger>
+            <TabsTrigger value="emails" data-testid="tab-emails">Correos</TabsTrigger>
             <TabsTrigger value="security" data-testid="tab-security">Seguridad</TabsTrigger>
           </TabsList>
 
@@ -1200,6 +1253,87 @@ export default function OwnerDashboard() {
                 })}
               </div>
             )}
+          </TabsContent>
+
+
+          <TabsContent value="emails" className="space-y-4">
+            <h2 className="text-xl font-semibold">Correos</h2>
+            <Card>
+              <CardContent className="py-4 space-y-4">
+                <div className="space-y-2">
+                  <Label>Destinatarios</Label>
+                  <div className="flex items-center gap-4 text-sm">
+                    <label className="flex items-center gap-2"><input type="radio" checked={emailMode === "one"} onChange={() => setEmailMode("one")} /> Uno</label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={emailMode === "many"} onChange={() => setEmailMode("many")} /> Varios</label>
+                    <label className="flex items-center gap-2"><input type="radio" checked={emailMode === "all"} onChange={() => setEmailMode("all")} /> Todos</label>
+                  </div>
+                </div>
+
+                {emailMode !== "all" && (
+                  <div className="space-y-2 border rounded-md p-3 max-h-56 overflow-auto">
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-medium">Seleccionar negocios</p>
+                      <Button type="button" variant="outline" size="sm" onClick={selectAllVisibleTenants}>Seleccionar visibles</Button>
+                    </div>
+                    {filteredTenants.filter((t) => !t.deletedAt).map((tenant) => (
+                      <label key={tenant.id} className="flex items-center gap-2 text-sm">
+                        <input
+                          type={emailMode === "one" ? "radio" : "checkbox"}
+                          name="email-tenant"
+                          checked={selectedTenantIds.includes(tenant.id)}
+                          onChange={(e) => {
+                            if (emailMode === "one") {
+                              setSelectedTenantIds(e.target.checked ? [tenant.id] : []);
+                            } else {
+                              toggleTenantSelection(tenant.id, e.target.checked);
+                            }
+                          }}
+                        />
+                        <span>{tenant.name}</span>
+                        <span className="text-muted-foreground">({tenant.ownerEmail || tenant.ownerName || "sin email"})</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label>Asunto</Label>
+                  <Input value={emailSubject} onChange={(e) => setEmailSubject(e.target.value)} placeholder="Asunto del correo" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Cuerpo HTML</Label>
+                  <textarea
+                    className="w-full min-h-[180px] border rounded-md p-2 text-sm bg-background"
+                    value={emailBody}
+                    onChange={(e) => setEmailBody(e.target.value)}
+                    placeholder="<p>Hola...</p>"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Texto plano (opcional)</Label>
+                  <textarea
+                    className="w-full min-h-[90px] border rounded-md p-2 text-sm bg-background"
+                    value={emailText}
+                    onChange={(e) => setEmailText(e.target.value)}
+                    placeholder="Versión texto plano"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <Button onClick={submitBulkEmail} disabled={sendingEmails}>
+                    {sendingEmails ? "Enviando..." : "Enviar correo"}
+                  </Button>
+                </div>
+
+                {sendSummary && (
+                  <div className="text-sm rounded-md border p-3 bg-muted/30">
+                    <p><strong>Campaña:</strong> {sendSummary.campaignId}</p>
+                    <p><strong>Enviados:</strong> {sendSummary.sent}</p>
+                    <p><strong>Fallidos:</strong> {sendSummary.failed}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="security" className="space-y-4">

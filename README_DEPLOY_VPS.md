@@ -69,3 +69,27 @@ crontab -e
 # ejemplo: 03:10 AM diario
 10 3 * * * POSTGRES_DB=orbia POSTGRES_USER=orbia POSTGRES_PASSWORD='***' /ruta/repo/infra/scripts/backup.sh >> /var/log/orbia-backup.log 2>&1
 ```
+
+## 9) Gmail mailer setup (SuperAdmin)
+Orbia soporta envío de correos masivos del panel SuperAdmin usando Gmail OAuth2.
+
+Variables requeridas en `.env.production`:
+- `GMAIL_OAUTH_CLIENT_ID`
+- `GMAIL_OAUTH_CLIENT_SECRET`
+- `GMAIL_OAUTH_REFRESH_TOKEN`
+- `GMAIL_FROM` (por ejemplo: `Orbia <tu-cuenta@gmail.com>`)
+- `GMAIL_REPLY_TO` (opcional)
+
+Pasos recomendados:
+1. Crear proyecto en Google Cloud y habilitar **Gmail API**.
+2. Configurar pantalla de consentimiento OAuth.
+3. Crear credenciales OAuth2 (tipo Web application).
+4. Obtener `refresh_token` con scope `https://www.googleapis.com/auth/gmail.send`.
+5. Guardar valores en `.env.production` y reiniciar:
+   ```bash
+   docker compose up -d --build
+   ```
+
+Notas:
+- Si no configurás mailer, la app no crashea, pero `POST /api/super/emails/send` devuelve `Mailer no configurado`.
+- El endpoint de envío tiene rate limit (`SUPER_EMAILS_LIMIT_PER_MIN`) para evitar spam accidental.
