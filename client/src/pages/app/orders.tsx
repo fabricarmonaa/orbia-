@@ -289,7 +289,7 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   <Label>Cliente</Label>
                   <Input
-                    placeholder="Nombre del cliente"
+                    placeholder="Ej: Consumidor Final / Empresa S.A."
                     value={newOrder.customerName}
                     onChange={(e) => setNewOrder({ ...newOrder, customerName: e.target.value })}
                     data-testid="input-customer-name"
@@ -299,7 +299,7 @@ export default function OrdersPage() {
                   <div className="space-y-2">
                     <Label>Teléfono</Label>
                     <Input
-                      placeholder="Teléfono"
+                      placeholder="Ej: 11 1234-5678"
                       value={newOrder.customerPhone}
                       onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
                       data-testid="input-customer-phone"
@@ -320,7 +320,7 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   <Label>Descripción</Label>
                   <Textarea
-                    placeholder="Detalle del pedido..."
+                    placeholder="Ej: 2x Hamburguesas completas sin pepino"
                     value={newOrder.description}
                     onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
                     data-testid="input-description"
@@ -362,7 +362,7 @@ export default function OrdersPage() {
                         <div className="space-y-2">
                           <Label>Notas para el delivery</Label>
                           <Input
-                            placeholder="Piso, depto, timbre, referencias..."
+                            placeholder="Piso 2 Depto B, Timbre 'Gómez'"
                             value={newOrder.deliveryAddressNotes}
                             onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
                             data-testid="input-delivery-notes"
@@ -393,7 +393,7 @@ export default function OrdersPage() {
         <div className="relative flex-1 min-w-[200px]">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Buscar pedidos..."
+            placeholder="Buscar por cliente, n° o detalle..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="pl-9"
@@ -669,7 +669,7 @@ export default function OrdersPage() {
                     <div className="flex gap-2">
                       <div className="flex-1 space-y-2">
                         <Input
-                          placeholder="Escribí un comentario..."
+                          placeholder="Nota interna o mensaje para el cliente..."
                           value={newComment}
                           onChange={(e) => setNewComment(e.target.value)}
                           onKeyDown={(e) => {

@@ -392,7 +392,7 @@ export default function ProductsPage() {
               <Label>Buscar</Label>
               <div className="relative">
                 <Search className="h-4 w-4 text-muted-foreground absolute left-2 top-2.5" />
-                <Input className="pl-8" placeholder="Nombre, SKU o descripción" value={draftFilters.q} onChange={(e) => setDraftFilters((p) => ({ ...p, q: e.target.value }))} />
+                <Input className="pl-8" placeholder="Buscar por producto, código o detalle..." value={draftFilters.q} onChange={(e) => setDraftFilters((p) => ({ ...p, q: e.target.value }))} />
               </div>
             </div>
 
@@ -423,8 +423,8 @@ export default function ProductsPage() {
             <div className="space-y-2">
               <Label>Precio</Label>
               <div className="grid grid-cols-2 gap-2">
-                <Input type="number" placeholder="Mín" value={draftFilters.minPrice} onChange={(e) => setDraftFilters((p) => ({ ...p, minPrice: e.target.value }))} />
-                <Input type="number" placeholder="Máx" value={draftFilters.maxPrice} onChange={(e) => setDraftFilters((p) => ({ ...p, maxPrice: e.target.value }))} />
+                <Input type="number" placeholder="Precio mín." value={draftFilters.minPrice} onChange={(e) => setDraftFilters((p) => ({ ...p, minPrice: e.target.value }))} />
+                <Input type="number" placeholder="Precio máx." value={draftFilters.maxPrice} onChange={(e) => setDraftFilters((p) => ({ ...p, maxPrice: e.target.value }))} />
               </div>
             </div>
 
@@ -438,7 +438,7 @@ export default function ProductsPage() {
                 ))}
               </div>
               {draftFilters.stock === "low" && (
-                <Input type="number" min={0} value={draftFilters.lowStockThreshold} onChange={(e) => setDraftFilters((p) => ({ ...p, lowStockThreshold: e.target.value }))} placeholder="Umbral" />
+                <Input type="number" min={0} value={draftFilters.lowStockThreshold} onChange={(e) => setDraftFilters((p) => ({ ...p, lowStockThreshold: e.target.value }))} placeholder="Alerta stock bajo" />
               )}
             </div>
 
@@ -659,20 +659,20 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
     <form className="space-y-3" onSubmit={onSubmit}>
       <div className="space-y-2">
         <Label>Nombre</Label>
-        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} />
+        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Ej: Remera Talle M / Servicio de Limpieza" />
       </div>
       <div className="space-y-2">
         <Label>Descripción</Label>
-        <Textarea value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} rows={3} />
+        <Textarea value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} rows={3} placeholder="Detalles del producto o servicio" />
       </div>
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-2">
           <Label>Precio</Label>
-          <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} />
+          <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
         </div>
         <div className="space-y-2">
           <Label>SKU</Label>
-          <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} />
+          <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -688,13 +688,13 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </div>
         <div className="space-y-2">
           <Label>Costo</Label>
-          <Input type="number" min={0} step="0.01" value={value.cost} onChange={(e) => onChange({ ...value, cost: e.target.value })} />
+          <Input type="number" min={0} step="0.01" value={value.cost} onChange={(e) => onChange({ ...value, cost: e.target.value })} placeholder="0.00" />
         </div>
       </div>
       {stockMode === "global" ? (
         <div className="space-y-2">
           <Label>Stock</Label>
-          <Input type="number" min={0} value={value.stock} onChange={(e) => onChange({ ...value, stock: e.target.value })} />
+          <Input type="number" min={0} value={value.stock} onChange={(e) => onChange({ ...value, stock: e.target.value })} placeholder="0" />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal.</p>

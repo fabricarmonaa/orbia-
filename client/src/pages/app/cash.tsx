@@ -77,7 +77,7 @@ export default function CashPage() {
   const refreshExpenseDefinitions = () => {
     getExpenseDefinitions()
       .then((data) => setExpenseDefinitions(data || []))
-      .catch(() => {});
+      .catch(() => { });
   };
 
   useEffect(() => {
@@ -323,7 +323,7 @@ export default function CashPage() {
                           <div className="space-y-2">
                             <Label>Categoría</Label>
                             <Input
-                              placeholder="Ej: Ventas"
+                              placeholder="Ej: Venta mostradores / Pago proveedor"
                               value={newMovement.category}
                               onChange={(e) => setNewMovement({ ...newMovement, category: e.target.value })}
                               data-testid="input-movement-category"
@@ -359,7 +359,7 @@ export default function CashPage() {
                         <div className="space-y-2">
                           <Label>Descripción</Label>
                           <Input
-                            placeholder="Detalle del movimiento"
+                            placeholder="Ej: Pago de servicio de luz / Cobro mesa 4"
                             value={newMovement.description}
                             onChange={(e) => setNewMovement({ ...newMovement, description: e.target.value })}
                             data-testid="input-movement-description"
@@ -447,7 +447,7 @@ export default function CashPage() {
                     <div className="space-y-2">
                       <Label>Descripción</Label>
                       <Input
-                        placeholder="Detalle del movimiento"
+                        placeholder="Ej: Pago de servicio de luz / Cobro mesa 4"
                         value={newMovement.description}
                         onChange={(e) => setNewMovement({ ...newMovement, description: e.target.value })}
                         data-testid="input-movement-description"

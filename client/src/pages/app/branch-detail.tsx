@@ -557,7 +557,7 @@ export default function BranchDetailPage() {
                 id="user-name"
                 value={newUser.fullName}
                 onChange={(e) => setNewUser((p) => ({ ...p, fullName: e.target.value }))}
-                placeholder="Juan Pérez"
+                placeholder="Ej: Martín Gómez"
                 data-testid="input-user-fullname"
               />
             </div>
@@ -568,7 +568,7 @@ export default function BranchDetailPage() {
                 type="email"
                 value={newUser.email}
                 onChange={(e) => setNewUser((p) => ({ ...p, email: e.target.value }))}
-                placeholder="usuario@empresa.com"
+                placeholder="ejemplo@negocio.com"
                 data-testid="input-user-email"
               />
             </div>
@@ -579,7 +579,7 @@ export default function BranchDetailPage() {
                 type="password"
                 value={newUser.password}
                 onChange={(e) => setNewUser((p) => ({ ...p, password: e.target.value }))}
-                placeholder="Mínimo 4 caracteres"
+                placeholder="Mínimo 4 caracteres (Ej: 1234)"
                 data-testid="input-user-password"
               />
             </div>
@@ -589,7 +589,7 @@ export default function BranchDetailPage() {
                 id="user-phone"
                 value={newUser.phone}
                 onChange={(e) => setNewUser((p) => ({ ...p, phone: e.target.value }))}
-                placeholder="+54 11 1234-5678"
+                placeholder="Ej: 11 1234-5678"
                 data-testid="input-user-phone"
               />
             </div>

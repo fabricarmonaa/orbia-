@@ -891,7 +891,7 @@ export default function OwnerDashboard() {
                         <div className="space-y-2">
                           <Label>Código</Label>
                           <Input
-                            placeholder="mi-negocio"
+                            placeholder="ej: nombre-empresa"
                             value={newTenant.code}
                             onChange={(e) => setNewTenant({ ...newTenant, code: e.target.value })}
                             required
@@ -901,7 +901,7 @@ export default function OwnerDashboard() {
                         <div className="space-y-2">
                           <Label>Nombre</Label>
                           <Input
-                            placeholder="Mi Negocio"
+                            placeholder="Razón Social Cliente"
                             value={newTenant.name}
                             onChange={(e) => setNewTenant({ ...newTenant, name: e.target.value })}
                             required
@@ -930,7 +930,7 @@ export default function OwnerDashboard() {
                       <div className="space-y-2">
                         <Label>Nombre del Admin</Label>
                         <Input
-                          placeholder="Juan Pérez"
+                          placeholder="Contacto administrativo"
                           value={newTenant.adminName}
                           onChange={(e) => setNewTenant({ ...newTenant, adminName: e.target.value })}
                           required
@@ -942,7 +942,7 @@ export default function OwnerDashboard() {
                           <Label>Email Admin</Label>
                           <Input
                             type="email"
-                            placeholder="admin@negocio.com"
+                            placeholder="ej: admin@cliente.com"
                             value={newTenant.adminEmail}
                             onChange={(e) => setNewTenant({ ...newTenant, adminEmail: e.target.value })}
                             required
@@ -953,7 +953,7 @@ export default function OwnerDashboard() {
                           <Label>Contraseña Admin</Label>
                           <Input
                             type="password"
-                            placeholder="Contraseña"
+                            placeholder="Contraseña temporaria"
                             value={newTenant.adminPassword}
                             onChange={(e) => setNewTenant({ ...newTenant, adminPassword: e.target.value })}
                             required

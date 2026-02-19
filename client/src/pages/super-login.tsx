@@ -59,13 +59,13 @@ export default function SuperLogin() {
           <h1 className="text-2xl font-bold tracking-tight">
             {appBranding.orbiaName || "ORBIA"}
           </h1>
-          <p className="text-muted-foreground mt-1">Panel de Administración</p>
+          <p className="text-muted-foreground mt-1">Panel de Administración Global</p>
         </div>
         <Card>
           <CardHeader className="pb-4">
             <h2 className="text-lg font-semibold">Super Admin</h2>
             <p className="text-sm text-muted-foreground">
-              Acceso exclusivo para el administrador de la plataforma
+              Acceso restringido a administración global
             </p>
           </CardHeader>
           <CardContent>
@@ -75,7 +75,7 @@ export default function SuperLogin() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="tu-email@dominio.com"
+                  placeholder="admin@plataforma.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
@@ -112,7 +112,7 @@ export default function SuperLogin() {
                 <Input
                   id="totp"
                   inputMode="numeric"
-                  placeholder="123456"
+                  placeholder="000000"
                   value={totpCode}
                   onChange={(e) => setTotpCode(e.target.value)}
                   data-testid="input-totp"

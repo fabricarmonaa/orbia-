@@ -55,7 +55,7 @@ export default function TenantLogin() {
           <h1 className="text-2xl font-bold tracking-tight">
             {appBranding.orbiaName || "ORBIA"}
           </h1>
-          <p className="text-muted-foreground mt-1">Gestión inteligente para tu negocio</p>
+          <p className="text-muted-foreground mt-1">Plataforma de gestión comercial integral</p>
         </div>
         <Card>
           <CardHeader className="pb-4">
@@ -67,10 +67,10 @@ export default function TenantLogin() {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="tenantCode">Código del negocio</Label>
+                <Label htmlFor="tenantCode">Código de negocio</Label>
                 <Input
                   id="tenantCode"
-                  placeholder="mi-negocio"
+                  placeholder="codigo-empresa"
                   value={tenantCode}
                   onChange={(e) => setTenantCode(e.target.value)}
                   required
@@ -82,7 +82,7 @@ export default function TenantLogin() {
                 <Input
                   id="email"
                   type="email"
-                  placeholder="tu@email.com"
+                  placeholder="usuario@empresa.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required

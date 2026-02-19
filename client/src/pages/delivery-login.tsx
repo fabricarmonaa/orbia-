@@ -56,9 +56,9 @@ export default function DeliveryLogin() {
         <CardContent>
           <form onSubmit={handleLogin} className="space-y-4">
             <div className="space-y-2">
-              <Label>Código del negocio</Label>
+              <Label>Código de negocio</Label>
               <Input
-                placeholder="mi-negocio"
+                placeholder="codigo-logistica"
                 value={tenantCode}
                 onChange={(e) => setTenantCode(e.target.value)}
                 required
@@ -66,9 +66,9 @@ export default function DeliveryLogin() {
               />
             </div>
             <div className="space-y-2">
-              <Label>DNI</Label>
+              <Label>DNI (Usuario)</Label>
               <Input
-                placeholder="12345678"
+                placeholder="dni-repartidor"
                 value={dni}
                 onChange={(e) => setDni(e.target.value)}
                 required
@@ -80,7 +80,7 @@ export default function DeliveryLogin() {
               <Input
                 type="password"
                 maxLength={4}
-                placeholder="1234"
+                placeholder="pin-acceso"
                 value={pin}
                 onChange={(e) => setPin(e.target.value)}
                 required

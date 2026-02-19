@@ -125,7 +125,7 @@ export default function BranchesPage() {
               <div className="space-y-2">
                 <Label>Nombre</Label>
                 <Input
-                  placeholder="Nombre de la sucursal"
+                  placeholder="Ej: Casa Central / Sucursal Centro"
                   value={newBranch.name}
                   onChange={(e) => setNewBranch({ ...newBranch, name: e.target.value })}
                   required
@@ -135,7 +135,7 @@ export default function BranchesPage() {
               <div className="space-y-2">
                 <Label>Dirección</Label>
                 <Input
-                  placeholder="Dirección"
+                  placeholder="Ej: Av. Corrientes 1234, CABA"
                   value={newBranch.address}
                   onChange={(e) => setNewBranch({ ...newBranch, address: e.target.value })}
                   data-testid="input-branch-address"
@@ -144,7 +144,7 @@ export default function BranchesPage() {
               <div className="space-y-2">
                 <Label>Teléfono</Label>
                 <Input
-                  placeholder="Teléfono"
+                  placeholder="Ej: 11 4444-5555"
                   value={newBranch.phone}
                   onChange={(e) => setNewBranch({ ...newBranch, phone: e.target.value })}
                   data-testid="input-branch-phone"
@@ -179,8 +179,8 @@ export default function BranchesPage() {
         <Card>
           <CardContent className="py-16 text-center">
             <Building2 className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-            <p className="text-muted-foreground font-medium">No hay sucursales</p>
-            <p className="text-sm text-muted-foreground mt-1">Creá tu primera sucursal</p>
+            <p className="text-muted-foreground font-medium">No hay sedes registradas</p>
+            <p className="text-sm text-muted-foreground mt-1">Creá tu primera sucursal para comenzar</p>
           </CardContent>
         </Card>
       ) : (

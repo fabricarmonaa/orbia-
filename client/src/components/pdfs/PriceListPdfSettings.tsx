@@ -271,6 +271,7 @@ export function PriceListPdfSettings() {
                 <Input
                   value={settings.headerText || ""}
                   onChange={(e) => setSettings({ ...settings, headerText: e.target.value })}
+                  placeholder="Ej: Lista de Precios Mayorista"
                 />
               </div>
               <div className="space-y-2">
@@ -278,6 +279,7 @@ export function PriceListPdfSettings() {
                 <Input
                   value={settings.subheaderText || ""}
                   onChange={(e) => setSettings({ ...settings, subheaderText: e.target.value })}
+                  placeholder="Ej: Vigencia Marzo 2024"
                 />
               </div>
               <div className="space-y-2 sm:col-span-2">
@@ -285,6 +287,7 @@ export function PriceListPdfSettings() {
                 <Input
                   value={settings.footerText || ""}
                   onChange={(e) => setSettings({ ...settings, footerText: e.target.value })}
+                  placeholder="Ej: Precios sujetos a cambios sin previo aviso - www.miempresa.com"
                 />
               </div>
             </div>
@@ -298,6 +301,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.documentTitle || ""}
                       onChange={(e) => setSettings({ ...settings, documentTitle: e.target.value })}
+                      placeholder="Ej: FACTURA B"
                     />
                   </div>
                   <div className="space-y-2">
@@ -305,6 +309,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.fiscalName || ""}
                       onChange={(e) => setSettings({ ...settings, fiscalName: e.target.value })}
+                      placeholder="Ej: Mi Empresa S.A."
                     />
                   </div>
                   <div className="space-y-2">
@@ -312,6 +317,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.fiscalCuit || ""}
                       onChange={(e) => setSettings({ ...settings, fiscalCuit: e.target.value })}
+                      placeholder="Ej: 30-12345678-9"
                     />
                   </div>
                   <div className="space-y-2">
@@ -319,6 +325,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.fiscalIibb || ""}
                       onChange={(e) => setSettings({ ...settings, fiscalIibb: e.target.value })}
+                      placeholder="Ej: 901-123456-1"
                     />
                   </div>
                   <div className="space-y-2 sm:col-span-2">
@@ -326,6 +333,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.fiscalAddress || ""}
                       onChange={(e) => setSettings({ ...settings, fiscalAddress: e.target.value })}
+                      placeholder="Ej: Calle 123, Piso 1"
                     />
                   </div>
                   <div className="space-y-2">
@@ -333,6 +341,7 @@ export function PriceListPdfSettings() {
                     <Input
                       value={settings.fiscalCity || ""}
                       onChange={(e) => setSettings({ ...settings, fiscalCity: e.target.value })}
+                      placeholder="Ej: CABA, Buenos Aires"
                     />
                   </div>
                   <div className="flex items-center gap-3 sm:col-span-2">

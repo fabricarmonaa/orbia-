@@ -96,7 +96,7 @@ export function BrandingSettings({
                 <Input
                   value={config.businessName}
                   onChange={(e) => setConfig({ ...config, businessName: e.target.value })}
-                  placeholder="Mi Negocio"
+                  placeholder="Ej: Mi Emprendimiento S.A."
                 />
               </div>
               <div className="space-y-2">
@@ -104,7 +104,7 @@ export function BrandingSettings({
                 <Input
                   value={config.businessType}
                   onChange={(e) => setConfig({ ...config, businessType: e.target.value })}
-                  placeholder="Ej: Comercio, Servicio"
+                  placeholder="Ej: Gastronomía, Indumentaria, Servicios..."
                 />
               </div>
             </div>
@@ -114,7 +114,7 @@ export function BrandingSettings({
               <Textarea
                 value={config.businessDescription}
                 onChange={(e) => setConfig({ ...config, businessDescription: e.target.value })}
-                placeholder="Breve descripción de tu negocio..."
+                placeholder="Ej: Somos especialistas en..."
                 rows={3}
               />
             </div>
@@ -309,7 +309,7 @@ export function BrandingSettings({
                         links: { ...brandingForm.links, instagram: e.target.value },
                       })
                     }
-                    placeholder="https://instagram.com/tu_negocio"
+                    placeholder="https://instagram.com/tu_marca"
                   />
                 </div>
                 <div className="space-y-2">
@@ -322,7 +322,7 @@ export function BrandingSettings({
                         links: { ...brandingForm.links, whatsapp: e.target.value },
                       })
                     }
-                    placeholder="+54911xxxxxxx"
+                    placeholder="Ej: 5491112345678"
                   />
                 </div>
                 <div className="space-y-2">
@@ -335,7 +335,7 @@ export function BrandingSettings({
                         links: { ...brandingForm.links, web: e.target.value },
                       })
                     }
-                    placeholder="https://tusitio.com"
+                    placeholder="https://www.tuecommerce.com"
                   />
                 </div>
               </div>
@@ -395,9 +395,8 @@ export function BrandingSettings({
                       key={preset.value}
                       type="button"
                       onClick={() => setConfig({ ...config, trackingLayout: preset.value })}
-                      className={`rounded-md border p-3 text-center transition-colors ${
-                        isSelected ? "border-primary bg-primary/5" : "border-border"
-                      }`}
+                      className={`rounded-md border p-3 text-center transition-colors ${isSelected ? "border-primary bg-primary/5" : "border-border"
+                        }`}
                     >
                       <preset.Icon
                         className="w-6 h-6 mx-auto mb-1.5"
