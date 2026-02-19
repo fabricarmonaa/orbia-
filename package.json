@@ -9,7 +9,15 @@
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
     "db:push": "drizzle-kit push",
-    "verify:invoice-b": "DATABASE_URL=postgresql://orbia:orbia@127.0.0.1:5432/orbia tsx script/verify-invoice-b.ts"
+    "verify:invoice-b": "DATABASE_URL=postgresql://orbia:orbia@127.0.0.1:5432/orbia tsx script/verify-invoice-b.ts",
+    "db:seed": "tsx script/db-seed.ts",
+    "db:setup": "npm run db:wait && npm run db:push && npm run db:seed",
+    "db:wait": "tsx script/wait-for-postgres.ts",
+    "docker:up": "docker compose up -d --build",
+    "docker:down": "docker compose down",
+    "docker:down:volumes": "docker compose down -v",
+    "dev:docker": "tsx script/dev-docker.ts",
+    "verify:local": "tsx script/verify-local.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

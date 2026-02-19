@@ -631,6 +631,13 @@ export function registerSuperRoutes(app: Express) {
     code: "SUPER_EMAIL_RATE_LIMIT",
   });
 
+  function sanitizeHtmlLite(html: string) {
+    return String(html || "")
+      .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+      .replace(/on\w+\s*=\s*"[^"]*"/gi, "")
+      .replace(/on\w+\s*=\s*'[^']*'/gi, "");
+  }
+
   app.post("/api/super/emails/send", superAuth, mailSendLimiter, async (req, res) => {
     try {
       const payload = sendEmailSchema.parse(req.body || {});
@@ -649,16 +656,12 @@ export function registerSuperRoutes(app: Express) {
         return res.status(400).json({ error: "tenantIds requerido cuando sendToAll=false" });
       }
 
-      if (!isMailerConfigured()) {
-        return res.status(400).json({ error: "Mailer no configurado" });
-      }
-
       const [campaign] = await db
         .insert(emailCampaigns)
         .values({
           createdByUserId: req.auth!.userId,
           subject: payload.subject,
-          html: payload.html,
+          html: sanitizeHtmlLite(payload.html),
           text: payload.text || null,
           sendToAll: payload.sendToAll,
           requestedTenantIdsJson: payload.tenantIds,
@@ -667,60 +670,108 @@ export function registerSuperRoutes(app: Express) {
         })
         .returning();
 
+      const configured = isMailerConfigured();
       let sent = 0;
       let failed = 0;
+      let skipped = 0;
       const failures: Array<{ tenantId: number; email: string; error: string }> = [];
 
-      for (const tenant of targetTenants) {
-        const owner = await storage.getPrimaryTenantAdmin(tenant.id);
-        const toEmail = owner?.email || null;
+      const batchSize = Math.max(1, parseInt(process.env.EMAIL_BATCH_SIZE || "50", 10));
+      const batchDelayMs = Math.max(0, parseInt(process.env.EMAIL_BATCH_DELAY_MS || "500", 10));
 
-        if (!toEmail) {
-          failed += 1;
-          failures.push({ tenantId: tenant.id, email: "", error: "No se encontró email del admin principal" });
-          await db.insert(emailDeliveryLogs).values({
-            campaignId: campaign.id,
-            tenantId: tenant.id,
-            toEmail: "",
-            status: "FAILED",
-            errorMessage: "No se encontró email del admin principal",
-          });
-          continue;
+      for (let i = 0; i < targetTenants.length; i += batchSize) {
+        const chunk = targetTenants.slice(i, i + batchSize);
+        console.log(`[mail] campaign=${campaign.id} chunk=${Math.floor(i / batchSize) + 1} size=${chunk.length}`);
+
+        for (const tenant of chunk) {
+          const owner = await storage.getPrimaryTenantAdmin(tenant.id);
+          const toEmail = owner?.email || "";
+
+          if (!toEmail) {
+            failed += 1;
+            const msg = "No se encontró email del admin principal";
+            failures.push({ tenantId: tenant.id, email: "", error: msg });
+            await db.insert(emailDeliveryLogs).values({
+              campaignId: campaign.id,
+              tenantId: tenant.id,
+              toEmail: "",
+              status: "FAILED",
+              errorMessage: msg,
+            });
+            continue;
+          }
+
+          if (!configured) {
+            skipped += 1;
+            await db.insert(emailDeliveryLogs).values({
+              campaignId: campaign.id,
+              tenantId: tenant.id,
+              toEmail,
+              status: "SKIPPED" as any,
+              errorMessage: "Mailer no configurado",
+            });
+            continue;
+          }
+
+          try {
+            try {
+              await sendMail({ to: toEmail, subject: payload.subject, html: sanitizeHtmlLite(payload.html), text: payload.text });
+            } catch (firstErr: any) {
+              const msg = String(firstErr?.message || "").toLowerCase();
+              const isRate = msg.includes("rate") || msg.includes("quota") || msg.includes("429");
+              if (!isRate) throw firstErr;
+              await sleep(2000);
+              await sendMail({ to: toEmail, subject: payload.subject, html: sanitizeHtmlLite(payload.html), text: payload.text });
+            }
+
+            sent += 1;
+            await db.insert(emailDeliveryLogs).values({
+              campaignId: campaign.id,
+              tenantId: tenant.id,
+              toEmail,
+              status: "SENT",
+              errorMessage: null,
+            });
+          } catch (err: any) {
+            failed += 1;
+            const msg = String(err?.message || "SEND_FAILED").slice(0, 400);
+            failures.push({ tenantId: tenant.id, email: toEmail, error: msg });
+            await db.insert(emailDeliveryLogs).values({
+              campaignId: campaign.id,
+              tenantId: tenant.id,
+              toEmail,
+              status: "FAILED",
+              errorMessage: msg,
+            });
+          }
         }
 
-        try {
-          await sendMail({ to: toEmail, subject: payload.subject, html: payload.html, text: payload.text });
-          sent += 1;
-          await db.insert(emailDeliveryLogs).values({
-            campaignId: campaign.id,
-            tenantId: tenant.id,
-            toEmail,
-            status: "SENT",
-            errorMessage: null,
-          });
-        } catch (err: any) {
-          failed += 1;
-          const msg = String(err?.message || "SEND_FAILED").slice(0, 400);
-          failures.push({ tenantId: tenant.id, email: toEmail, error: msg });
-          await db.insert(emailDeliveryLogs).values({
-            campaignId: campaign.id,
-            tenantId: tenant.id,
-            toEmail,
-            status: "FAILED",
-            errorMessage: msg,
-          });
+        if (i + batchSize < targetTenants.length) {
+          await sleep(batchDelayMs);
         }
-
-        await sleep(200);
       }
 
-      const status = failed === 0 ? "SENT" : sent > 0 ? "PARTIAL" : "FAILED";
+      const status = !configured
+        ? "PARTIAL"
+        : failed === 0
+          ? "SENT"
+          : sent > 0
+            ? "PARTIAL"
+            : "FAILED";
+
       await db
         .update(emailCampaigns)
-        .set({ status, successCount: sent, failureCount: failed })
+        .set({ status, successCount: sent, failureCount: failed + skipped })
         .where(eq(emailCampaigns.id, campaign.id));
 
-      return res.json({ campaignId: campaign.id, sent, failed, failures });
+      return res.status(configured ? 200 : 503).json({
+        campaignId: campaign.id,
+        sent,
+        failed,
+        skipped,
+        failures,
+        message: configured ? undefined : "Mailer no configurado",
+      });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", details: err.errors });

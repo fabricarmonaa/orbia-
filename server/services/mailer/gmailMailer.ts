@@ -6,13 +6,6 @@ type SendMailInput = {
   replyTo?: string;
 };
 
-type TokenCache = {
-  accessToken: string;
-  expiresAt: number;
-} | null;
-
-let tokenCache: TokenCache = null;
-
 function extractEmail(value?: string | null) {
   if (!value) return "";
   const match = value.match(/<([^>]+)>/);
@@ -27,8 +20,16 @@ function toBase64Url(input: string) {
     .replace(/=+$/g, "");
 }
 
+function stripUnsafeHtml(html: string) {
+  return String(html || "")
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "")
+    .replace(/on\w+\s*=\s*"[^"]*"/gi, "")
+    .replace(/on\w+\s*=\s*'[^']*'/gi, "");
+}
+
 function buildMime({ from, to, subject, html, text, replyTo }: { from: string; to: string; subject: string; html: string; text?: string; replyTo?: string }) {
-  const plain = text || html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const safeHtml = stripUnsafeHtml(html);
+  const plain = text || safeHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
   const boundary = `orbia_${Date.now()}`;
   const lines = [
     `From: ${from}`,
@@ -46,7 +47,7 @@ function buildMime({ from, to, subject, html, text, replyTo }: { from: string; t
     `--${boundary}`,
     "Content-Type: text/html; charset=UTF-8",
     "",
-    html,
+    safeHtml,
     "",
     `--${boundary}--`,
     "",
@@ -68,8 +69,6 @@ export function isMailerConfigured() {
 }
 
 async function getAccessToken() {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 20_000) return tokenCache.accessToken;
-
   const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
   const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET;
   const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN;
@@ -100,12 +99,7 @@ async function getAccessToken() {
     throw err;
   }
 
-  const data = await resp.json() as { access_token: string; expires_in: number };
-  tokenCache = {
-    accessToken: data.access_token,
-    expiresAt: Date.now() + Math.max(30, data.expires_in || 3500) * 1000,
-  };
-
+  const data = await resp.json() as { access_token: string };
   return data.access_token;
 }
 
