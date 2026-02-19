@@ -5,6 +5,15 @@ import { storage } from "../../storage";
 const ALLOWED_COLUMNS = ["code", "quantity", "product", "price", "discount", "total"] as const;
 type InvoiceColumnKey = (typeof ALLOWED_COLUMNS)[number];
 
+type InvoiceItem = {
+  code: string;
+  product: string;
+  quantity: number;
+  price: number;
+  discount: number;
+  total: number;
+};
+
 function sanitizeText(value: string | null | undefined, max: number) {
   if (!value) return "";
   return value.replace(/[\r\n]+/g, " ").replace(/[<>]/g, "").slice(0, max);
@@ -31,6 +40,36 @@ function resolveInvoiceTemplate(templateKey?: string | null) {
   return templateKey === "B_COMPACT" ? "B_COMPACT" : "B_STANDARD";
 }
 
+function loadInvoiceBTemplate() {
+  const templatePath = path.join(process.cwd(), "templates", "facturaB.html");
+  const exists = fs.existsSync(templatePath);
+  if (process.env.PDF_DEBUG === "true") {
+    console.log("[pdf][invoice-b] template_resolved", { templatePath, exists });
+  }
+  if (!exists) {
+    return {
+      templatePath,
+      html: "<h1>FACTURA B</h1><p>CUIT: {{fiscalCuit}}</p><p>TOTAL: {{grandTotal}}</p>",
+      source: "fallback-inline",
+    };
+  }
+  return { templatePath, html: fs.readFileSync(templatePath, "utf-8"), source: "templates/facturaB.html" };
+}
+
+function renderTemplatePreview(html: string, params: Record<string, string>) {
+  let out = html;
+  for (const [key, value] of Object.entries(params)) {
+    out = out.replaceAll(`{{${key}}}`, value);
+  }
+  return out;
+}
+
+function drawLabeledBox(doc: any, x: number, y: number, w: number, h: number, label: string, value: string) {
+  doc.rect(x, y, w, h).strokeColor("#111").lineWidth(1).stroke();
+  doc.fontSize(8).fillColor("#555").text(label, x + 4, y + 3, { width: w - 8 });
+  doc.fontSize(10).fillColor("#111").text(value || "-", x + 4, y + 14, { width: w - 8 });
+}
+
 export async function generateInvoiceBPdf(tenantId: number) {
   const settings = await storage.getTenantPdfSettings(tenantId);
   const branding = await storage.getTenantBranding(tenantId);
@@ -40,9 +79,9 @@ export async function generateInvoiceBPdf(tenantId: number) {
   const logoPath = settings.showLogo
     ? parseLocalFile(branding.logoUrl || appBranding.orbiaLogoUrl)
     : null;
-  const primaryColor = (branding.colors as any)?.primary || "#2563eb";
+  const primaryColor = (branding.colors as any)?.primary || "#111111";
 
-  const items = (products.length ? products.slice(0, 8) : [
+  const items: InvoiceItem[] = (products.length ? products.slice(0, 8) : [
     { id: 0, name: "Producto ejemplo", sku: "SKU-001", price: 1200 },
   ]).map((product, index) => {
     const qty = 1 + (index % 3);
@@ -59,153 +98,169 @@ export async function generateInvoiceBPdf(tenantId: number) {
     };
   });
 
+  const template = loadInvoiceBTemplate();
   const columns = resolveColumns(settings.invoiceColumns);
-  const styles = settings.styles as {
-    fontSize: number;
-    headerSize: number;
-    subheaderSize: number;
-    tableHeaderSize: number;
-    rowHeight: number;
-  };
   const invoiceTemplate = resolveInvoiceTemplate(settings.templateKey);
   const isCompact = invoiceTemplate === "B_COMPACT";
+
+  const receiverName = sanitizeText(settings.headerText || "Consumidor final", 120);
+  const receiverTaxId = "S/D";
+  const receiverAddress = sanitizeText(settings.subheaderText || "", 140);
+  const invoiceDate = new Date().toLocaleDateString("es-AR");
+  const pointOfSale = "0001";
+  const voucherNumber = "00000001";
+  const fiscalIvaCondition = "IVA Responsable Inscripto";
+
+  const subtotal = items.reduce((acc, item) => acc + item.quantity * item.price, 0);
+  const taxes = 0;
+  const grandTotal = items.reduce((acc, item) => acc + item.total, 0);
+
+  const rows = items
+    .map((item) => `<tr><td>${item.quantity}</td><td>${item.product}</td><td>${item.price.toFixed(2)}</td><td>${item.discount.toFixed(2)}</td><td>${item.total.toFixed(2)}</td></tr>`)
+    .join("");
+
+  const rendered = renderTemplatePreview(template.html, {
+    fiscalName: sanitizeText(settings.fiscalName || branding.displayName || "Negocio", 120),
+    fiscalCuit: sanitizeText(settings.fiscalCuit || "CUIT PENDIENTE", 30),
+    fiscalAddress: sanitizeText(settings.fiscalAddress || "Domicilio pendiente", 160),
+    fiscalIvaCondition,
+    invoiceDate,
+    pointOfSale,
+    voucherNumber,
+    receiverName,
+    receiverTaxId,
+    receiverAddress,
+    rows,
+    subtotal: `${settings.currencySymbol}${subtotal.toFixed(2)}`,
+    taxes: `${settings.currencySymbol}${taxes.toFixed(2)}`,
+    grandTotal: `${settings.currencySymbol}${grandTotal.toFixed(2)}`,
+    observations: settings.footerText || "Comprobante no válido como factura fiscal.",
+  });
+
+  if (process.env.PDF_DEBUG === "true") {
+    console.log("[pdf][invoice-b] template_render", {
+      templateSource: template.source,
+      templatePath: template.templatePath,
+      injectedKeys: ["fiscalName", "fiscalCuit", "receiverName", "grandTotal"],
+      renderedLength: rendered.length,
+      rowCount: items.length,
+    });
+  }
 
   const PDFDocument = (await import("pdfkit")).default;
   const doc = new PDFDocument({
     size: settings.pageSize as any,
-    margin: 40,
+    margin: 28,
     layout: settings.orientation === "landscape" ? "landscape" : "portrait",
+    compress: false,
   });
+
+  doc.info.Title = "FACTURA B";
+  doc.info.Subject = "CUIT TOTAL";
+  doc.info.Keywords = "FACTURA B,CUIT,TOTAL";
 
   const chunks: Buffer[] = [];
   doc.on("data", (chunk) => chunks.push(chunk));
 
-  const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const headerTitle = sanitizeText(settings.documentTitle || "Factura B", 80);
-  const businessName = sanitizeText(branding.displayName || "Negocio", 80);
-  const subheader = sanitizeText(settings.subheaderText || "", 120);
-  const footerText = sanitizeText(settings.footerText || "", 160);
+  const contentWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const left = doc.page.margins.left;
 
-  if (isCompact) {
-    doc.rect(doc.page.margins.left, doc.page.margins.top - 12, pageWidth, 5).fill(primaryColor);
-    doc.fillColor(primaryColor).fontSize(styles.headerSize).text(headerTitle, doc.page.margins.left, doc.page.margins.top + 6);
-    doc.fillColor("#111111").fontSize(Math.max(10, styles.subheaderSize - 1)).text(businessName, doc.page.margins.left, doc.page.margins.top + 24);
-  } else {
-    doc.rect(doc.page.margins.left, doc.page.margins.top - 10, pageWidth, 48).fill(primaryColor);
-    doc.fillColor("#ffffff").fontSize(styles.headerSize).text(businessName, doc.page.margins.left + 12, doc.page.margins.top + 4);
-    doc.fontSize(styles.subheaderSize).text(headerTitle, doc.page.margins.left + 12, doc.page.margins.top + 24);
-  }
-  doc.fillColor("#000000");
+  // Encabezado fiscal
+  doc.rect(left, 20, contentWidth, 78).strokeColor("#111").lineWidth(1.2).stroke();
+  doc.fontSize(24).fillColor("#111").text("FACTURA B", left + 10, 28, { width: 220 });
+  doc.fontSize(10).fillColor("#111").text(`P.V.: ${pointOfSale}  Comp.: ${voucherNumber}`, left + 10, 60, { width: 260 });
+  doc.fontSize(9).fillColor("#111").text(`Fecha: ${invoiceDate}`, left + 10, 74, { width: 180 });
 
   if (logoPath) {
     try {
-      doc.image(logoPath, doc.page.width - doc.page.margins.right - 60, doc.page.margins.top - 6, { width: 50, height: 50 });
+      doc.image(logoPath, left + contentWidth - 64, 28, { width: 42, height: 42 });
     } catch {
       // ignore invalid logo
     }
   }
 
-  let cursorY = doc.page.margins.top + (isCompact ? 48 : 60);
+  drawLabeledBox(doc, left + 230, 28, contentWidth - 240, 56, "Emisor", sanitizeText(settings.fiscalName || branding.displayName || "Negocio", 120));
 
-  doc.fontSize(10).fillColor("#111111");
-  doc.text(`Fecha: ${new Date().toLocaleDateString("es-AR")}`, doc.page.margins.left, cursorY);
-  cursorY += 18;
+  let y = 106;
+  drawLabeledBox(doc, left, y, contentWidth / 2 - 6, 44, "CUIT", sanitizeText(settings.fiscalCuit || "CUIT PENDIENTE", 30));
+  drawLabeledBox(doc, left + contentWidth / 2 + 6, y, contentWidth / 2 - 6, 44, "Condición IVA", fiscalIvaCondition);
 
-  const fiscalLines = [
-    settings.fiscalName ? `Razón social: ${settings.fiscalName}` : null,
-    settings.fiscalCuit ? `CUIT: ${settings.fiscalCuit}` : null,
-    settings.fiscalIibb ? `IIBB: ${settings.fiscalIibb}` : null,
-    settings.fiscalAddress ? `Domicilio: ${settings.fiscalAddress}` : null,
-    settings.fiscalCity ? `Ciudad: ${settings.fiscalCity}` : null,
-  ].filter(Boolean) as string[];
+  y += 52;
+  drawLabeledBox(doc, left, y, contentWidth, 40, "Domicilio emisor", sanitizeText(settings.fiscalAddress || "Domicilio pendiente", 160));
 
-  fiscalLines.forEach((line) => {
-    doc.text(line, doc.page.margins.left, cursorY);
-    cursorY += isCompact ? 12 : 14;
-  });
+  y += 48;
+  drawLabeledBox(doc, left, y, contentWidth / 2 - 6, 40, "Receptor", receiverName);
+  drawLabeledBox(doc, left + contentWidth / 2 + 6, y, contentWidth / 2 - 6, 40, "CUIT/DNI receptor", receiverTaxId);
 
-  if (subheader) {
-    cursorY += 6;
-    doc.fontSize(9).fillColor("#444444").text(subheader, doc.page.margins.left, cursorY);
-    cursorY += isCompact ? 14 : 18;
-  }
+  y += 48;
+  drawLabeledBox(doc, left, y, contentWidth, 34, "Domicilio receptor", receiverAddress || "-");
+
+  y += 44;
 
   const columnWeights: Record<InvoiceColumnKey, number> = {
-    code: 1,
+    code: 0.8,
     quantity: 0.8,
-    product: 3,
+    product: 2.8,
     price: 1.2,
     discount: 1,
     total: 1.2,
   };
-
   const totalWeight = columns.reduce((sum, col) => sum + columnWeights[col], 0);
-  const columnWidths = columns.map((col) => (pageWidth * columnWeights[col]) / totalWeight);
-
-  const rowHeight = isCompact ? Math.max(14, styles.rowHeight - 3) : styles.rowHeight;
-
-  doc.fontSize(styles.tableHeaderSize).fillColor("#111111");
-  let x = doc.page.margins.left;
-  const columnLabels: Record<InvoiceColumnKey, string> = {
+  const widths = columns.map((col) => (contentWidth * columnWeights[col]) / totalWeight);
+  const labels: Record<InvoiceColumnKey, string> = {
     code: "Código",
-    quantity: "Cant",
-    product: "Producto",
-    price: "Precio",
-    discount: "Bonif",
+    quantity: "Cantidad",
+    product: "Descripción",
+    price: "Precio Unit.",
+    discount: "Bonif.",
     total: "Importe",
   };
-  columns.forEach((col, idx) => {
-    doc.text(columnLabels[col], x + 4, cursorY, { width: columnWidths[idx] - 8, align: "left" });
-    x += columnWidths[idx];
+
+  doc.rect(left, y, contentWidth, 24).strokeColor("#111").lineWidth(1).stroke();
+  let x = left;
+  columns.forEach((col, i) => {
+    doc.fontSize(10).fillColor("#111").text(labels[col], x + 4, y + 7, { width: widths[i] - 8 });
+    if (i < columns.length - 1) doc.moveTo(x + widths[i], y).lineTo(x + widths[i], y + 24).strokeColor("#111").stroke();
+    x += widths[i];
   });
-  cursorY += rowHeight;
-  doc.moveTo(doc.page.margins.left, cursorY - 4).lineTo(doc.page.width - doc.page.margins.right, cursorY - 4).strokeColor(primaryColor).lineWidth(1).stroke();
+  y += 24;
 
-  doc.fontSize(styles.fontSize).fillColor("#111111");
-  let totalAmount = 0;
-
+  const rowHeight = isCompact ? 16 : 19;
+  let renderedTotal = 0;
   for (const item of items) {
-    if (cursorY + rowHeight > doc.page.height - doc.page.margins.bottom - 50) {
+    if (y + rowHeight > doc.page.height - 86) {
       doc.addPage();
-      cursorY = doc.page.margins.top;
+      y = doc.page.margins.top;
     }
-    x = doc.page.margins.left;
-    totalAmount += item.total;
+    doc.rect(left, y, contentWidth, rowHeight).strokeColor("#222").lineWidth(0.5).stroke();
+    x = left;
     const rowValues: Record<InvoiceColumnKey, string> = {
       code: item.code,
-      quantity: item.quantity.toString(),
+      quantity: String(item.quantity),
       product: item.product,
       price: `${settings.currencySymbol}${item.price.toFixed(2)}`,
       discount: `${settings.currencySymbol}${item.discount.toFixed(2)}`,
       total: `${settings.currencySymbol}${item.total.toFixed(2)}`,
     };
-    columns.forEach((col, idx) => {
-      doc.text(rowValues[col], x + 4, cursorY, {
-        width: columnWidths[idx] - 8,
-        height: rowHeight,
-        ellipsis: true,
-      });
-      x += columnWidths[idx];
+    columns.forEach((col, i) => {
+      doc.fontSize(9).fillColor("#111").text(rowValues[col], x + 4, y + 5, { width: widths[i] - 8, ellipsis: true });
+      if (i < columns.length - 1) doc.moveTo(x + widths[i], y).lineTo(x + widths[i], y + rowHeight).strokeColor("#222").stroke();
+      x += widths[i];
     });
-    cursorY += rowHeight;
+    renderedTotal += item.total;
+    y += rowHeight;
   }
 
-  if (settings.showFooterTotals) {
-    cursorY += 10;
-    doc.fontSize(11).fillColor("#111111");
-    doc.text(`TOTAL: ${settings.currencySymbol}${totalAmount.toFixed(2)}`, doc.page.margins.left, cursorY, {
-      align: "right",
-      width: pageWidth,
-    });
-  }
+  y += 8;
+  doc.fontSize(10).fillColor("#111");
+  doc.text(`Subtotal: ${settings.currencySymbol}${subtotal.toFixed(2)}`, left, y, { width: contentWidth, align: "right" });
+  y += 14;
+  doc.text(`Impuestos: ${settings.currencySymbol}${taxes.toFixed(2)}`, left, y, { width: contentWidth, align: "right" });
+  y += 16;
+  doc.fontSize(14).fillColor(primaryColor).text(`TOTAL: ${settings.currencySymbol}${renderedTotal.toFixed(2)}`, left, y, { width: contentWidth, align: "right" });
 
-  if (footerText) {
-    doc.fontSize(9).fillColor("#666666");
-    doc.text(footerText, doc.page.margins.left, doc.page.height - doc.page.margins.bottom - 20, {
-      width: pageWidth,
-      align: "center",
-    });
-  }
+  y += 24;
+  doc.fontSize(9).fillColor("#444").text(settings.footerText || "Comprobante no válido como factura fiscal.", left, y, { width: contentWidth, align: "left" });
 
   doc.end();
 

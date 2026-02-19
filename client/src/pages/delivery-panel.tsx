@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  Truck,
   MapPin,
   Camera,
   CheckCircle,
@@ -77,6 +76,7 @@ export default function DeliveryPanel() {
   const [, setLocation] = useLocation();
   const [agent, setAgent] = useState<DeliveryAgentInfo | null>(null);
   const [tenantName, setTenantName] = useState("");
+  const [orbiaLogoUrl, setOrbiaLogoUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [availableOrders, setAvailableOrders] = useState<any[]>([]);
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
@@ -108,6 +108,12 @@ export default function DeliveryPanel() {
       setLocation("/delivery/login");
       return;
     }
+
+    fetch("/api/branding/app")
+      .then((res) => res.json())
+      .then((data) => setOrbiaLogoUrl(data?.data?.orbiaLogoUrl || null))
+      .catch(() => setOrbiaLogoUrl(null));
+
     fetchAll();
   }, []);
 
@@ -230,7 +236,11 @@ export default function DeliveryPanel() {
         <div className="max-w-2xl mx-auto px-4">
           <div className="flex items-center justify-between gap-4 h-14">
             <div className="flex items-center gap-3">
-              <Truck className="w-5 h-5 text-primary" />
+              <img
+                src={orbiaLogoUrl || "/icons/tenant/icon-180.png"}
+                alt="Orbia"
+                className="w-7 h-7 rounded object-cover bg-muted"
+              />
               <div className="min-w-0">
                 <p className="font-bold text-sm truncate">{agent.firstName} {agent.lastName}</p>
                 <p className="text-xs text-muted-foreground truncate">{tenantName}</p>

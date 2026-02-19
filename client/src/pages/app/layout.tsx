@@ -14,6 +14,7 @@ import BranchesPage from "./branches";
 import BranchDetailPage from "./branch-detail";
 import DeliveryPage from "./delivery";
 import SettingsPage from "./settings";
+import MessagingSettingsPage from "./messaging";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -79,6 +80,7 @@ export default function AppLayout() {
               <Route path="/app/branches" component={BranchesPage} />
               <Route path="/app/delivery" component={DeliveryPage} />
               <Route path="/app/settings" component={SettingsPage} />
+              <Route path="/app/messaging" component={MessagingSettingsPage} />
               <Route path="/app" component={Dashboard} />
             </Switch>
           </main>

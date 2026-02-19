@@ -2,6 +2,14 @@ import { storage } from "../server/storage";
 import { generateInvoiceBPdf } from "../server/services/pdf/invoice-b";
 import { generatePriceListPdf } from "../server/services/pdf/price-list";
 
+
+function assertContains(buffer: Buffer, text: string) {
+  const raw = buffer.toString("latin1");
+  if (!raw.includes(text)) {
+    throw new Error(`PDF no contiene texto requerido: ${text}`);
+  }
+}
+
 const baseSettings = {
   documentType: "INVOICE_B",
   templateKey: "B_STANDARD",
@@ -45,6 +53,9 @@ async function main() {
     if (!invoiceBuffer?.length || !invoiceBuffer.slice(0, 4).equals(Buffer.from("%PDF"))) {
       throw new Error(`Factura B inválida para template ${templateKey}`);
     }
+    assertContains(invoiceBuffer, "FACTURA B");
+    assertContains(invoiceBuffer, "CUIT");
+    assertContains(invoiceBuffer, "TOTAL");
   }
 
   (storage as any).getTenantPdfSettings = async () => ({ ...baseSettings, documentType: "PRICE_LIST", templateKey: "CLASSIC" });

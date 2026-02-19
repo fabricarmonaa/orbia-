@@ -8,16 +8,26 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-orbia}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+
     ports:
       - "127.0.0.1:5050:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
 
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - ai
+    env_file:
+      - .env.production
+    ports:
+      - "127.0.0.1:5000:5000"
+    volumes:
+      - ./uploads:/app/uploads
 
   ai:
     build:
@@ -28,24 +38,6 @@ services:
       - .env.production
     ports:
       - "127.0.0.1:8001:8001"
-
-  web:
-    build:
-      context: .
-      dockerfile: Dockerfile.web
-    restart: unless-stopped
-    depends_on:
-      postgres:
-        condition: service_healthy
-      ai:
-        condition: service_started
-    env_file:
-      - .env.production
-    ports:
-      - "127.0.0.1:5000:5000"
-    volumes:
-      - ./uploads:/app/uploads
-
 
 volumes:
   pgdata:

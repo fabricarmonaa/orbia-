@@ -23,6 +23,7 @@ import {
   LogOut,
   Lock,
   Truck,
+  MessageCircle,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -48,6 +49,7 @@ const menuItems: MenuItem[] = [
   { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
+  { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true },
 ];
 

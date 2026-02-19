@@ -16,3 +16,7 @@ export * from './schema/pdf-settings';
 
 export * from './schema/metrics';
 export * from './schema/super-security';
+
+export * from './schema/email-campaigns';
+
+export * from './schema/message-templates';
