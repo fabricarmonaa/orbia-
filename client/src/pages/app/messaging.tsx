@@ -29,9 +29,9 @@ const variableChips = [
 ];
 
 const sampleContext: Record<string, string> = {
-  cliente_nombre: "Juan Pérez",
+  cliente_nombre: "Leonel Messi",
   cliente_telefono: "+5491122334455",
-  pedido_numero: "1024",
+  pedido_numero: "123",
   pedido_estado: "Pendiente",
   pedido_total: "$ 12.500",
   pedido_fecha: new Date().toLocaleString("es-AR"),
@@ -40,7 +40,8 @@ const sampleContext: Record<string, string> = {
 };
 
 function renderPreview(body: string) {
-  return (body || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => sampleContext[key] || "—");
+  const rendered = (body || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => sampleContext[key] || "");
+  return rendered.replace(/\s+/g, ' ').trim();
 }
 
 export default function MessagingSettingsPage() {

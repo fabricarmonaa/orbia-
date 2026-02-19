@@ -944,7 +944,7 @@ export default function OwnerDashboard() {
                         <div className="space-y-2">
                           <Label>Código</Label>
                           <Input
-                            placeholder="mi-negocio"
+                            placeholder="ej: mi-negocio"
                             value={newTenant.code}
                             onChange={(e) => setNewTenant({ ...newTenant, code: e.target.value })}
                             required
@@ -954,7 +954,7 @@ export default function OwnerDashboard() {
                         <div className="space-y-2">
                           <Label>Nombre</Label>
                           <Input
-                            placeholder="Mi Negocio"
+                            placeholder="Nombre del negocio"
                             value={newTenant.name}
                             onChange={(e) => setNewTenant({ ...newTenant, name: e.target.value })}
                             required
@@ -983,7 +983,7 @@ export default function OwnerDashboard() {
                       <div className="space-y-2">
                         <Label>Nombre del Admin</Label>
                         <Input
-                          placeholder="Juan Pérez"
+                          placeholder="Nombre del administrador"
                           value={newTenant.adminName}
                           onChange={(e) => setNewTenant({ ...newTenant, adminName: e.target.value })}
                           required

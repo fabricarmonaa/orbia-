@@ -1,11 +1,12 @@
 const VARIABLE_REGEX = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
 
 export function renderTemplate(body: string, context: Record<string, string | number | null | undefined>) {
-  return (body || "").replace(VARIABLE_REGEX, (_, key: string) => {
+  const rendered = (body || "").replace(VARIABLE_REGEX, (_, key: string) => {
     const value = context[key];
-    if (value === null || value === undefined) return "—";
+    if (value === null || value === undefined) return "";
     return String(value);
   });
+  return rendered.replace(/\s+/g, ' ').trim();
 }
 
 export function normalizePhoneE164(rawPhone: string, defaultCountry = "AR"): string | null {

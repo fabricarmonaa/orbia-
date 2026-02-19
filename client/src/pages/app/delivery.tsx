@@ -238,7 +238,7 @@ export default function DeliveryPage() {
                     <div className="space-y-2">
                       <Label>DNI</Label>
                       <Input
-                        placeholder="12345678"
+                        placeholder="DNI"
                         value={newAgent.dni}
                         onChange={(e) => setNewAgent({ ...newAgent, dni: e.target.value })}
                         required
@@ -250,7 +250,7 @@ export default function DeliveryPage() {
                       <Input
                         type="password"
                         maxLength={4}
-                        placeholder="1234"
+                        placeholder="PIN"
                         value={newAgent.pin}
                         onChange={(e) => setNewAgent({ ...newAgent, pin: e.target.value })}
                         required
@@ -262,7 +262,7 @@ export default function DeliveryPage() {
                     <div className="space-y-2">
                       <Label>Nombre</Label>
                       <Input
-                        placeholder="Juan"
+                        placeholder="Nombre"
                         value={newAgent.firstName}
                         onChange={(e) => setNewAgent({ ...newAgent, firstName: e.target.value })}
                         required
@@ -272,7 +272,7 @@ export default function DeliveryPage() {
                     <div className="space-y-2">
                       <Label>Apellido</Label>
                       <Input
-                        placeholder="Pérez"
+                        placeholder="Apellido"
                         value={newAgent.lastName}
                         onChange={(e) => setNewAgent({ ...newAgent, lastName: e.target.value })}
                         required
@@ -283,7 +283,7 @@ export default function DeliveryPage() {
                   <div className="space-y-2">
                     <Label>Teléfono</Label>
                     <Input
-                      placeholder="+54 11 1234-5678"
+                      placeholder="Teléfono (ej: +54 9 11 0000-0000)"
                       value={newAgent.phone}
                       onChange={(e) => setNewAgent({ ...newAgent, phone: e.target.value })}
                       required
@@ -611,7 +611,7 @@ export default function DeliveryPage() {
                           )}
                           <Badge variant={
                             order.deliveryStatus === "delivered" ? "default" :
-                            order.deliveryStatus === "in_transit" ? "secondary" : "outline"
+                              order.deliveryStatus === "in_transit" ? "secondary" : "outline"
                           }>
                             {order.deliveryStatus || "pending"}
                           </Badge>
