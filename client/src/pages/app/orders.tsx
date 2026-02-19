@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogDescription,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -49,7 +50,15 @@ import {
   Camera,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
+
+type MessageTemplate = {
+  id: number;
+  name: string;
+  body: string;
+  isActive: boolean;
+};
 
 export default function OrdersPage() {
   const { user } = useAuth();
@@ -71,6 +80,10 @@ export default function OrdersPage() {
   const { toast } = useToast();
 
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>([]);
+  const [whatsDialogOpen, setWhatsDialogOpen] = useState(false);
+  const [renderedMessage, setRenderedMessage] = useState("");
+  const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [newOrder, setNewOrder] = useState({
     type: "PEDIDO",
     customerName: "",
@@ -89,7 +102,16 @@ export default function OrdersPage() {
     fetchData();
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
-      .then((d) => setAddonStatus(d.data || {}))
+      .then((d) => {
+        const addons = d.data || {};
+        setAddonStatus(addons);
+        if (addons.messaging_whatsapp) {
+          apiRequest("GET", "/api/message-templates")
+            .then((r) => r.json())
+            .then((tpl) => setMessageTemplates((tpl.data || []).filter((x: MessageTemplate) => x.isActive)))
+            .catch(() => {});
+        }
+      })
       .catch(() => { });
   }, []);
 
@@ -227,6 +249,41 @@ export default function OrdersPage() {
       hour: "2-digit",
       minute: "2-digit",
     });
+  }
+
+  function openWhatsApp(phone: string, text: string) {
+    const isMobile = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || "");
+    const encoded = encodeURIComponent(text);
+    const url = isMobile
+      ? `https://wa.me/${phone}?text=${encoded}`
+      : `https://web.whatsapp.com/send?phone=${phone}&text=${encoded}`;
+    const win = window.open(url, "_blank", "noopener,noreferrer");
+    if (!win) {
+      toast({ title: "El navegador bloqueó la ventana emergente.", variant: "destructive" });
+    }
+  }
+
+  async function sendTemplateMessage(template: MessageTemplate) {
+    if (!selectedOrder) return;
+    setRenderingTemplateId(template.id);
+    try {
+      const res = await apiRequest("POST", "/api/message-templates/render", {
+        templateBody: template.body,
+        orderId: selectedOrder.id,
+      });
+      const data = await res.json();
+      if (!data.normalizedPhone) {
+        toast({ title: "Teléfono inválido. Editá el cliente.", variant: "destructive" });
+        return;
+      }
+      const text = data.renderedText || "";
+      setRenderedMessage(text);
+      openWhatsApp(data.normalizedPhone, text);
+    } catch (err: any) {
+      toast({ title: "Error enviando mensaje", description: err.message, variant: "destructive" });
+    } finally {
+      setRenderingTemplateId(null);
+    }
   }
 
   return (
@@ -625,6 +682,51 @@ export default function OrdersPage() {
                       <Copy className="w-4 h-4 mr-1" />
                       Copiar Link
                     </Button>
+                  )}
+                  {addonStatus.messaging_whatsapp && !!selectedOrder.customerPhone && messageTemplates.length > 0 && (
+                    <Dialog open={whatsDialogOpen} onOpenChange={setWhatsDialogOpen}>
+                      <DialogTrigger asChild>
+                        <Button variant="outline" size="sm" data-testid="button-send-whatsapp-message">
+                          <MessageSquare className="w-4 h-4 mr-1" />
+                          Enviar mensaje
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent>
+                        <DialogHeader>
+                          <DialogTitle>Enviar mensaje</DialogTitle>
+                          <DialogDescription>Elegí una plantilla activa para este pedido.</DialogDescription>
+                        </DialogHeader>
+                        <div className="space-y-2 max-h-72 overflow-auto">
+                          {messageTemplates.map((tpl) => (
+                            <button
+                              key={tpl.id}
+                              type="button"
+                              className="w-full text-left border rounded-md p-3 hover:bg-muted/40"
+                              onClick={() => sendTemplateMessage(tpl)}
+                              disabled={renderingTemplateId === tpl.id}
+                            >
+                              <p className="font-medium">{tpl.name}</p>
+                              <p className="text-xs text-muted-foreground truncate">{tpl.body}</p>
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              navigator.clipboard.writeText(renderedMessage || "");
+                              toast({ title: "Mensaje copiado" });
+                            }}
+                            disabled={!renderedMessage}
+                          >
+                            <Copy className="w-4 h-4 mr-1" />
+                            Copiar mensaje
+                          </Button>
+                        </div>
+                        {renderedMessage && <WhatsAppMessagePreview text={renderedMessage} />}
+                      </DialogContent>
+                    </Dialog>
                   )}
                 </div>
 

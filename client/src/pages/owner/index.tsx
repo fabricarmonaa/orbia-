@@ -1072,6 +1072,15 @@ export default function OwnerDashboard() {
                                 data-testid={`switch-delivery-addon-${tenant.id}`}
                               />
                             </div>
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs text-muted-foreground whitespace-nowrap">Mensajería</Label>
+                              <Switch
+                                checked={!!addonStatus[tenant.id]?.messaging_whatsapp}
+                                disabled={togglingAddon === `${tenant.id}-messaging_whatsapp`}
+                                onCheckedChange={(checked) => toggleAddon(tenant.id, "messaging_whatsapp", checked)}
+                                data-testid={`switch-messaging-addon-${tenant.id}`}
+                              />
+                            </div>
                             <Select
                               value={String(tenant.planId || "")}
                               onValueChange={(v) => changePlan(tenant.id, parseInt(v))}

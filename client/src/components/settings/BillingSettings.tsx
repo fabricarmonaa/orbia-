@@ -27,6 +27,10 @@ const limitLabels: Record<string, string> = {
   tracking_retention_max_hours: "Tracking máx. (horas)",
 };
 
+const addonLabels: Record<string, string> = {
+  delivery: "Delivery",
+  messaging_whatsapp: "Mensajería (WhatsApp)",
+};
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
@@ -121,14 +125,17 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
               </div>
             </div>
             <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Addons activos</p>
-              <div className="flex flex-wrap gap-2 text-sm">
-                {Object.keys(addons).length === 0 && <span className="text-muted-foreground">Sin addons activos</span>}
-                {Object.entries(addons)
-                  .filter(([, enabled]) => enabled)
-                  .map(([addon]) => (
-                    <Badge key={addon} variant="secondary">{addon}</Badge>
-                  ))}
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Addons</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                {["delivery", "messaging_whatsapp"].map((addonKey) => {
+                  const enabled = !!addons[addonKey];
+                  return (
+                    <div key={addonKey} className="flex items-center justify-between border rounded-md px-3 py-2">
+                      <span className="text-muted-foreground">{addonLabels[addonKey] || addonKey}</span>
+                      <Badge variant={enabled ? "default" : "secondary"}>{enabled ? "Activo" : "Inactivo"}</Badge>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </>
