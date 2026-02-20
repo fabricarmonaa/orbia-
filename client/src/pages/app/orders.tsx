@@ -1,3 +1,6 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import QRCode from "qrcode";
+import { TicketLayout } from "@/components/print/TicketLayout";
 import { useState, useEffect } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -48,6 +51,7 @@ import {
   Truck,
   MapPin,
   Camera,
+  Printer,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
@@ -201,6 +205,35 @@ export default function OrdersPage() {
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
+  }
+
+
+  async function printOrder(variant: "ORDER" | "KITCHEN") {
+    if (!selectedOrder) return;
+    const res = await apiRequest("GET", `/api/orders/${selectedOrder.id}/print-data`);
+    const json = await res.json();
+    const d = json.data;
+    const qrImage = variant === "KITCHEN" ? null : (d.qr?.publicUrl ? await QRCode.toDataURL(d.qr.publicUrl, { margin: 1, width: 160 }) : null);
+    const html = renderToStaticMarkup(
+      <TicketLayout
+        mode="TICKET_80"
+        variant={variant}
+        data={{
+          tenant: { name: d.tenant?.name || "Negocio", logoUrl: d.tenant?.logoUrl || null },
+          order: { number: d.order.number, createdAt: d.order.createdAt, status: d.order.status, customerName: d.order.customerName, description: d.order.description, totalAmount: d.order.totalAmount },
+          totals: { total: d.order.totalAmount || "-" },
+          items: [{ qty: 1, name: d.order.type || "Pedido", subtotal: d.order.totalAmount || "-" }],
+          qr: { publicUrl: d.qr?.publicUrl, imageDataUrl: qrImage },
+        }}
+      />
+    );
+    const win = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
+    if (!win) return;
+    win.document.open();
+    win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Print order</title></head><body>${html}</body></html>`);
+    win.document.close();
+    win.focus();
+    win.print();
   }
 
   async function generateTrackingLink(orderId: number) {
@@ -683,6 +716,14 @@ export default function OrdersPage() {
                       Copiar Link
                     </Button>
                   )}
+                  <Button variant="outline" size="sm" onClick={() => printOrder("ORDER")}>
+                    <Printer className="w-4 h-4 mr-1" />
+                    Ticket cliente
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => printOrder("KITCHEN")}>
+                    <Printer className="w-4 h-4 mr-1" />
+                    Comanda cocina
+                  </Button>
                   {addonStatus.messaging_whatsapp && !!selectedOrder.customerPhone && messageTemplates.length > 0 && (
                     <Dialog open={whatsDialogOpen} onOpenChange={setWhatsDialogOpen}>
                       <DialogTrigger asChild>

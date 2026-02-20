@@ -8,12 +8,14 @@ import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
 import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { evaluatePassword } from "../services/password-policy";
+import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(6).max(128),
-  newPassword: z.string().min(8).max(128),
-  confirmPassword: z.string().min(8).max(128),
+  newPassword: z.string().min(12).max(256),
+  confirmPassword: z.string().min(12).max(256),
 });
 
 const deleteTenantSchema = z.object({
@@ -37,6 +39,24 @@ const tenantConfigSchema = z.object({
 });
 
 export function registerTenantRoutes(app: Express) {
+  const sensitiveActionLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 10,
+    keyGenerator: (req) => `tenant-sensitive:${req.ip}:${req.path}`,
+    errorMessage: "Demasiados intentos. Reintentá más tarde.",
+    code: "RATE_LIMITED",
+    onLimit: async ({ req, retryAfterSec }) => {
+      if (!req.auth?.tenantId) return;
+      await storage.createAuditLog({
+        tenantId: req.auth.tenantId,
+        userId: req.auth.userId || null,
+        action: "brute_force_blocked",
+        entityType: "auth",
+        metadata: { route: req.path, ip: req.ip, retryAfterSec },
+      }).catch(() => undefined);
+    },
+  });
+
   const logoUploadLimiter = createRateLimiter({
     windowMs: 60 * 1000,
     max: parseInt(process.env.UPLOADS_LIMIT_PER_MIN || "6", 10),
@@ -58,6 +78,7 @@ export function registerTenantRoutes(app: Express) {
           tenantId: user.tenantId,
           branchId: user.branchId,
           avatarUrl: user.avatarUrl || null,
+          passwordWeak: user.role !== "CASHIER" ? getPasswordWeakFlag(user.id) : false,
         },
       });
     } catch (err: any) {
@@ -65,18 +86,42 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
-  app.put("/api/me/password", tenantAuth, async (req, res) => {
+  app.patch("/api/me/password", tenantAuth, sensitiveActionLimiter, async (req, res) => {
     try {
       const { currentPassword, newPassword, confirmPassword } = changePasswordSchema.parse(req.body || {});
       if (newPassword !== confirmPassword) {
-        return res.status(400).json({ error: "La confirmación no coincide", code: "PASSWORD_CONFIRM_MISMATCH" });
+        return res.status(400).json({ error: "La confirmación no coincide", code: "PASSWORD_MISMATCH" });
       }
+      const tenant = await storage.getTenantById(req.auth!.tenantId!);
       const user = await storage.getUserById(req.auth!.userId, req.auth!.tenantId!);
       if (!user) return res.status(404).json({ error: "Usuario no encontrado", code: "USER_NOT_FOUND" });
       const ok = await comparePassword(currentPassword, user.password);
-      if (!ok) return res.status(401).json({ error: "La contraseña actual es incorrecta", code: "PASSWORD_CURRENT_INVALID" });
+      if (!ok) return res.status(401).json({ error: "La contraseña actual es incorrecta", code: "CURRENT_PASSWORD_INVALID" });
+      const evaluation = evaluatePassword(newPassword, {
+        dni: user.email,
+        email: user.email,
+        tenantCode: tenant?.code,
+        tenantName: tenant?.name,
+      });
+      if (!evaluation.isValid) {
+        await storage.createAuditLog({
+          tenantId: req.auth!.tenantId!,
+          userId: req.auth!.userId,
+          action: "password_change_fail_policy",
+          entityType: "auth",
+          metadata: { score: evaluation.score, warnings: evaluation.warnings },
+        });
+        return res.status(400).json({ error: "La contraseña no cumple la política", code: "PASSWORD_POLICY_FAILED", details: evaluation });
+      }
       const hashed = await bcrypt.hash(newPassword, 12);
       await storage.updateUser(user.id, req.auth!.tenantId!, { password: hashed });
+      setPasswordWeakFlag(user.id, false);
+      await storage.createAuditLog({
+        tenantId: req.auth!.tenantId!,
+        userId: req.auth!.userId,
+        action: "password_change_success",
+        entityType: "auth",
+      });
       return res.json({ ok: true });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
@@ -255,7 +300,7 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
-  app.delete("/api/tenant", tenantAuth, requireTenantAdmin, async (req, res) => {
+  app.delete("/api/tenant", tenantAuth, requireTenantAdmin, sensitiveActionLimiter, async (req, res) => {
     try {
       if (req.auth?.role === "CASHIER") {
         return res.status(403).json({ error: "Acceso denegado", code: "FORBIDDEN" });

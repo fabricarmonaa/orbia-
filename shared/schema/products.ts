@@ -52,8 +52,10 @@ export const products = pgTable(
     costCurrency: varchar("cost_currency", { length: 10 }),
     marginPct: numeric("margin_pct", { precision: 5, scale: 2 }),
     stock: integer("stock"),
+    minStock: numeric("min_stock", { precision: 12, scale: 3 }).notNull().default("0"),
     sku: varchar("sku", { length: 100 }),
     isActive: boolean("is_active").notNull().default(true),
+    statusCode: varchar("status_code", { length: 40 }).default("ACTIVE"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [

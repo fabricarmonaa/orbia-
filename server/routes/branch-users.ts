@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 import { tenantAuth, blockBranchScope, hashPassword, requireTenantAdmin } from "../auth";
+import { evaluatePassword } from "../services/password-policy";
 
 export function registerBranchUserRoutes(app: Express) {
   app.get("/api/branch-users", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
@@ -32,6 +33,19 @@ export function registerBranchUserRoutes(app: Express) {
       const existingUser = await storage.getUserByEmail(email, tenantId);
       if (existingUser) {
         return res.status(400).json({ error: "Ya existe un usuario con ese email" });
+      }
+
+      const tenant = await storage.getTenantById(tenantId);
+      const passEval = evaluatePassword(String(password || ""), { email, tenantCode: tenant?.code, tenantName: tenant?.name });
+      if (!passEval.isValid) {
+        await storage.createAuditLog({
+          tenantId,
+          userId: req.auth!.userId,
+          action: "password_change_fail_policy",
+          entityType: "branch_user",
+          metadata: { score: passEval.score, warnings: passEval.warnings },
+        });
+        return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
       }
 
       const hashedPassword = await hashPassword(password);

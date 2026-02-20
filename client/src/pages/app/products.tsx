@@ -122,6 +122,11 @@ export default function ProductsPage() {
   const [stockDialog, setStockDialog] = useState(false);
   const [stockByBranch, setStockByBranch] = useState<Array<{ branchId: number; branchName: string; stock: number }>>([]);
   const [stockProduct, setStockProduct] = useState<ProductRow | null>(null);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustBranchId, setAdjustBranchId] = useState("");
+  const [adjustQty, setAdjustQty] = useState("1");
+  const [adjustReason, setAdjustReason] = useState("");
+  const [adjustDirection, setAdjustDirection] = useState<"IN"|"OUT">("IN");
   const [newCat, setNewCat] = useState("");
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [editProduct, setEditProduct] = useState<ProductRow | null>(null);
@@ -296,6 +301,20 @@ export default function ProductsPage() {
     } catch (err: any) {
       toast({ title: "No se pudo eliminar", description: err.message, variant: "destructive" });
     }
+  }
+
+  async function submitAdjustStock() {
+    if (!stockProduct) return;
+    await apiRequest("POST", "/api/stock/adjust", {
+      product_id: stockProduct.id,
+      branch_id: adjustBranchId ? Number(adjustBranchId) : null,
+      quantity: Number(adjustQty),
+      direction: adjustDirection,
+      reason: adjustReason || "Ajuste manual",
+    });
+    setAdjustOpen(false);
+    await openStockDialog(stockProduct);
+    await fetchProducts(filters);
   }
 
   async function openStockDialog(product: ProductRow) {
@@ -650,6 +669,9 @@ export default function ProductsPage() {
       <Dialog open={stockDialog} onOpenChange={setStockDialog}>
         <DialogContent>
           <DialogHeader><DialogTitle>Stock por sucursal {stockProduct ? `- ${stockProduct.name}` : ""}</DialogTitle></DialogHeader>
+          <div className="flex justify-end">
+            <Button size="sm" onClick={() => setAdjustOpen(true)}>Ajustar stock</Button>
+          </div>
           <div className="space-y-2">
             {stockByBranch.length === 0 ? (
               <p className="text-sm text-muted-foreground">Sin detalle disponible.</p>
@@ -662,6 +684,26 @@ export default function ProductsPage() {
           </div>
         </DialogContent>
       </Dialog>
+      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Ajustar stock {stockProduct ? `- ${stockProduct.name}` : ""}</DialogTitle></DialogHeader>
+          <div className="space-y-2">
+            <Label>Sucursal (id o vacío central)</Label>
+            <Input value={adjustBranchId} onChange={(e) => setAdjustBranchId(e.target.value)} placeholder="Central si vacío" />
+            <Label>Dirección</Label>
+            <Select value={adjustDirection} onValueChange={(v: any) => setAdjustDirection(v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="IN">IN</SelectItem><SelectItem value="OUT">OUT</SelectItem></SelectContent>
+            </Select>
+            <Label>Cantidad</Label>
+            <Input type="number" min={0.001} step={0.001} value={adjustQty} onChange={(e) => setAdjustQty(e.target.value)} />
+            <Label>Motivo</Label>
+            <Input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Motivo" />
+            <Button onClick={submitAdjustStock}>Confirmar ajuste</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
     </div>
   );
 }

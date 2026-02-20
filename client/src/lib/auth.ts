@@ -12,6 +12,7 @@ export interface AuthUser {
   avatarUrl?: string | null;
   subscriptionWarning?: string | null;
   cashierId?: number | null;
+  passwordWeak?: boolean;
 }
 
 type LogoutReason = "manual" | "expired" | "invalid" | "required" | "offline" | "forced";

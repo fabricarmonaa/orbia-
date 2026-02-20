@@ -7,6 +7,8 @@ import {
   cashMovements,
   cashSessions,
   productStockByBranch,
+  stockLevels,
+  stockMovements,
   products,
   saleItems,
   sales,
@@ -167,6 +169,38 @@ export const salesStorage = {
             .set({ stock: current - item.quantity })
             .where(and(eq(products.tenantId, input.tenantId), eq(products.id, item.productId)));
         }
+
+      for (const item of enrichedItems) {
+        const [level] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.tenantId, input.tenantId), eq(stockLevels.productId, item.productId), effectiveBranchId ? eq(stockLevels.branchId, effectiveBranchId) : sql`${stockLevels.branchId} IS NULL`));
+        const currentLevel = Number(level?.quantity || 0);
+        const nextLevel = currentLevel - item.quantity;
+        if (nextLevel < 0) {
+          throw Object.assign(new Error("INSUFFICIENT_STOCK"), { code: "INSUFFICIENT_STOCK", productId: item.productId, requested: item.quantity, available: currentLevel });
+        }
+        if (level) {
+          await tx.update(stockLevels).set({ quantity: String(nextLevel), updatedAt: new Date() }).where(eq(stockLevels.id, level.id));
+        } else {
+          await tx.insert(stockLevels).values({ tenantId: input.tenantId, productId: item.productId, branchId: effectiveBranchId, quantity: String(nextLevel), averageCost: "0" });
+        }
+        await tx.insert(stockMovements).values({
+          tenantId: input.tenantId,
+          productId: item.productId,
+          branchId: effectiveBranchId,
+          movementType: "SALE",
+          referenceId: sale.id,
+          quantity: String(item.quantity),
+          note: `Venta ${saleNumber}`,
+          reason: `Venta ${saleNumber}`,
+          createdByUserId: input.cashierUserId,
+          userId: input.cashierUserId,
+          unitCost: null,
+          totalCost: null,
+        });
+      }
+
       }
 
       const [openSession] = await tx

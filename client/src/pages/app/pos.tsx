@@ -40,7 +40,8 @@ export default function PosPage() {
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
-  const [ticketSize, setTicketSize] = useState<TicketSize>("80mm");
+  const ticketSizeKey = "orbia_ticket_size_pref";
+  const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
 
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.product.estimatedSalePrice ?? item.product.price) * item.quantity, 0), [cart]);
   const discountAmount = useMemo(() => {
@@ -196,7 +197,7 @@ export default function PosPage() {
               <p className="font-medium">Detalle de venta {latestSale.number}</p>
               <p>Total: {latestSale.total}</p>
               <div className="flex gap-2">
-                <Select value={ticketSize} onValueChange={(v: TicketSize) => setTicketSize(v)}>
+                <Select value={ticketSize} onValueChange={(v: TicketSize) => { setTicketSize(v); localStorage.setItem(ticketSizeKey, v); }}>
                   <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="58mm">58mm</SelectItem>

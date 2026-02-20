@@ -14,6 +14,8 @@ import { superAdminAuditLogs, superAdminTotp } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { verify as verifyTotp } from "otplib";
 import { sanitizeShortText } from "../security/sanitize";
+import { evaluatePassword } from "../services/password-policy";
+import { setPasswordWeakFlag } from "../services/password-weak-cache";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -25,30 +27,46 @@ const superLockMs = parseInt(process.env.SUPERADMIN_LOCK_MS || String(15 * 60 * 
 
 const superLoginSchema = z.object({
   email: z.string().trim().email().max(120),
-  password: z.string().min(6).max(128),
+  password: z.string().min(1).max(256),
   totpCode: z.string().trim().min(6).max(8).optional(),
 });
 
 const tenantLoginSchema = z.object({
   tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
-  password: z.string().min(6).max(128),
+  password: z.string().min(1).max(256),
 });
 
 const superLoginLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  max: parseInt(process.env.AUTH_SUPER_LOGIN_LIMIT_PER_MIN || "8", 10),
+  windowMs: 10 * 60 * 1000,
+  max: parseInt(process.env.AUTH_SUPER_LOGIN_LIMIT || "10", 10),
   keyGenerator: (req) => `super-login:${req.ip}`,
-  errorMessage: "Demasiados intentos. Intentá nuevamente en un minuto.",
-  code: "LOGIN_RATE_LIMIT",
+  errorMessage: "Demasiados intentos. Intentá nuevamente en unos minutos.",
+  code: "RATE_LIMITED",
+  onLimit: ({ req, retryAfterSec }) => {
+    void logSuperSecurity(null, "brute_force_blocked", { route: "/api/auth/super/login", ip: getClientIp(req), retryAfterSec });
+  },
 });
 
 const tenantLoginLimiter = createRateLimiter({
-  windowMs: 60 * 1000,
-  max: parseInt(process.env.AUTH_LOGIN_LIMIT_PER_MIN || "10", 10),
+  windowMs: 10 * 60 * 1000,
+  max: parseInt(process.env.AUTH_LOGIN_LIMIT || "10", 10),
   keyGenerator: (req) => `tenant-login:${req.ip}:${String(req.body?.tenantCode || "").toLowerCase()}`,
-  errorMessage: "Demasiados intentos. Intentá nuevamente en un minuto.",
-  code: "LOGIN_RATE_LIMIT",
+  errorMessage: "Demasiados intentos. Intentá nuevamente en unos minutos.",
+  code: "RATE_LIMITED",
+  onLimit: async ({ req, retryAfterSec }) => {
+    const tenantCode = String(req.body?.tenantCode || "").trim();
+    if (!tenantCode) return;
+    const tenant = await storage.getTenantByCode(tenantCode).catch(() => undefined);
+    if (!tenant) return;
+    await storage.createAuditLog({
+      tenantId: tenant.id,
+      userId: null,
+      action: "brute_force_blocked",
+      entityType: "auth",
+      metadata: { route: "/api/auth/login", ip: req.ip, retryAfterSec },
+    }).catch(() => undefined);
+  },
 });
 
 function markFailure(map: Map<string, LockState>, key: string) {
@@ -285,6 +303,8 @@ export function registerAuthRoutes(app: Express) {
           }
         }
       }
+      const weakEvaluation = evaluatePassword(password, { tenantCode: tenant.code, tenantName: tenant.name, email: user.email });
+      setPasswordWeakFlag(user.id, weakEvaluation.score < 45);
       const token = generateToken({
         userId: user.id,
         email: user.email,
@@ -306,6 +326,7 @@ export function registerAuthRoutes(app: Express) {
           branchId: user.branchId,
           scope: user.scope || "TENANT",
           avatarUrl: user.avatarUrl || null,
+          passwordWeak: weakEvaluation.score < 45,
         },
         subscriptionWarning,
       });

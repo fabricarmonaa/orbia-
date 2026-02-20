@@ -7,7 +7,7 @@ import { z } from "zod";
 import { enforceBranchScope, requireRoleAny, tenantAuth } from "../auth";
 import { validateBody } from "../middleware/validate";
 import { db } from "../db";
-import { branches, customers, importJobs, productStockByBranch, products, purchaseItems, purchases } from "@shared/schema";
+import { branches, customers, importJobs, productStockByBranch, products, purchaseItems, purchases, stockLevels, stockMovements } from "@shared/schema";
 import { buildPreview, normalizeRowsForCommit } from "../services/excel-import";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
@@ -189,6 +189,31 @@ export function registerImportRoutes(app: Express) {
             }
           }
           await tx.update(products).set({ stock: sql`${products.stock} + ${quantity}` }).where(and(eq(products.id, product.id), eq(products.tenantId, tenantId)));
+
+          const [level] = await tx.select().from(stockLevels).where(and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.productId, product.id), branchId ? eq(stockLevels.branchId, branchId) : sql`${stockLevels.branchId} IS NULL`)).limit(1);
+          const currentQty = Number(level?.quantity || 0);
+          const currentAvg = Number(level?.averageCost || 0);
+          const nextQty = currentQty + quantity;
+          const nextAvg = nextQty > 0 ? (((currentQty * currentAvg) + (quantity * unitPrice)) / nextQty) : currentAvg;
+          if (level) {
+            await tx.update(stockLevels).set({ quantity: String(nextQty), averageCost: String(nextAvg), updatedAt: new Date() }).where(eq(stockLevels.id, level.id));
+          } else {
+            await tx.insert(stockLevels).values({ tenantId, productId: product.id, branchId: branchId || null, quantity: String(nextQty), averageCost: String(nextAvg) });
+          }
+          await tx.insert(stockMovements).values({
+            tenantId,
+            productId: product.id,
+            branchId: branchId || null,
+            movementType: "PURCHASE",
+            referenceId: purchase.id,
+            quantity: String(quantity),
+            unitCost: String(unitPrice),
+            totalCost: String(lineTotal),
+            note: `Compra #${purchase.id}`,
+            reason: `Compra #${purchase.id}`,
+            createdByUserId: userId,
+            userId,
+          });
 
           summary.updated_stock_count += 1;
           summary.imported_count += 1;

@@ -7,6 +7,7 @@ interface RateLimitStore {
 const stores = new Map<string, RateLimitStore>();
 
 interface RateLimitOptions {
+  onLimit?: (args: { req: Request; key: string; retryAfterSec: number }) => void | Promise<void>;
   windowMs: number;
   max: number;
   keyGenerator: (req: Request) => string;
@@ -29,9 +30,13 @@ export function createRateLimiter(options: RateLimitOptions) {
 
     if (store.timestamps.length >= options.max) {
       const retryAfter = Math.ceil((store.timestamps[0] + windowMs - now) / 1000);
+      if (options.onLimit) {
+        void options.onLimit({ req, key, retryAfterSec: retryAfter });
+      }
       return res.status(429).json({
         error: options.errorMessage,
         code: options.code || "RATE_LIMIT_EXCEEDED",
+        retryAfterSec: retryAfter,
         retryAfter,
       });
     }

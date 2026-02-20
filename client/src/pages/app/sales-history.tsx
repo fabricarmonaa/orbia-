@@ -20,7 +20,8 @@ export default function SalesHistoryPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [q, setQ] = useState("");
-  const [ticketSize, setTicketSize] = useState<TicketSize>("80mm");
+  const ticketSizeKey = "orbia_ticket_size_pref";
+  const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
 
   async function load() {
     const params = new URLSearchParams();
@@ -52,7 +53,7 @@ export default function SalesHistoryPage() {
           <div><Label>Búsqueda</Label><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="N° venta" /></div>
           <div>
             <Label>Tamaño ticket</Label>
-            <Select value={ticketSize} onValueChange={(v: TicketSize) => setTicketSize(v)}>
+            <Select value={ticketSize} onValueChange={(v: TicketSize) => { setTicketSize(v); localStorage.setItem(ticketSizeKey, v); }}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="58mm">58mm</SelectItem>

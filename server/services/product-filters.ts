@@ -117,6 +117,7 @@ export async function queryProductsByFilters(
       stock: products.stock,
       sku: products.sku,
       isActive: products.isActive,
+      statusCode: products.statusCode,
       createdAt: products.createdAt,
       pricingMode: products.pricingMode,
       costAmount: products.costAmount,

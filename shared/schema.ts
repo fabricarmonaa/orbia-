@@ -28,3 +28,5 @@ export * from './schema/customers';
 export * from './schema/purchases';
 
 export * from './schema/subscriptions';
+
+export * from './schema/statuses';

@@ -20,6 +20,9 @@ import SettingsPage from "./settings";
 import MessagingSettingsPage from "./messaging";
 import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
+import PrintTestPage from "./print-test";
+import StockKardexPage from "./stock-kardex";
+import StockTransfersPage from "./stock-transfers";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -90,6 +93,9 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/branches" component={BranchesPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/delivery" component={DeliveryPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/stock/kardex" component={StockKardexPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/stock/transfers" component={StockTransfersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}

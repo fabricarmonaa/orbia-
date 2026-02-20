@@ -14,6 +14,7 @@ import { generatePriceListPdf } from "../services/pdf/price-list";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
+import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -41,6 +42,7 @@ const productBaseSchema = z.object({
   costAmount: z.coerce.number().min(0).optional().nullable(),
   costCurrency: sanitizeOptionalShort(10).nullable(),
   marginPct: z.coerce.number().min(0).max(1000).optional().nullable(),
+  statusCode: z.string().max(40).optional().nullable(),
 });
 
 const productInputSchema = productBaseSchema.superRefine((value, ctx) => {
@@ -123,12 +125,18 @@ export function registerProductRoutes(app: Express) {
         }
       }
 
-      const normalized = await Promise.all(data.map(async (p) => ({
-        ...p,
-        stockTotal: toNumber(p.stockTotal),
-        estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
-        branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
-      })));
+      const statuses = await getStatuses(tenantId, "PRODUCT", true);
+      const statusMap = new Map(statuses.map((s) => [s.code, s]));
+      const normalized = await Promise.all(data.map(async (p) => {
+        const code = p.statusCode || (p.isActive ? "ACTIVE" : "INACTIVE");
+        return {
+          ...p,
+          stockTotal: toNumber(p.stockTotal),
+          status: statusMap.get(code) ? { code, label: statusMap.get(code)!.label, color: statusMap.get(code)!.color } : { code, label: code, color: "#6B7280" },
+          estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
+          branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
+        };
+      }));
 
       const page = filters.page ?? 1;
       const pageSize = filters.pageSize ?? 20;
@@ -167,6 +175,8 @@ export function registerProductRoutes(app: Express) {
       const hasBranches = branchCount > 0;
       const payload = req.body as z.infer<typeof productInputSchema>;
 
+      const statusCode = payload.statusCode ? normalizeStatusCode(payload.statusCode) : (await getDefaultStatus(tenantId, "PRODUCT"))?.code || "ACTIVE";
+      await ensureStatusExists(tenantId, "PRODUCT", statusCode);
       const data = await storage.createProduct({
         tenantId,
         name: payload.name,
@@ -180,6 +190,8 @@ export function registerProductRoutes(app: Express) {
         costCurrency: payload.costCurrency || null,
         marginPct: payload.marginPct !== null && payload.marginPct !== undefined ? String(payload.marginPct) : null,
         stock: hasBranches ? null : (payload.stock ?? 0),
+        statusCode,
+        isActive: statusCode !== "INACTIVE",
       });
       res.status(201).json({ data });
     } catch (err: any) {
@@ -271,7 +283,7 @@ export function registerProductRoutes(app: Express) {
           tenantId,
           productId,
           branchId: targetBranchId,
-          quantity: delta,
+          quantity: String(Math.abs(delta)),
           reason: reason || null,
           userId: req.auth!.userId,
         });
@@ -314,6 +326,12 @@ export function registerProductRoutes(app: Express) {
       if (payload.stock !== undefined && !hasBranches) updateData.stock = payload.stock;
       if (payload.sku !== undefined) updateData.sku = payload.sku;
       if (payload.categoryId !== undefined) updateData.categoryId = payload.categoryId;
+      if (payload.statusCode !== undefined) {
+        const statusCode = normalizeStatusCode(payload.statusCode || "");
+        await ensureStatusExists(tenantId, "PRODUCT", statusCode);
+        updateData.statusCode = statusCode;
+        updateData.isActive = statusCode !== "INACTIVE";
+      }
 
       const product = await storage.updateProduct(productId, tenantId, updateData);
       res.json({ data: product });
@@ -337,8 +355,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado" });
-      await storage.toggleProductActive(productId, tenantId, !existing.isActive);
-      res.json({ data: { isActive: !existing.isActive } });
+      const nextActive = !existing.isActive;
+      await storage.updateProduct(productId, tenantId, { isActive: nextActive, statusCode: nextActive ? "ACTIVE" : "INACTIVE" });
+      res.json({ data: { isActive: nextActive, statusCode: nextActive ? "ACTIVE" : "INACTIVE" } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -357,7 +376,7 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND" });
-      await storage.toggleProductActive(productId, tenantId, false);
+      await storage.updateProduct(productId, tenantId, { isActive: false, statusCode: "INACTIVE" });
       res.json({ data: { id: productId, deleted: true } });
     } catch {
       res.status(500).json({ error: "No se pudo eliminar el producto", code: "PRODUCT_DELETE_ERROR" });

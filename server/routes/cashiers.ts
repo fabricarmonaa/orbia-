@@ -3,6 +3,8 @@ import { z } from "zod";
 import { comparePassword, generateToken, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams } from "../middleware/validate";
+import { createRateLimiter } from "../middleware/rate-limit";
+import { validateCashierPin } from "../services/password-policy";
 import { sanitizeShortText } from "../security/sanitize";
 
 const pinSchema = z.string().regex(/^\d{4,8}$/);
@@ -28,7 +30,26 @@ const cashierLoginSchema = z.object({
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
 export function registerCashierRoutes(app: Express) {
-  app.post("/api/cashiers/login", validateBody(cashierLoginSchema), async (req, res) => {
+  const cashierLoginLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 15,
+    keyGenerator: (req) => `cashier-login:${req.ip}:${String(req.body?.tenant_code || "").toLowerCase()}`,
+    errorMessage: "Demasiados intentos. Reintentá más tarde.",
+    code: "RATE_LIMITED",
+    onLimit: async ({ req, retryAfterSec }) => {
+      const tenantCode = String(req.body?.tenant_code || "");
+      const tenant = await storage.getTenantByCode(tenantCode).catch(() => undefined);
+      if (!tenant) return;
+      await storage.createAuditLog({
+        tenantId: tenant.id,
+        userId: null,
+        action: "brute_force_blocked",
+        entityType: "cashier_auth",
+        metadata: { route: "/api/cashiers/login", ip: req.ip, retryAfterSec },
+      }).catch(() => undefined);
+    },
+  });
+  app.post("/api/cashiers/login", cashierLoginLimiter, validateBody(cashierLoginSchema), async (req, res) => {
     try {
       const { tenant_code, pin } = req.body as z.infer<typeof cashierLoginSchema>;
       const tenant = await storage.getTenantByCode(tenant_code);
@@ -87,6 +108,8 @@ export function registerCashierRoutes(app: Express) {
     try {
       const tenantId = req.auth!.tenantId!;
       const payload = req.body as z.infer<typeof createCashierSchema>;
+      const pinCheck = validateCashierPin(payload.pin);
+      if (!pinCheck.isValid) return res.status(400).json({ error: pinCheck.reason, code: "PIN_POLICY_FAILED" });
       if (payload.branch_id) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
@@ -122,6 +145,10 @@ export function registerCashierRoutes(app: Express) {
       if (payload.branch_id) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
+      }
+      if (payload.pin) {
+        const pinCheck = validateCashierPin(payload.pin);
+        if (!pinCheck.isValid) return res.status(400).json({ error: pinCheck.reason, code: "PIN_POLICY_FAILED" });
       }
       const data = await storage.updateCashier(id, tenantId, {
         name: payload.name,
