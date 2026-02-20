@@ -5,6 +5,7 @@ import {
   boolean,
   timestamp,
   serial,
+  text,
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -14,7 +15,9 @@ export const tenants = pgTable("tenants", {
   id: serial("id").primaryKey(),
   code: varchar("code", { length: 50 }).notNull().unique(),
   name: varchar("name", { length: 200 }).notNull(),
-  slug: varchar("slug", { length: 100 }).unique(),
+  slug: varchar("slug", { length: 120 }).notNull().unique(),
+  tosContent: text("tos_content"),
+  tosUpdatedAt: timestamp("tos_updated_at"),
   planId: integer("plan_id").references(() => plans.id),
   isActive: boolean("is_active").notNull().default(true),
   isBlocked: boolean("is_blocked").notNull().default(false),

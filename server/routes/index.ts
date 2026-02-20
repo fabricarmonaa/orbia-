@@ -18,6 +18,9 @@ import { registerPdfRoutes } from "./pdfs";
 import { registerAuditRoutes } from "./audit";
 import { registerReportRoutes } from "./reports";
 import { registerMessageTemplateRoutes } from "./message-templates";
+import { registerSaleRoutes } from "./sales";
+import { registerCashierRoutes } from "./cashiers";
+import { registerImportRoutes } from "./imports";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -42,5 +45,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerExpenseRoutes(app);
   registerReportRoutes(app);
   registerMessageTemplateRoutes(app);
+  registerSaleRoutes(app);
+  registerCashierRoutes(app);
+  registerImportRoutes(app);
   return httpServer;
 }

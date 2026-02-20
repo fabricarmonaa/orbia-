@@ -11,18 +11,62 @@ import {
 } from "../auth";
 import { queryProductsByFilters, productFiltersSchema } from "../services/product-filters";
 import { generatePriceListPdf } from "../services/pdf/price-list";
+import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { validateBody } from "../middleware/validate";
+import { resolveProductUnitPrice } from "../services/pricing";
 
-const productInputSchema = z.object({
-  name: z.string().trim().min(2).max(200),
-  description: z.string().trim().max(1000).optional().nullable(),
+const sanitizeOptionalShort = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().transform((value) => sanitizeShortText(value, max)).optional()
+  );
+
+const sanitizeOptionalLong = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().transform((value) => sanitizeLongText(value, max)).optional()
+  );
+
+const pricingModeSchema = z.enum(["MANUAL", "MARGIN"]);
+
+const productBaseSchema = z.object({
+  name: z.string().transform((value) => sanitizeShortText(value, 200)).refine((value) => value.length >= 2, "Nombre inválido"),
+  description: sanitizeOptionalLong(1000).nullable(),
   price: z.coerce.number().min(0),
-  sku: z.string().trim().max(100).optional().nullable(),
+  sku: sanitizeOptionalShort(100).nullable(),
   categoryId: z.coerce.number().int().positive().optional().nullable(),
   cost: z.coerce.number().min(0).optional().nullable(),
   stock: z.coerce.number().int().min(0).optional().nullable(),
+  pricingMode: pricingModeSchema.optional().default("MANUAL"),
+  costAmount: z.coerce.number().min(0).optional().nullable(),
+  costCurrency: sanitizeOptionalShort(10).nullable(),
+  marginPct: z.coerce.number().min(0).max(1000).optional().nullable(),
 });
 
-const productUpdateSchema = productInputSchema.partial();
+const productInputSchema = productBaseSchema.superRefine((value, ctx) => {
+  const mode = (value.pricingMode || "MANUAL").toUpperCase();
+  if (mode === "MARGIN") {
+    if (value.costAmount === undefined || value.costAmount === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Costo requerido en modo margen", path: ["costAmount"] });
+    }
+    if (value.marginPct === undefined || value.marginPct === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Margen requerido en modo margen", path: ["marginPct"] });
+    }
+  }
+});
+
+const productUpdateSchema = productBaseSchema.partial().superRefine((value, ctx) => {
+  const mode = (value.pricingMode || "MANUAL").toUpperCase();
+  if (mode === "MARGIN") {
+    if (value.costAmount === undefined || value.costAmount === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Costo requerido en modo margen", path: ["costAmount"] });
+    }
+    if (value.marginPct === undefined || value.marginPct === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Margen requerido en modo margen", path: ["marginPct"] });
+    }
+  }
+});
+
 
 function toNumber(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -45,6 +89,7 @@ export function registerProductRoutes(app: Express) {
     requireTenantAdmin,
     requireFeature("products"),
     blockBranchScope,
+    validateBody(z.object({ name: z.string().transform((value) => sanitizeShortText(value, 120)).refine((value) => value.length >= 2, "Nombre inválido") })),
     async (req, res) => {
     try {
       const data = await storage.createProductCategory({
@@ -78,11 +123,12 @@ export function registerProductRoutes(app: Express) {
         }
       }
 
-      const normalized = data.map((p) => ({
+      const normalized = await Promise.all(data.map(async (p) => ({
         ...p,
         stockTotal: toNumber(p.stockTotal),
+        estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
         branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
-      }));
+      })));
 
       const page = filters.page ?? 1;
       const pageSize = filters.pageSize ?? 20;
@@ -113,12 +159,13 @@ export function registerProductRoutes(app: Express) {
     requireTenantAdmin,
     requireFeature("products"),
     blockBranchScope,
+    validateBody(productInputSchema),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const branchCount = await storage.countBranchesByTenant(tenantId);
       const hasBranches = branchCount > 0;
-      const payload = productInputSchema.parse(req.body);
+      const payload = req.body as z.infer<typeof productInputSchema>;
 
       const data = await storage.createProduct({
         tenantId,
@@ -128,6 +175,10 @@ export function registerProductRoutes(app: Express) {
         sku: payload.sku || null,
         categoryId: payload.categoryId || null,
         cost: payload.cost !== null && payload.cost !== undefined ? String(payload.cost) : null,
+        pricingMode: payload.pricingMode || "MANUAL",
+        costAmount: payload.costAmount !== null && payload.costAmount !== undefined ? String(payload.costAmount) : null,
+        costCurrency: payload.costCurrency || null,
+        marginPct: payload.marginPct !== null && payload.marginPct !== undefined ? String(payload.marginPct) : null,
         stock: hasBranches ? null : (payload.stock ?? 0),
       });
       res.status(201).json({ data });
@@ -182,22 +233,27 @@ export function registerProductRoutes(app: Express) {
     requireTenantAdmin,
     requireFeature("products"),
     enforceBranchScope,
+    validateBody(z.object({
+      branchId: z.coerce.number().int().positive().optional().nullable(),
+      stock: z.coerce.number().int().min(0),
+      reason: sanitizeOptionalLong(200).nullable(),
+    })),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const productId = parseInt(req.params.id as string);
-      const { branchId, stock, reason } = req.body;
+      const { branchId, stock, reason } = req.body as { branchId?: number | null; stock: number; reason?: string | null };
       if (branchId === undefined || stock === undefined) {
         return res.status(400).json({ error: "branchId y stock son obligatorios" });
       }
-      const stockNum = parseInt(String(stock));
-      if (isNaN(stockNum) || stockNum < 0) {
-        return res.status(400).json({ error: "Stock debe ser un número entero no negativo" });
-      }
+      const stockNum = stock;
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
       const targetBranchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : branchId;
+      if (!targetBranchId) {
+        return res.status(400).json({ error: "branchId es obligatorio" });
+      }
       const existing = await storage.getProductStockByBranch(productId, tenantId);
       const prev = existing.find(s => s.branchId === targetBranchId);
       const prevStock = prev?.stock || 0;
@@ -234,6 +290,7 @@ export function registerProductRoutes(app: Express) {
     requireTenantAdmin,
     requireFeature("products"),
     blockBranchScope,
+    validateBody(productUpdateSchema),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
@@ -243,13 +300,17 @@ export function registerProductRoutes(app: Express) {
       const branchCount = await storage.countBranchesByTenant(tenantId);
       const hasBranches = branchCount > 0;
 
-      const payload = productUpdateSchema.parse(req.body);
+      const payload = req.body as z.infer<typeof productUpdateSchema>;
 
       const updateData: any = {};
       if (payload.name !== undefined) updateData.name = payload.name;
       if (payload.description !== undefined) updateData.description = payload.description;
       if (payload.price !== undefined) updateData.price = String(payload.price);
       if (payload.cost !== undefined) updateData.cost = payload.cost !== null ? String(payload.cost) : null;
+      if (payload.pricingMode !== undefined) updateData.pricingMode = payload.pricingMode;
+      if (payload.costAmount !== undefined) updateData.costAmount = payload.costAmount !== null ? String(payload.costAmount) : null;
+      if (payload.costCurrency !== undefined) updateData.costCurrency = payload.costCurrency || null;
+      if (payload.marginPct !== undefined) updateData.marginPct = payload.marginPct !== null ? String(payload.marginPct) : null;
       if (payload.stock !== undefined && !hasBranches) updateData.stock = payload.stock;
       if (payload.sku !== undefined) updateData.sku = payload.sku;
       if (payload.categoryId !== undefined) updateData.categoryId = payload.categoryId;

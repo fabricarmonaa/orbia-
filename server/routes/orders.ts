@@ -5,38 +5,48 @@ import { z } from "zod";
 import { randomUUID } from "crypto";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
+import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { validateBody, validateParams } from "../middleware/validate";
 
-const optionalText = (max: number) =>
+const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+
+const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
-    z.string().trim().max(max).optional()
+    z.string().transform((value) => sanitizeShortText(value, max)).optional()
+  );
+
+const sanitizeOptionalLong = (max: number) =>
+  z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().transform((value) => sanitizeLongText(value, max)).optional()
   );
 
 const createOrderSchema = z.object({
-  type: optionalText(30),
-  customerName: optionalText(120).nullable(),
-  customerPhone: optionalText(40).nullable(),
+  type: sanitizeOptionalShort(30),
+  customerName: sanitizeOptionalShort(120).nullable(),
+  customerPhone: sanitizeOptionalShort(40).nullable(),
   customerEmail: z.preprocess(
     (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
     z.string().trim().email().max(120).optional()
   ).nullable(),
-  description: optionalText(500).nullable(),
+  description: sanitizeOptionalLong(500).nullable(),
   statusId: z.coerce.number().int().positive().optional().nullable(),
   totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
   requiresDelivery: z.boolean().optional(),
-  deliveryAddress: optionalText(200).nullable(),
-  deliveryCity: optionalText(80).nullable(),
-  deliveryAddressNotes: optionalText(200).nullable(),
+  deliveryAddress: sanitizeOptionalLong(200).nullable(),
+  deliveryCity: sanitizeOptionalShort(80).nullable(),
+  deliveryAddressNotes: sanitizeOptionalLong(200).nullable(),
 });
 
 const orderStatusSchema = z.object({
   statusId: z.coerce.number().int().positive(),
-  note: z.string().trim().max(200).optional().nullable(),
+  note: z.string().transform((value) => sanitizeLongText(value, 200)).optional().nullable(),
 });
 
 const orderCommentSchema = z.object({
-  content: z.string().trim().min(1).max(500),
+  content: z.string().transform((value) => sanitizeLongText(value, 500)).refine((value) => value.length > 0, "Comentario requerido"),
   isPublic: z.boolean().optional(),
 });
 
@@ -56,9 +66,9 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.post("/api/orders", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.post("/api/orders", tenantAuth, enforceBranchScope, validateBody(createOrderSchema), async (req, res) => {
     try {
-      const payload = createOrderSchema.parse(req.body);
+      const payload = req.body as z.infer<typeof createOrderSchema>;
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const idemKey = getIdempotencyKey(req.headers["idempotency-key"] as string | undefined);
@@ -129,11 +139,11 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/orders/:id/status", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.patch("/api/orders/:id/status", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(orderStatusSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const orderId = parseInt(req.params.id as string);
-      const { statusId, note } = orderStatusSchema.parse(req.body);
+      const orderId = req.params.id as unknown as number;
+      const { statusId, note } = req.body as z.infer<typeof orderStatusSchema>;
       const order = await storage.getOrderById(orderId, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
       if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
@@ -187,10 +197,10 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.post("/api/orders/:id/comments", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.post("/api/orders/:id/comments", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(orderCommentSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const orderId = parseInt(req.params.id as string);
+      const orderId = req.params.id as unknown as number;
 
       // Validate ownership
       const order = await storage.getOrderById(orderId, tenantId);
@@ -201,7 +211,7 @@ export function registerOrderRoutes(app: Express) {
         return res.status(403).json({ error: "No tenés acceso a este pedido" });
       }
 
-      const payload = orderCommentSchema.parse(req.body);
+      const payload = req.body as z.infer<typeof orderCommentSchema>;
       const data = await storage.createOrderComment({
         tenantId,
         orderId,

@@ -3,6 +3,11 @@ import { apiRequest, useAuth, getToken } from "@/lib/auth";
 import { parseApiError } from "@/lib/api-errors";
 import { usePlan } from "@/lib/plan";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   AlignVerticalJustifyStart,
   LayoutGrid,
@@ -86,6 +91,11 @@ export default function SettingsPage() {
   const [brandingSaving, setBrandingSaving] = useState(false);
   const [brandingUploading, setBrandingUploading] = useState(false);
   const tenantLogoInputRef = useRef<HTMLInputElement>(null);
+  const [tenantSlug, setTenantSlug] = useState("");
+  const [tosContent, setTosContent] = useState("");
+  const [tosUpdatedAt, setTosUpdatedAt] = useState<string | null>(null);
+  const [tosSaving, setTosSaving] = useState(false);
+  const [slugSaving, setSlugSaving] = useState(false);
 
   const minTrackingHours = getLimit("tracking_retention_min_hours") || 1;
   const maxTrackingHours = getLimit("tracking_retention_max_hours") || 24;
@@ -111,6 +121,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (user?.role === "admin") {
       fetchConfig();
+      fetchTosConfig();
     } else {
       setLoading(false);
     }
@@ -242,6 +253,61 @@ export default function SettingsPage() {
     }
   }
 
+
+  async function fetchTosConfig() {
+    try {
+      const res = await apiRequest("GET", "/api/branding/tos");
+      const data = await res.json();
+      if (data?.data) {
+        setTenantSlug(data.data.slug || "");
+        setTosContent(data.data.tosContent || "");
+        setTosUpdatedAt(data.data.tosUpdatedAt || null);
+      }
+    } catch {
+      // noop
+    }
+  }
+
+  async function saveTenantSlug() {
+    setSlugSaving(true);
+    try {
+      const slug = tenantSlug
+        .normalize("NFD")
+        .replace(/[̀-ͯ]/g, "")
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, "-")
+        .replace(/[^a-z0-9-]/g, "")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      await apiRequest("PATCH", "/api/branding/slug", { slug });
+      setTenantSlug(slug);
+      toast({ title: "Slug actualizado" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSlugSaving(false);
+    }
+  }
+
+  async function saveTosContent() {
+    setTosSaving(true);
+    try {
+      const res = await apiRequest("PATCH", "/api/branding/tos", { tosContent });
+      const data = await res.json();
+      setTosContent(data?.data?.tosContent || tosContent);
+      setTosUpdatedAt(data?.data?.tosUpdatedAt || new Date().toISOString());
+      toast({ title: "Términos actualizados" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setTosSaving(false);
+    }
+  }
+
+  const slugPreview = `${window.location.origin}/t/${tenantSlug || "mi-negocio"}/tos`;
+  const slugValid = /^[a-z0-9-]{1,120}$/.test(tenantSlug || "");
+
   if (loading || planLoading) {
     return (
       <div className="space-y-6">
@@ -291,6 +357,38 @@ export default function SettingsPage() {
               layoutPresets={layoutPresets}
               planCode={planCode}
             />
+          ),
+        },
+        {
+          id: "tos",
+          label: "Términos Públicos",
+          content: (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold">Términos y Condiciones</h3>
+                <p className="text-sm text-muted-foreground">Configura el enlace público de términos por tenant.</p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label>Slug público</Label>
+                  <div className="flex gap-2">
+                    <Input value={tenantSlug} onChange={(e) => setTenantSlug(e.target.value)} placeholder="mi-negocio" />
+                    <Button onClick={saveTenantSlug} disabled={slugSaving || !slugValid}>{slugSaving ? "Guardando..." : "Guardar slug"}</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{slugPreview}</p>
+                  {!slugValid ? <p className="text-xs text-red-600">Solo letras minúsculas, números y guiones (máx 120).</p> : null}
+                </div>
+                <div className="space-y-2">
+                  <Label>Contenido de términos</Label>
+                  <Textarea value={tosContent} onChange={(e) => setTosContent(e.target.value)} rows={12} />
+                  <div className="flex items-center gap-2">
+                    <Button onClick={saveTosContent} disabled={tosSaving}>{tosSaving ? "Guardando..." : "Guardar términos"}</Button>
+                    <Button type="button" variant="outline" onClick={() => navigator.clipboard.writeText(slugPreview)}>Copiar enlace</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Última actualización: {tosUpdatedAt ? new Date(tosUpdatedAt).toLocaleString() : "Sin actualizar"}</p>
+                </div>
+              </CardContent>
+            </Card>
           ),
         },
         {

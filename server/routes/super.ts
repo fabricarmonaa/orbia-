@@ -78,6 +78,33 @@ const blockTenantBodySchema = z.object({
 });
 
 
+const planPatchSchema = z.object({
+  description: z.string().trim().max(500).optional(),
+  priceAmount: z.coerce.number().min(0).optional(),
+  currency: z.string().trim().max(10).optional(),
+  maxBranches: z.coerce.number().int().min(0).max(999).optional(),
+  allowCashiers: z.boolean().optional(),
+  allowMarginPricing: z.boolean().optional(),
+  allowExcelImport: z.boolean().optional(),
+  allowCustomTos: z.boolean().optional(),
+  featuresJson: z.record(z.boolean()).optional(),
+});
+
+const subscriptionPatchSchema = z.object({
+  planCode: z.string().trim().min(2).max(50),
+  status: z.enum(["ACTIVE", "EXPIRED", "SUSPENDED"]),
+  startsAt: z.string().optional(),
+  expiresAt: z.string().optional(),
+});
+
+const transferInfoSchema = z.object({
+  bank_name: z.string().trim().max(120),
+  account_holder: z.string().trim().max(120),
+  cbu: z.string().trim().max(40),
+  alias: z.string().trim().max(120),
+  whatsapp_contact: z.string().trim().max(50),
+});
+
 
 async function buildTenantSummary(tenant: any) {
   const [plan, owner, addons] = await Promise.all([
@@ -119,6 +146,83 @@ export function registerSuperRoutes(app: Express) {
       const data = await storage.getPlans();
       res.json({ data });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/plans/:code", superAuth, async (req, res) => {
+    try {
+      const code = String(req.params.code || "").trim().toUpperCase();
+      const payload = planPatchSchema.parse(req.body || {});
+      const updated = await storage.updatePlanByCode(code, {
+        description: payload.description,
+        priceMonthly: payload.priceAmount !== undefined ? String(payload.priceAmount) : undefined,
+        currency: payload.currency,
+        maxBranches: payload.maxBranches,
+        allowCashiers: payload.allowCashiers,
+        allowMarginPricing: payload.allowMarginPricing,
+        allowExcelImport: payload.allowExcelImport,
+        allowCustomTos: payload.allowCustomTos,
+        featuresJson: payload.featuresJson,
+      } as any);
+      if (!updated) return res.status(404).json({ error: "Plan no encontrado", code: "PLAN_NOT_FOUND" });
+      res.json({ data: updated });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/super/subscriptions", superAuth, async (_req, res) => {
+    try {
+      const data = await storage.listSubscriptions();
+      res.json({ data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/subscriptions/:tenantId", superAuth, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId as string, 10);
+      const payload = subscriptionPatchSchema.parse(req.body || {});
+      const sub = await storage.updateSubscription(tenantId, {
+        planCode: payload.planCode.toUpperCase(),
+        status: payload.status,
+        startsAt: payload.startsAt ? new Date(payload.startsAt) : new Date(),
+        expiresAt: payload.expiresAt ? new Date(payload.expiresAt) : null,
+      });
+      const plans = await storage.getPlans();
+      const plan = plans.find((p) => p.planCode === payload.planCode.toUpperCase());
+      if (plan) {
+        await storage.updateTenantPlan(tenantId, plan.id);
+      }
+      await storage.updateTenantSubscription(tenantId, sub.startsAt, sub.expiresAt || sub.startsAt);
+      await storage.updateTenantActive(tenantId, payload.status === "ACTIVE");
+      res.json({ data: sub });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/super/transfer-info", superAuth, async (_req, res) => {
+    try {
+      const row = await storage.getSystemSetting("transfer_info");
+      const data = row?.value ? JSON.parse(row.value) : null;
+      res.json({ data });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/transfer-info", superAuth, async (req, res) => {
+    try {
+      const payload = transferInfoSchema.parse(req.body || {});
+      const row = await storage.upsertSystemSetting("transfer_info", JSON.stringify(payload));
+      res.json({ data: row?.value ? JSON.parse(row.value) : payload });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
       res.status(500).json({ error: err.message });
     }
   });

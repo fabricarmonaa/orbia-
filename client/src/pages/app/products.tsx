@@ -44,6 +44,11 @@ type ProductRow = {
   categoryId: number | null;
   price: string;
   cost: string | null;
+  pricingMode?: "MANUAL" | "MARGIN";
+  costAmount?: string | null;
+  costCurrency?: string | null;
+  marginPct?: string | null;
+  estimatedSalePrice?: number;
   stock: number | null;
   stockTotal: number;
   branchStock?: Array<{ branchId: number; branchName: string; stock: number }>;
@@ -87,6 +92,10 @@ const emptyProduct = {
   sku: "",
   categoryId: "",
   cost: "",
+  pricingMode: "MANUAL",
+  costAmount: "",
+  costCurrency: "ARS",
+  marginPct: "",
   stock: "",
 };
 
@@ -208,6 +217,10 @@ export default function ProductsPage() {
         sku: newProduct.sku || null,
         categoryId: newProduct.categoryId ? Number(newProduct.categoryId) : null,
         cost: newProduct.cost ? Number(newProduct.cost) : null,
+        pricingMode: newProduct.pricingMode || "MANUAL",
+        costAmount: newProduct.costAmount ? Number(newProduct.costAmount) : null,
+        costCurrency: newProduct.costCurrency || null,
+        marginPct: newProduct.marginPct ? Number(newProduct.marginPct) : null,
         stock: meta.stockMode === "global" ? (newProduct.stock ? Number(newProduct.stock) : 0) : null,
       });
       toast({ title: "Producto creado" });
@@ -228,6 +241,10 @@ export default function ProductsPage() {
       sku: product.sku || "",
       categoryId: product.categoryId ? String(product.categoryId) : "",
       cost: product.cost || "",
+      pricingMode: product.pricingMode || "MANUAL",
+      costAmount: product.costAmount || "",
+      costCurrency: product.costCurrency || "ARS",
+      marginPct: product.marginPct || "",
       stock: product.stock != null ? String(product.stock) : "",
     });
     setEditDialog(true);
@@ -244,6 +261,10 @@ export default function ProductsPage() {
         sku: editForm.sku || null,
         categoryId: editForm.categoryId ? Number(editForm.categoryId) : null,
         cost: editForm.cost ? Number(editForm.cost) : null,
+        pricingMode: editForm.pricingMode || "MANUAL",
+        costAmount: editForm.costAmount ? Number(editForm.costAmount) : null,
+        costCurrency: editForm.costCurrency || null,
+        marginPct: editForm.marginPct ? Number(editForm.marginPct) : null,
         stock: meta.stockMode === "global" ? (editForm.stock ? Number(editForm.stock) : 0) : null,
       });
       toast({ title: "Producto actualizado" });
@@ -569,7 +590,7 @@ export default function ProductsPage() {
                       </td>
                       <td className="p-2 text-muted-foreground">{row.sku || "-"}</td>
                       <td className="p-2 text-muted-foreground">{categories.find((c) => c.id === row.categoryId)?.name || "Sin categoría"}</td>
-                      <td className="p-2 text-right">${Number(row.price).toLocaleString("es-AR")}</td>
+                      <td className="p-2 text-right">${Number(row.estimatedSalePrice ?? row.price).toLocaleString("es-AR")} {row.pricingMode === "MARGIN" ? <span className="text-xs text-muted-foreground">(auto)</span> : null}</td>
                       <td className="p-2">
                         {meta.stockMode === "global" ? (
                           <div className="flex items-center gap-2">
@@ -655,6 +676,11 @@ type ProductFormProps = {
 };
 
 function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText }: ProductFormProps) {
+  const marginMode = value.pricingMode === "MARGIN";
+  const costPreview = Number(value.costAmount || 0);
+  const marginPreview = Number(value.marginPct || 0);
+  const estimated = costPreview * (1 + marginPreview / 100);
+
   return (
     <form className="space-y-3" onSubmit={onSubmit}>
       <div className="space-y-2">
@@ -665,16 +691,53 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         <Label>Descripción</Label>
         <Textarea value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} rows={3} placeholder="Detalles del producto o servicio" />
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <div className="space-y-2">
-          <Label>Precio</Label>
-          <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
-        </div>
-        <div className="space-y-2">
-          <Label>SKU</Label>
-          <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
-        </div>
+      <div className="space-y-2">
+        <Label>Modo de precio</Label>
+        <Select value={value.pricingMode || "MANUAL"} onValueChange={(v: any) => onChange({ ...value, pricingMode: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="MANUAL">Manual</SelectItem>
+            <SelectItem value="MARGIN">Calcular por margen</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
+      {!marginMode ? (
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-2">
+            <Label>Precio</Label>
+            <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
+          </div>
+          <div className="space-y-2">
+            <Label>SKU</Label>
+            <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+          <p className="text-sm">El precio de venta se calculará automáticamente al vender según la cotización del momento y el margen configurado.</p>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="space-y-2">
+              <Label>Costo</Label>
+              <Input type="number" min={0} step="0.01" required value={value.costAmount} onChange={(e) => onChange({ ...value, costAmount: e.target.value })} placeholder="0.00" />
+            </div>
+            <div className="space-y-2">
+              <Label>Moneda costo</Label>
+              <Select value={value.costCurrency || "ARS"} onValueChange={(v) => onChange({ ...value, costCurrency: v })}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ARS">ARS</SelectItem>
+                  <SelectItem value="USD">USD</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Margen %</Label>
+              <Input type="number" min={0} max={1000} step="0.01" required value={value.marginPct} onChange={(e) => onChange({ ...value, marginPct: e.target.value })} placeholder="30" />
+            </div>
+          </div>
+          <p className="text-sm font-medium">Precio estimado: ${Number.isFinite(estimated) ? estimated.toFixed(2) : "0.00"}</p>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <div className="space-y-2">
           <Label>Categoría</Label>
@@ -687,8 +750,8 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>Costo</Label>
-          <Input type="number" min={0} step="0.01" value={value.cost} onChange={(e) => onChange({ ...value, cost: e.target.value })} placeholder="0.00" />
+          <Label>SKU</Label>
+          <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
         </div>
       </div>
       {stockMode === "global" ? (

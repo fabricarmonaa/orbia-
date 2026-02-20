@@ -20,3 +20,11 @@ export * from './schema/super-security';
 export * from './schema/email-campaigns';
 
 export * from './schema/message-templates';
+
+export * from './schema/sales';
+export * from './schema/cashiers';
+export * from './schema/exchange-rates';
+export * from './schema/customers';
+export * from './schema/purchases';
+
+export * from './schema/subscriptions';
