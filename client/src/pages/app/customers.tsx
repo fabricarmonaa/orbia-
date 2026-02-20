@@ -19,7 +19,7 @@ export default function CustomersPage() {
   async function load() {
     const res = await apiRequest("GET", `/api/customers?${new URLSearchParams({ q })}`);
     const json = await res.json();
-    setList(json.data || []);
+    setList(json.items || json.data || []);
   }
   useEffect(() => { load().catch(()=>{}); }, []);
 

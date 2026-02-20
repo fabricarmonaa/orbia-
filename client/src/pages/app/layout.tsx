@@ -21,12 +21,6 @@ import MessagingSettingsPage from "./messaging";
 import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
-import StockKardexPage from "./stock-kardex";
-import ReportsDashboardPage from "./reports-dashboard";
-import ReportsSalesPage from "./reports-sales";
-import ReportsProductsPage from "./reports-products";
-import ReportsCustomersPage from "./reports-customers";
-import ReportsCashPage from "./reports-cash";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -98,14 +92,13 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/delivery" component={DeliveryPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/stock/kardex" component={StockKardexPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard" component={ReportsDashboardPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/sales" component={ReportsSalesPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/products" component={ReportsProductsPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/customers" component={ReportsCustomersPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/cash" component={ReportsCashPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
+                            {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/sales">{() => { window.location.replace('/app/cash?tab=sales'); return null; }}</Route>}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/products">{() => { window.location.replace('/app/cash?tab=products'); return null; }}</Route>}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/customers">{() => { window.location.replace('/app/cash?tab=customers'); return null; }}</Route>}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/cash">{() => { window.location.replace('/app/cash?tab=movements'); return null; }}</Route>}
+                                                                                    {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>

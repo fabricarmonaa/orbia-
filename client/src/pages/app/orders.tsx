@@ -720,10 +720,6 @@ export default function OrdersPage() {
                     <Printer className="w-4 h-4 mr-1" />
                     Ticket cliente
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => printOrder()}>
-                    <Printer className="w-4 h-4 mr-1" />
-                    Comanda cocina
-                  </Button>
                   {addonStatus.messaging_whatsapp && !!selectedOrder.customerPhone && messageTemplates.length > 0 && (
                     <Dialog open={whatsDialogOpen} onOpenChange={setWhatsDialogOpen}>
                       <DialogTrigger asChild>

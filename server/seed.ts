@@ -102,7 +102,8 @@ export async function seedDatabase() {
       },
       limitsJson: {
         max_branches: 2,
-        max_staff_users: -1,
+        max_staff_users: 10,
+        max_staff_per_branch: 10,
         max_orders_month: -1,
         tracking_retention_min_hours: 1,
         tracking_retention_max_hours: 168,
@@ -128,7 +129,8 @@ export async function seedDatabase() {
       },
       limitsJson: {
         max_branches: 20,
-        max_staff_users: -1,
+        max_staff_users: 10,
+        max_staff_per_branch: 10,
         max_orders_month: -1,
         tracking_retention_min_hours: 1,
         tracking_retention_max_hours: 720,

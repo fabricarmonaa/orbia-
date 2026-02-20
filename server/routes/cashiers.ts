@@ -1,6 +1,9 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { comparePassword, generateToken, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
+import { and, count, eq } from "drizzle-orm";
+import { db } from "../db";
+import { cashiers } from "@shared/schema";
+import { comparePassword, generateToken, getTenantPlan, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams } from "../middleware/validate";
 import { createRateLimiter } from "../middleware/rate-limit";
@@ -114,6 +117,14 @@ export function registerCashierRoutes(app: Express) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
+      const plan = await getTenantPlan(tenantId);
+      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
+      if (perBranchLimit > 0 && payload.branch_id) {
+        const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
+        if (Number(row?.c || 0) >= perBranchLimit) {
+          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        }
+      }
       const pinHash = await hashPassword(payload.pin);
       const data = await storage.createCashier({
         tenantId,
@@ -145,6 +156,14 @@ export function registerCashierRoutes(app: Express) {
       if (payload.branch_id) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
+      }
+      const plan = await getTenantPlan(tenantId);
+      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
+      if (perBranchLimit > 0 && payload.branch_id) {
+        const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
+        if (Number(row?.c || 0) >= perBranchLimit) {
+          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        }
       }
       if (payload.pin) {
         const pinCheck = validateCashierPin(payload.pin);

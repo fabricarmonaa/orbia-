@@ -1,11 +1,11 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { and, desc, eq, ilike, or } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { tenantAuth, requireRoleAny } from "../auth";
 import { customers } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
-import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
 const customerSchema = z.object({
   name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200)),
@@ -38,12 +38,30 @@ export function registerCustomerRoutes(app: Express) {
   });
 
   app.get("/api/customers", tenantAuth, requireRoleAny(["admin", "staff"]), validateQuery(listQuery), async (req, res) => {
-    const tenantId = req.auth!.tenantId!;
-    const q = req.query as any;
-    const where = [eq(customers.tenantId, tenantId)] as any[];
-    if (q.q) where.push(or(ilike(customers.name, `%${q.q}%`), ilike(customers.email, `%${q.q}%`), ilike(customers.doc, `%${q.q}%`), ilike(customers.phone, `%${q.q}%`))!);
-    const rows = await db.select().from(customers).where(and(...where)).orderBy(desc(customers.createdAt)).limit(q.limit).offset(q.offset);
-    return res.json({ data: rows });
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const q = req.query as any;
+      const pageSize = Number(q.limit || 50);
+      const page = Math.floor(Number(q.offset || 0) / pageSize) + 1;
+      const where = [eq(customers.tenantId, tenantId)] as any[];
+      const queryText = typeof q.q === "string" ? sanitizeShortText(q.q, 80).trim() : "";
+      if (queryText) {
+        const like = `%${escapeLikePattern(queryText)}%`;
+        where.push(or(
+          sql`${customers.name} ILIKE ${like} ESCAPE '\'`,
+          sql`${customers.email} ILIKE ${like} ESCAPE '\'`,
+          sql`${customers.doc} ILIKE ${like} ESCAPE '\'`,
+          sql`${customers.phone} ILIKE ${like} ESCAPE '\'`
+        )!);
+      }
+      const [items, totalRows] = await Promise.all([
+        db.select().from(customers).where(and(...where)).orderBy(desc(customers.createdAt)).limit(pageSize).offset(Number(q.offset || 0)),
+        db.select({ total: sql<number>`count(*)::int` }).from(customers).where(and(...where)),
+      ]);
+      return res.json({ items, total: Number(totalRows[0]?.total || 0), page, pageSize });
+    } catch {
+      return res.status(500).json({ error: "No se pudo listar clientes", code: "CUSTOMER_LIST_ERROR" });
+    }
   });
 
   app.get("/api/customers/:id", tenantAuth, requireRoleAny(["admin", "staff"]), validateParams(z.object({ id: z.coerce.number().int().positive() })), async (req, res) => {

@@ -10,6 +10,7 @@ import { parseApiError } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Check, Circle, X } from "lucide-react";
 
 const AMBIGUOUS = /[O0Il]/g;
 
@@ -161,13 +162,10 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm"><span>Fuerza: {strengthLabel}</span><span>{strength.score}/100</span></div>
         <div className="h-2 w-full rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${strength.score}%` }} /></div>
-        <ul className="text-xs grid grid-cols-2 gap-1">
-          <li>{strength.checks.minLength ? "✅" : "⬜"} 12+ caracteres</li>
-          <li>{strength.checks.upper ? "✅" : "⬜"} 1 mayúscula</li>
-          <li>{strength.checks.lower ? "✅" : "⬜"} 1 minúscula</li>
-          <li>{strength.checks.number ? "✅" : "⬜"} 1 número</li>
-          <li>{strength.checks.symbol ? "✅" : "⬜"} 1 símbolo</li>
-          <li>{strength.checks.notCommon ? "✅" : "⬜"} no común</li>
+        <ul className="text-xs grid grid-cols-2 gap-2">
+          {[['12+ caracteres',strength.checks.minLength],['1 mayúscula',strength.checks.upper],['1 minúscula',strength.checks.lower],['1 número',strength.checks.number],['1 símbolo',strength.checks.symbol],['no común',strength.checks.notCommon]].map(([label,ok]) => (
+            <li key={String(label)} className="flex items-center gap-1.5">{ok ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5 text-muted-foreground" />} {label}</li>
+          ))}
         </ul>
       </div>
       <Button onClick={handleChangePassword} disabled={changingPassword}>{changingPassword ? "Guardando..." : "Actualizar contraseña"}</Button>
