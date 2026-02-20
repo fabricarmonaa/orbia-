@@ -23,6 +23,11 @@ import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
 import StockKardexPage from "./stock-kardex";
 import StockTransfersPage from "./stock-transfers";
+import ReportsDashboardPage from "./reports-dashboard";
+import ReportsSalesPage from "./reports-sales";
+import ReportsProductsPage from "./reports-products";
+import ReportsCustomersPage from "./reports-customers";
+import ReportsCashPage from "./reports-cash";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -97,6 +102,11 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/stock/kardex" component={StockKardexPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/stock/transfers" component={StockTransfersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard" component={ReportsDashboardPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/sales" component={ReportsSalesPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/products" component={ReportsProductsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/customers" component={ReportsCustomersPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/reports/cash" component={ReportsCashPage} />}
               {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>

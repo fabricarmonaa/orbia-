@@ -14,6 +14,7 @@ import { z } from "zod";
 import { tenants } from "./tenants";
 import { branches } from "./branches";
 import { products } from "./products";
+import { customers } from "./customers";
 
 export const tenantCounters = pgTable(
   "tenant_counters",
@@ -47,6 +48,7 @@ export const sales = pgTable(
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
     paymentMethod: varchar("payment_method", { length: 30 }).notNull(),
     notes: text("notes"),
+    customerId: integer("customer_id").references(() => customers.id),
     publicToken: varchar("public_token", { length: 120 }),
     publicTokenCreatedAt: timestamp("public_token_created_at"),
     publicTokenExpiresAt: timestamp("public_token_expires_at"),
@@ -55,6 +57,7 @@ export const sales = pgTable(
   },
   (table) => [
     index("idx_sales_tenant").on(table.tenantId),
+    index("idx_sales_tenant_date").on(table.tenantId, table.saleDatetime),
     index("idx_sales_tenant_branch_date").on(table.tenantId, table.branchId, table.saleDatetime),
     uniqueIndex("uq_sales_tenant_number").on(table.tenantId, table.saleNumber),
   ]
@@ -77,6 +80,7 @@ export const saleItems = pgTable(
   },
   (table) => [
     index("idx_sale_items_sale").on(table.saleId),
+    index("idx_sale_items_sale_product").on(table.saleId, table.productId),
     index("idx_sale_items_tenant_product").on(table.tenantId, table.productId),
   ]
 );

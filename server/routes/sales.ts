@@ -36,6 +36,7 @@ const createSaleSchema = z.object({
   surcharge: adjustmentSchema,
   payment_method: z.enum(["EFECTIVO", "TRANSFERENCIA", "TARJETA", "OTRO"]),
   notes: optionalLong(2000).nullable(),
+  customer_id: z.coerce.number().int().positive().nullable().optional(),
 });
 
 const saleQuerySchema = z.object({
@@ -104,6 +105,7 @@ export function registerSaleRoutes(app: Express) {
         currency: "ARS",
         paymentMethod: payload.payment_method,
         notes: payload.notes || null,
+        customerId: payload.customer_id ?? null,
         discountType: payload.discount?.type || "NONE",
         discountValue: payload.discount?.value || 0,
         surchargeType: payload.surcharge?.type || "NONE",

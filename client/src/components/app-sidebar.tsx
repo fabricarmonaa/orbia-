@@ -30,6 +30,7 @@ import {
   FileSpreadsheet,
   ArrowRightLeft,
   BellDot,
+  BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -60,6 +61,7 @@ const menuItems: MenuItem[] = [
   { title: "Ventas", url: "/app/sales", icon: ReceiptText, feature: "products" },
   { title: "Stock Kardex", url: "/app/stock/kardex", icon: BellDot, feature: "products", adminOnly: true },
   { title: "Transferencias", url: "/app/stock/transfers", icon: ArrowRightLeft, feature: "products", adminOnly: true },
+  { title: "Reportes", url: "/app/reports/dashboard", icon: BarChart3, adminOnly: true },
   { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true, planCodes: ["PROFESIONAL", "ESCALA"] },
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },

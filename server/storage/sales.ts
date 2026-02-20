@@ -25,6 +25,7 @@ interface CreateSaleInput {
   currency: string;
   paymentMethod: string;
   notes: string | null;
+  customerId?: number | null;
   discountType: SaleAdjustmentType;
   discountValue: number;
   surchargeType: SaleAdjustmentType;
@@ -130,6 +131,7 @@ export const salesStorage = {
           totalAmount: String(totalAmount),
           paymentMethod: input.paymentMethod,
           notes: input.notes,
+          customerId: input.customerId ?? null,
         })
         .returning();
 
