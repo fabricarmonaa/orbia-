@@ -22,7 +22,6 @@ import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
 import StockKardexPage from "./stock-kardex";
-import StockTransfersPage from "./stock-transfers";
 import ReportsDashboardPage from "./reports-dashboard";
 import ReportsSalesPage from "./reports-sales";
 import ReportsProductsPage from "./reports-products";
@@ -100,7 +99,6 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/stock/kardex" component={StockKardexPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/stock/transfers" component={StockTransfersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard" component={ReportsDashboardPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/sales" component={ReportsSalesPage} />}

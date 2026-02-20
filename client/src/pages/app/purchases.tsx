@@ -1,149 +1,102 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 
-interface PreviewData {
-  detectedHeaders: string[];
-  suggestedMapping: Record<string, string>;
-  extraColumns: string[];
-  rowsPreview: Array<{ raw: Record<string, string>; normalized: Record<string, string | number | null>; errors: string[] }>;
-  warnings: string[];
-}
-
-const fields = [
-  { key: "code", label: "Código" },
-  { key: "name", label: "Nombre" },
-  { key: "quantity", label: "Cantidad" },
-  { key: "unit_price", label: "Precio unitario" },
-  { key: "currency", label: "Moneda" },
-];
+type Product = { id:number; name:string; sku?:string };
 
 export default function PurchasesPage() {
   const { toast } = useToast();
+  const [products, setProducts] = useState<Product[]>([]);
+  const [rows, setRows] = useState([{ productId: 0, quantity: 1, unitPrice: 0 }]);
+  const [providerName, setProviderName] = useState("");
+  const [currency, setCurrency] = useState("ARS");
+  const [notes, setNotes] = useState("");
+  const [purchases, setPurchases] = useState<any[]>([]);
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [preview, setPreview] = useState<any>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [includeExtra, setIncludeExtra] = useState(false);
-  const [selectedExtra, setSelectedExtra] = useState<string[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
 
-  const canCommit = useMemo(() => Boolean(file && preview), [file, preview]);
+  const total = useMemo(() => rows.reduce((acc, r) => acc + (Number(r.quantity) * Number(r.unitPrice)), 0), [rows]);
 
-  async function loadPreview() {
-    if (!file) return;
-    setLoading(true);
+  async function loadBase() {
+    const [p1, p2] = await Promise.all([
+      apiRequest("GET", "/api/products?pageSize=200").then(r => r.json()).catch(() => ({ data: [] })),
+      apiRequest("GET", "/api/purchases?limit=30").then(r => r.json()).catch(() => ({ data: [] })),
+    ]);
+    setProducts(p1.data || []);
+    setPurchases(p2.data || []);
+  }
+  useEffect(() => { loadBase(); }, []);
+
+  async function saveManual() {
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const resp = await apiRequest("POST", "/api/purchases/import/preview", fd);
-      const data = await resp.json();
-      setPreview(data);
-      setMapping(data.suggestedMapping || {});
-      setSelectedExtra(data.extraColumns || []);
-    } catch {
-      toast({ title: "Error", description: "No se pudo generar preview", variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+      const valid = rows.filter((r) => r.productId > 0 && r.quantity > 0);
+      if (!valid.length) throw new Error("Agregá al menos un item válido");
+      const res = await apiRequest("POST", "/api/purchases", { providerName, currency, notes, items: valid });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo guardar");
+      toast({ title: "Compra guardada" });
+      setRows([{ productId: 0, quantity: 1, unitPrice: 0 }]); setProviderName(""); setNotes("");
+      loadBase();
+    } catch (e:any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
+  }
+
+  async function previewImport() {
+    try {
+      if (!file) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData(); fd.append("file", file);
+      const res = await apiRequest("POST", "/api/purchases/import/preview", fd);
+      const json = await res.json(); if (!res.ok) throw new Error(json?.error || "Preview inválido");
+      setPreview(json); setMapping(json.suggestedMapping || {});
+    } catch (e:any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
   }
 
   async function commitImport() {
-    if (!file) return;
-    setLoading(true);
     try {
-      const fd = new FormData();
-      fd.append("file", file);
-      fd.append("mapping", JSON.stringify(mapping));
-      fd.append("includeExtraColumns", String(includeExtra));
-      fd.append("selectedExtraColumns", JSON.stringify(selectedExtra));
-      const resp = await apiRequest("POST", "/api/purchases/import/commit", fd);
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.error || "No se pudo importar");
-      setSummary(data);
-      toast({ title: "Importación completada" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+      if (!file) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData(); fd.append("file", file); fd.append("mapping", JSON.stringify(mapping));
+      const res = await apiRequest("POST", "/api/purchases/import/commit", fd);
+      const json = await res.json(); if (!res.ok) throw new Error(json?.error || "Importación inválida");
+      toast({ title: "Importación completada" }); setPreview(null); setFile(null); loadBase();
+    } catch (e:any) { toast({ title: "Error", description: e.message, variant: "destructive" }); }
   }
 
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardHeader><CardTitle>Importar Compras desde Excel</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Archivo .xlsx</Label>
-            <Input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+  return <div className="space-y-4">
+    <Tabs defaultValue="manual">
+      <TabsList><TabsTrigger value="manual">Manual</TabsTrigger><TabsTrigger value="excel">Importar Excel</TabsTrigger></TabsList>
+      <TabsContent value="manual">
+        <Card><CardHeader><CardTitle>Nueva compra manual</CardTitle></CardHeader><CardContent className="space-y-3">
+          <div className="grid md:grid-cols-3 gap-2">
+            <div><Label>Proveedor</Label><Input value={providerName} onChange={(e)=>setProviderName(e.target.value)} /></div>
+            <div><Label>Moneda</Label><Input value={currency} onChange={(e)=>setCurrency(e.target.value.toUpperCase())} /></div>
+            <div><Label>Notas</Label><Input value={notes} onChange={(e)=>setNotes(e.target.value)} /></div>
           </div>
-          <Button onClick={loadPreview} disabled={!file || loading}>Generar preview</Button>
-        </CardContent>
-      </Card>
+          <div className="space-y-2">{rows.map((r, i) => <div key={i} className="grid md:grid-cols-4 gap-2">
+            <select className="border rounded px-2" value={r.productId} onChange={(e)=>setRows((prev)=>prev.map((x,ix)=>ix===i?{...x,productId:Number(e.target.value)}:x))}>
+              <option value={0}>Producto</option>{products.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <Input type="number" value={r.quantity} onChange={(e)=>setRows((prev)=>prev.map((x,ix)=>ix===i?{...x,quantity:Number(e.target.value)}:x))} />
+            <Input type="number" value={r.unitPrice} onChange={(e)=>setRows((prev)=>prev.map((x,ix)=>ix===i?{...x,unitPrice:Number(e.target.value)}:x))} />
+            <Button variant="outline" onClick={()=>setRows((prev)=>prev.filter((_,ix)=>ix!==i))}>Quitar</Button>
+          </div>)}</div>
+          <div className="flex justify-between"><Button variant="outline" onClick={()=>setRows((p)=>[...p,{productId:0,quantity:1,unitPrice:0}])}>Agregar ítem</Button><p className="font-semibold">Total: ${total.toLocaleString("es-AR")}</p></div>
+          <Button onClick={saveManual}>Guardar compra</Button>
+        </CardContent></Card>
+      </TabsContent>
+      <TabsContent value="excel">
+        <Card><CardHeader><CardTitle>Importar Excel</CardTitle></CardHeader><CardContent className="space-y-2">
+          <Input type="file" accept=".xlsx" onChange={(e)=>setFile(e.target.files?.[0]||null)} />
+          <Button onClick={previewImport}>Preview</Button>
+          {preview && <div className="space-y-2"><pre className="text-xs overflow-auto">{JSON.stringify(preview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre><Button onClick={commitImport}>Confirmar importación</Button></div>}
+        </CardContent></Card>
+      </TabsContent>
+    </Tabs>
 
-      {preview && (
-        <Card>
-          <CardHeader><CardTitle>Mapeo de columnas</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {fields.map((field) => (
-                <div key={field.key} className="space-y-1">
-                  <Label>{field.label}</Label>
-                  <select
-                    className="w-full border rounded px-2 h-9 bg-background"
-                    value={mapping[field.key] || ""}
-                    onChange={(e) => setMapping((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                  >
-                    <option value="">Sin mapear</option>
-                    {preview.detectedHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
-                  </select>
-                </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox checked={includeExtra} onCheckedChange={(v) => setIncludeExtra(Boolean(v))} />
-              <span className="text-sm">Cargar también campos extra detectados</span>
-            </div>
-            {preview.warnings?.length > 0 && <p className="text-sm text-amber-600">{preview.warnings.join(" • ")}</p>}
-            <div className="overflow-auto border rounded max-h-80">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/40">
-                    <th className="text-left p-2">Fila</th>
-                    <th className="text-left p-2">Normalizado</th>
-                    <th className="text-left p-2">Errores</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rowsPreview.map((row, idx) => (
-                    <tr key={idx} className="border-b align-top">
-                      <td className="p-2">{idx + 2}</td>
-                      <td className="p-2 whitespace-pre-wrap">{JSON.stringify(row.normalized)}</td>
-                      <td className="p-2 text-red-600">{row.errors.join(", ") || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Button onClick={commitImport} disabled={!canCommit || loading}>Confirmar importación</Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {summary && (
-        <Card>
-          <CardHeader><CardTitle>Resultado</CardTitle></CardHeader>
-          <CardContent>
-            <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(summary, null, 2)}</pre>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  );
+    <Card><CardHeader><CardTitle>Últimas compras</CardTitle></CardHeader><CardContent>{purchases.map((p)=><div key={p.id} className="border rounded p-2 text-sm flex justify-between"><span>#{p.id} · {p.providerName || "Sin proveedor"}</span><span>${Number(p.totalAmount||0).toLocaleString("es-AR")}</span></div>)}</CardContent></Card>
+  </div>;
 }

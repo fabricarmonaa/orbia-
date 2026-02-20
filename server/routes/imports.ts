@@ -22,7 +22,7 @@ const excelUpload = multer({
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (ext !== ".xlsx") return cb(new Error("Solo se permite .xlsx"));
+    if (ext !== ".xlsx") return cb(null, false);
     cb(null, true);
   },
 });
@@ -61,7 +61,7 @@ function cleanupUploadedFile(req: any) {
 export function registerImportRoutes(app: Express) {
   app.post("/api/purchases/import/preview", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, excelUpload.single("file"), async (req, res) => {
     try {
-      if (!req.file?.path) return res.status(400).json({ error: "Archivo requerido", code: "IMPORT_FILE_REQUIRED" });
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
       const data = buildPreview("purchases", req.file.path);
       return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
     } catch (err: any) {
@@ -73,7 +73,7 @@ export function registerImportRoutes(app: Express) {
 
   app.post("/api/customers/import/preview", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, excelUpload.single("file"), async (req, res) => {
     try {
-      if (!req.file?.path) return res.status(400).json({ error: "Archivo requerido", code: "IMPORT_FILE_REQUIRED" });
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
       const data = buildPreview("customers", req.file.path);
       return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
     } catch (err: any) {
@@ -89,7 +89,7 @@ export function registerImportRoutes(app: Express) {
     return next();
   }, validateBody(commitPurchaseBody), async (req, res) => {
     try {
-      if (!req.file?.path) return res.status(400).json({ error: "Archivo requerido", code: "IMPORT_FILE_REQUIRED" });
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const payload = req.body as z.infer<typeof commitPurchaseBody>;
@@ -255,7 +255,7 @@ export function registerImportRoutes(app: Express) {
     return next();
   }, validateBody(commitCustomerBody), async (req, res) => {
     try {
-      if (!req.file?.path) return res.status(400).json({ error: "Archivo requerido", code: "IMPORT_FILE_REQUIRED" });
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const payload = req.body as z.infer<typeof commitCustomerBody>;

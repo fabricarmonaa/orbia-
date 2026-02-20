@@ -208,16 +208,16 @@ export default function OrdersPage() {
   }
 
 
-  async function printOrder(variant: "ORDER" | "KITCHEN") {
+  async function printOrder() {
     if (!selectedOrder) return;
     const res = await apiRequest("GET", `/api/orders/${selectedOrder.id}/print-data`);
     const json = await res.json();
     const d = json.data;
-    const qrImage = variant === "KITCHEN" ? null : (d.qr?.publicUrl ? await QRCode.toDataURL(d.qr.publicUrl, { margin: 1, width: 160 }) : null);
+    const qrImage = d.qr?.publicUrl ? await QRCode.toDataURL(d.qr.publicUrl, { margin: 1, width: 160 }) : null;
     const html = renderToStaticMarkup(
       <TicketLayout
         mode="TICKET_80"
-        variant={variant}
+        variant="ORDER"
         data={{
           tenant: { name: d.tenant?.name || "Negocio", logoUrl: d.tenant?.logoUrl || null },
           order: { number: d.order.number, createdAt: d.order.createdAt, status: d.order.status, customerName: d.order.customerName, description: d.order.description, totalAmount: d.order.totalAmount },
@@ -716,11 +716,11 @@ export default function OrdersPage() {
                       Copiar Link
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={() => printOrder("ORDER")}>
+                  <Button variant="outline" size="sm" onClick={() => printOrder()}>
                     <Printer className="w-4 h-4 mr-1" />
                     Ticket cliente
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => printOrder("KITCHEN")}>
+                  <Button variant="outline" size="sm" onClick={() => printOrder()}>
                     <Printer className="w-4 h-4 mr-1" />
                     Comanda cocina
                   </Button>

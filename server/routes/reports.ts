@@ -107,14 +107,19 @@ async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSc
     params
   );
   const lowStock = await pool.query(`SELECT COUNT(*)::int c FROM stock_levels sl JOIN products p ON p.id=sl.product_id WHERE sl.tenant_id=$1 AND sl.quantity <= p.min_stock::numeric`, [tenantId]);
-  const series = await pool.query(`
-    SELECT DATE(s.sale_datetime) as date,
-      COALESCE(SUM(s.total_amount::numeric),0) net_sales,
-      COUNT(*)::int sales_count,
-      COALESCE(AVG(s.total_amount::numeric),0) avg_ticket
-    FROM sales s WHERE ${where}
-    GROUP BY DATE(s.sale_datetime)
-    ORDER BY DATE(s.sale_datetime)`, params);
+  let series;
+  try {
+    series = await pool.query(`SELECT date, total_sales as net_sales, sales_count, CASE WHEN sales_count > 0 THEN total_sales / sales_count ELSE 0 END as avg_ticket FROM mv_reports_daily_sales WHERE tenant_id = $1 AND date >= $2::date AND date <= $3::date ORDER BY date`, [tenantId, filters.from, filters.to]);
+  } catch {
+    series = await pool.query(`
+      SELECT DATE(s.sale_datetime) as date,
+        COALESCE(SUM(s.total_amount::numeric),0) net_sales,
+        COUNT(*)::int sales_count,
+        COALESCE(AVG(s.total_amount::numeric),0) avg_ticket
+      FROM sales s WHERE ${where}
+      GROUP BY DATE(s.sale_datetime)
+      ORDER BY DATE(s.sale_datetime)`, params);
+  }
 
   const netCurrent = Number(current.rows[0]?.net_sales || 0);
   const netPrev = Number(prev.rows[0]?.net_sales || 0);
@@ -322,6 +327,17 @@ export function registerReportRoutes(app: Express) {
     } catch (err: any) {
       if (String(err?.message).includes("EXPIRED")) return res.status(410).json({ error: "Export expirado", code: "REPORT_EXPORT_EXPIRED" });
       return res.status(404).json({ error: "Token inválido", code: "REPORT_EXPORT_INVALID" });
+    }
+  });
+
+  app.post("/api/admin/refresh-views", tenantAuth, requireTenantAdmin, async (req, res) => {
+    try {
+      await pool.query("REFRESH MATERIALIZED VIEW mv_sales_history");
+      await pool.query("REFRESH MATERIALIZED VIEW mv_cash_daily");
+      await pool.query("REFRESH MATERIALIZED VIEW mv_reports_daily_sales");
+      return res.json({ ok: true, code: "VIEWS_REFRESHED" });
+    } catch {
+      return res.status(500).json({ error: "No se pudieron refrescar vistas", code: "VIEWS_REFRESH_ERROR" });
     }
   });
 }

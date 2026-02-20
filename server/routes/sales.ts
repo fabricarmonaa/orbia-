@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import { randomBytes } from "crypto";
-import { enforceBranchScope, requireRoleAny, tenantAuth } from "../auth";
+import { enforceBranchScope, getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
@@ -92,7 +92,9 @@ export function registerSaleRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const payload = req.body as z.infer<typeof createSaleSchema>;
 
-      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (payload.branch_id ?? null);
+      const plan = await getTenantPlan(tenantId);
+      const hasBranchesFeature = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES);
+      const branchId = hasBranchesFeature ? (req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (payload.branch_id ?? null)) : null;
       if (branchId) {
         const branch = await storage.getBranchById(branchId, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });

@@ -26,6 +26,7 @@ interface CreateSaleInput {
   paymentMethod: string;
   notes: string | null;
   customerId?: number | null;
+  hasBranchesFeature?: boolean;
   discountType: SaleAdjustmentType;
   discountValue: number;
   surchargeType: SaleAdjustmentType;
@@ -41,7 +42,7 @@ export const salesStorage = {
         .select({ count: count() })
         .from(branches)
         .where(and(eq(branches.tenantId, input.tenantId), sql`${branches.deletedAt} IS NULL`));
-      const hasBranches = (branchCount?.count || 0) > 0;
+      const hasBranches = Boolean(input.hasBranchesFeature) && (branchCount?.count || 0) > 0;
       const effectiveBranchId = hasBranches ? input.branchId : null;
 
       const requestedIds = Array.from(new Set(input.items.map((item) => item.productId)));
@@ -239,19 +240,23 @@ export const salesStorage = {
   },
 
   async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }) {
-    const conditions = [eq(sales.tenantId, tenantId)];
-    if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
-    if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
-    if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
-    if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
-
-    return db
-      .select()
-      .from(sales)
-      .where(and(...conditions))
-      .orderBy(desc(sales.saleDatetime))
-      .limit(filters.limit)
-      .offset(filters.offset);
+    try {
+      const where: string[] = ["tenant_id = $1"];
+      const params: any[] = [tenantId];
+      if (filters.branchId !== undefined && filters.branchId !== null) { params.push(filters.branchId); where.push(`branch_id = $${params.length}`); }
+      if (filters.from) { params.push(filters.from); where.push(`sale_datetime >= $${params.length}`); }
+      if (filters.to) { params.push(filters.to); where.push(`sale_datetime <= $${params.length}`); }
+      if (filters.q) { params.push(`%${filters.q}%`); where.push(`sale_number ILIKE $${params.length}`); }
+      const rows = await db.execute(sql.raw(`SELECT id, sale_number as "saleNumber", sale_datetime as "saleDatetime", total_amount as "totalAmount", payment_method as "paymentMethod", branch_id as "branchId" FROM mv_sales_history WHERE ${where.join(" AND ")} ORDER BY sale_datetime DESC LIMIT ${Number(filters.limit)} OFFSET ${Number(filters.offset)}`));
+      return (rows as any).rows || [];
+    } catch {
+      const conditions = [eq(sales.tenantId, tenantId)];
+      if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
+      if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
+      if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
+      if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
+      return db.select().from(sales).where(and(...conditions)).orderBy(desc(sales.saleDatetime)).limit(filters.limit).offset(filters.offset);
+    }
   },
 
   async getSaleById(id: number, tenantId: number) {

@@ -4,8 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { printTicket, type TicketData, type TicketSize } from "@/components/sales/ticket-print";
+import { printTicket , type TicketData } from "@/components/sales/ticket-print";
 
 interface SaleListItem {
   id: number;
@@ -20,8 +19,6 @@ export default function SalesHistoryPage() {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [q, setQ] = useState("");
-  const ticketSizeKey = "orbia_ticket_size_pref";
-  const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
 
   async function load() {
     const params = new URLSearchParams();
@@ -36,7 +33,7 @@ export default function SalesHistoryPage() {
   async function reprint(saleId: number) {
     const res = await apiRequest("POST", `/api/sales/${saleId}/print-data`);
     const json = await res.json();
-    printTicket(json.data as TicketData, ticketSize);
+    printTicket(json.data as TicketData, "80mm");
   }
 
   useEffect(() => {
@@ -51,17 +48,6 @@ export default function SalesHistoryPage() {
           <div><Label>Desde</Label><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></div>
           <div><Label>Hasta</Label><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></div>
           <div><Label>Búsqueda</Label><Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="N° venta" /></div>
-          <div>
-            <Label>Tamaño ticket</Label>
-            <Select value={ticketSize} onValueChange={(v: TicketSize) => { setTicketSize(v); localStorage.setItem(ticketSizeKey, v); }}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="58mm">58mm</SelectItem>
-                <SelectItem value="80mm">80mm</SelectItem>
-                <SelectItem value="A4">A4</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
         </div>
         <Button onClick={load}>Filtrar</Button>
 

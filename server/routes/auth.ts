@@ -165,12 +165,8 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const user = await storage.getSuperAdminByEmail(email);
-      if (user) {
+      if (user?.tenantId) {
         const rootCode = (process.env.ROOT_TENANT_CODE || "t_root").toLowerCase();
-        if (!user.tenantId) {
-          await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "ROOT_TENANT_REQUIRED" });
-          return res.status(403).json({ error: "Superadmin inválido: requiere tenant root", code: "SUPERADMIN_ROOT_REQUIRED" });
-        }
         const rootTenant = await storage.getTenantById(user.tenantId);
         if (!rootTenant || String(rootTenant.code || "").toLowerCase() !== rootCode) {
           await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "ROOT_TENANT_MISMATCH" });
