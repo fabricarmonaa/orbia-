@@ -16,6 +16,8 @@ import { permissionStorage } from './permissions';
 import { expenseStorage } from './expenses';
 import { brandingStorage } from './branding';
 import { pdfSettingsStorage } from './pdf-settings';
+import { salesStorage } from './sales';
+import { cashierStorage } from './cashiers';
 
 
 
@@ -23,6 +25,11 @@ export class DatabaseStorage implements IStorage {
   getPlans = planStorage.getPlans;
   getPlanById = planStorage.getPlanById;
   createPlan = planStorage.createPlan;
+  updatePlanByCode = planStorage.updatePlanByCode;
+  listSubscriptions = planStorage.listSubscriptions;
+  updateSubscription = planStorage.updateSubscription;
+  getSystemSetting = planStorage.getSystemSetting;
+  upsertSystemSetting = planStorage.upsertSystemSetting;
 
   getTenants = tenantStorage.getTenants;
   getTenantById = tenantStorage.getTenantById;
@@ -109,6 +116,16 @@ export class DatabaseStorage implements IStorage {
   updateProduct = productStorage.updateProduct;
   toggleProductActive = productStorage.toggleProductActive;
   countProducts = productStorage.countProducts;
+  createSaleAtomic = salesStorage.createSaleAtomic;
+  listSales = salesStorage.listSales;
+  getSaleById = salesStorage.getSaleById;
+  getSaleItems = salesStorage.getSaleItems;
+  getCashierById = cashierStorage.getCashierById;
+  getCashiers = cashierStorage.getCashiers;
+  getActiveCashiers = cashierStorage.getActiveCashiers;
+  createCashier = cashierStorage.createCashier;
+  updateCashier = cashierStorage.updateCashier;
+  deactivateCashier = cashierStorage.deactivateCashier;
 
   createSttLog = sttStorage.createSttLog;
   getSttLogs = sttStorage.getSttLogs;

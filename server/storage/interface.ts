@@ -29,12 +29,21 @@ import type {
   AppBranding, InsertAppBranding,
   TenantPdfSettings, InsertTenantPdfSettings,
   TenantMonthlySummary, InsertTenantMonthlySummary,
+  Sale, InsertSale, SaleItem,
+  Cashier, InsertCashier,
+  TenantSubscription, InsertTenantSubscription,
+  SystemSetting,
 } from "@shared/schema";
 
 export interface IStorage {
   getPlans(): Promise<Plan[]>;
   getPlanById(id: number): Promise<Plan | undefined>;
   createPlan(data: InsertPlan): Promise<Plan>;
+  updatePlanByCode(planCode: string, data: Partial<InsertPlan>): Promise<Plan | undefined>;
+  listSubscriptions(): Promise<Array<{ tenantId: number; tenantName: string; tenantCode: string; planCode: string | null; status: string | null; startsAt: Date | null; expiresAt: Date | null }>>;
+  updateSubscription(tenantId: number, data: { planCode: string; status: string; startsAt?: Date | null; expiresAt?: Date | null }): Promise<TenantSubscription>;
+  getSystemSetting(key: string): Promise<SystemSetting | undefined>;
+  upsertSystemSetting(key: string, value: string): Promise<SystemSetting>;
 
   getTenants(): Promise<Tenant[]>;
   getTenantById(id: number): Promise<Tenant | undefined>;
@@ -121,6 +130,30 @@ export interface IStorage {
   updateProduct(id: number, tenantId: number, data: Partial<InsertProduct>): Promise<Product>;
   toggleProductActive(id: number, tenantId: number, isActive: boolean): Promise<void>;
   countProducts(tenantId: number): Promise<number>;
+
+  createSaleAtomic(data: {
+    tenantId: number;
+    branchId: number | null;
+    cashierUserId: number;
+    currency: string;
+    paymentMethod: string;
+    notes: string | null;
+    discountType: "NONE" | "PERCENT" | "FIXED";
+    discountValue: number;
+    surchargeType: "NONE" | "PERCENT" | "FIXED";
+    surchargeValue: number;
+    items: Array<{ productId: number; quantity: number; unitPrice?: number | null }>;
+  }): Promise<{ sale: Sale }>;
+  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }): Promise<Sale[]>;
+  getSaleById(id: number, tenantId: number): Promise<Sale | undefined>;
+  getSaleItems(id: number, tenantId: number): Promise<SaleItem[]>;
+
+  getCashierById(id: number, tenantId: number): Promise<Cashier | undefined>;
+  getCashiers(tenantId: number): Promise<Cashier[]>;
+  getActiveCashiers(tenantId: number): Promise<Cashier[]>;
+  createCashier(data: InsertCashier): Promise<Cashier>;
+  updateCashier(id: number, tenantId: number, data: Partial<InsertCashier>): Promise<Cashier | undefined>;
+  deactivateCashier(id: number, tenantId: number): Promise<Cashier | undefined>;
 
   createSttLog(data: InsertSttLog): Promise<SttLog>;
   getSttLogs(tenantId: number): Promise<SttLog[]>;

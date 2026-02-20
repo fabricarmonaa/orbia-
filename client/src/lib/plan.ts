@@ -27,6 +27,9 @@ export interface PlanLimits {
 export interface PlanInfo {
   planCode: string;
   name: string;
+  description?: string | null;
+  priceMonthly?: string | number | null;
+  currency?: string | null;
   features: PlanFeatures;
   limits: PlanLimits;
 }

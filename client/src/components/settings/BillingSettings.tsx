@@ -48,6 +48,7 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
   const [addons, setAddons] = useState<Record<string, boolean>>({});
   const [tenantCode, setTenantCode] = useState<string>("");
   const [subscriptionStatus, setSubscriptionStatus] = useState<any>(null);
+  const [transferInfo, setTransferInfo] = useState<any>(null);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -65,6 +66,12 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
       .then((res) => res.json())
       .then((data) => setSubscriptionStatus(data?.data || null))
       .catch(() => setSubscriptionStatus(null));
+
+    apiRequest("GET", "/api/subscription/transfer-info")
+      .then((res) => res.json())
+      .then((data) => setTransferInfo(data?.data || null))
+      .catch(() => setTransferInfo(null));
+
   }, []);
 
   function openUpgradeWhatsApp() {
@@ -89,8 +96,12 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
             <div className="flex items-center gap-2">
               <Badge variant="default">{plan.name}</Badge>
               <Button variant="outline" size="sm" onClick={openUpgradeWhatsApp}>
-                Mejorar plan
+                Enviar comprobante por WhatsApp
               </Button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+              <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Precio</span><span>{plan.priceMonthly ? `${plan.currency || "ARS"} ${plan.priceMonthly}` : "—"}</span></div>
+              <div className="sm:col-span-2 flex items-start justify-between gap-2"><span className="text-muted-foreground">Descripción</span><span className="text-right">{plan.description || "—"}</span></div>
             </div>
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Funcionalidades</p>
@@ -123,6 +134,19 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
                 <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Fecha vencimiento</span><span>{formatDate(subscriptionStatus?.subscriptionEndDate)}</span></div>
                 <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Estado</span><span>{mapSubscriptionState(subscriptionStatus?.status)}</span></div>
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Datos para transferencia</p>
+              {transferInfo ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Banco</span><span>{transferInfo.bank_name || "—"}</span></div>
+                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Titular</span><span>{transferInfo.account_holder || "—"}</span></div>
+                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">CBU</span><span>{transferInfo.cbu || "—"}</span></div>
+                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Alias</span><span>{transferInfo.alias || "—"}</span></div>
+                  <div className="sm:col-span-2 flex items-center justify-between gap-2"><span className="text-muted-foreground">WhatsApp</span><span>{transferInfo.whatsapp_contact || "—"}</span></div>
+                </div>
+              ) : <p className="text-sm text-muted-foreground">Sin datos configurados</p>}
             </div>
             <div className="space-y-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Addons</p>

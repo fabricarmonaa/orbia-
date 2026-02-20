@@ -11,6 +11,7 @@ export interface AuthUser {
   branchId: number | null;
   avatarUrl?: string | null;
   subscriptionWarning?: string | null;
+  cashierId?: number | null;
 }
 
 type LogoutReason = "manual" | "expired" | "invalid" | "required" | "offline" | "forced";

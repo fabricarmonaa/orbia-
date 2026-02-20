@@ -13,6 +13,7 @@ import AppLayout from "@/pages/app/layout";
 import PublicTracking from "@/pages/public-tracking";
 import DeliveryLogin from "@/pages/delivery-login";
 import DeliveryPanel from "@/pages/delivery-panel";
+import PublicTosPage from "@/pages/public-tos";
 import { SessionLifecycleManager } from "@/components/session-lifecycle-manager";
 import { PwaRuntime } from "@/components/pwa-runtime";
 
@@ -25,10 +26,12 @@ function Router() {
       <Route path="/login" component={TenantLogin} />
       <Route path="/owner/login" component={SuperLogin} />
       <Route path="/owner" component={OwnerDashboard} />
+      <Route path="/super" component={OwnerDashboard} />
       <Route path="/app/*?" component={AppLayout} />
       <Route path="/delivery/login" component={DeliveryLogin} />
       <Route path="/delivery/panel" component={DeliveryPanel} />
       <Route path="/tracking/:id" component={PublicTracking} />
+      <Route path="/t/:slug/tos" component={PublicTosPage} />
       <Route component={NotFound} />
     </Switch>
   );

@@ -10,11 +10,16 @@ import Dashboard from "./dashboard";
 import OrdersPage from "./orders";
 import CashPage from "./cash";
 import ProductsPage from "./products";
+import PosPage from "./pos";
+import SalesHistoryPage from "./sales-history";
+import CashiersPage from "./cashiers";
 import BranchesPage from "./branches";
 import BranchDetailPage from "./branch-detail";
 import DeliveryPage from "./delivery";
 import SettingsPage from "./settings";
 import MessagingSettingsPage from "./messaging";
+import PurchasesPage from "./purchases";
+import CustomersPage from "./customers";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -73,15 +78,21 @@ export default function AppLayout() {
           <SubscriptionBanner />
           <main className="flex-1 overflow-auto p-4 sm:p-6">
             <Switch>
-              <Route path="/app/orders" component={OrdersPage} />
-              <Route path="/app/cash" component={CashPage} />
-              <Route path="/app/products" component={ProductsPage} />
-              <Route path="/app/branches/:branchId" component={BranchDetailPage} />
-              <Route path="/app/branches" component={BranchesPage} />
-              <Route path="/app/delivery" component={DeliveryPage} />
-              <Route path="/app/settings" component={SettingsPage} />
-              <Route path="/app/messaging" component={MessagingSettingsPage} />
-              <Route path="/app" component={Dashboard} />
+              {user?.role !== "CASHIER" && <Route path="/app/orders" component={OrdersPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/cash" component={CashPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/products" component={ProductsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/purchases" component={PurchasesPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/customers" component={CustomersPage} />}
+              <Route path="/app/pos" component={PosPage} />
+              <Route path="/app/sales" component={SalesHistoryPage} />
+              {user?.role !== "CASHIER" && <Route path="/app/cashiers" component={CashiersPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/branches/:branchId" component={BranchDetailPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/branches" component={BranchesPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/delivery" component={DeliveryPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
+              {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
         </div>

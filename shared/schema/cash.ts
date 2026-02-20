@@ -16,6 +16,7 @@ import { tenants } from "./tenants";
 import { branches } from "./branches";
 import { users } from "./users";
 import { orders } from "./orders";
+import { sales } from "./sales";
 
 export const cashSessions = pgTable(
   "cash_sessions",
@@ -125,6 +126,7 @@ export const cashMovements = pgTable(
     expenseDefinitionId: integer("expense_definition_id").references(() => expenseDefinitions.id),
     expenseDefinitionName: varchar("expense_definition_name", { length: 200 }),
     orderId: integer("order_id").references(() => orders.id),
+    saleId: integer("sale_id").references(() => sales.id),
     createdById: integer("created_by_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

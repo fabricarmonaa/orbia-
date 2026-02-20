@@ -67,6 +67,7 @@ export interface JWTPayload {
   branchId: number | null;
   scope?: string;
   deliveryAgentId?: number;
+  cashierId?: number;
 }
 
 export interface PlanFeatures {
@@ -120,11 +121,24 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   if (!tenant?.planId) return null;
   const plan = await storage.getPlanById(tenant.planId);
   if (!plan) return null;
+  const baseFeatures = (plan.featuresJson || {}) as PlanFeatures;
+  const computedFeatures: PlanFeatures = {
+    ...baseFeatures,
+    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS),
+    MARGIN_PRICING: Boolean((plan as any).allowMarginPricing) || Boolean(baseFeatures.MARGIN_PRICING),
+    EXCEL_IMPORT: Boolean((plan as any).allowExcelImport) || Boolean(baseFeatures.EXCEL_IMPORT),
+    CUSTOM_TOS: Boolean((plan as any).allowCustomTos) || Boolean(baseFeatures.CUSTOM_TOS),
+  } as PlanFeatures;
+  const baseLimits = (plan.limitsJson || {}) as PlanLimits;
+  const computedLimits: PlanLimits = {
+    ...baseLimits,
+    max_branches: Number((plan as any).maxBranches ?? baseLimits.max_branches ?? 0),
+  } as PlanLimits;
   return {
     planCode: plan.planCode,
     name: plan.name,
-    features: plan.featuresJson as PlanFeatures,
-    limits: plan.limitsJson as PlanLimits,
+    features: computedFeatures,
+    limits: computedLimits,
   };
 }
 
@@ -422,3 +436,20 @@ export function requireTenantAdmin(req: Request, res: Response, next: NextFuncti
 export function requirePlanFeature(featureKey: string) {
   return requireFeature(featureKey);
 }
+
+export function requireRole(role: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.auth?.role === role) return next();
+    return res.status(403).json({ error: "Acceso denegado", code: "ROLE_FORBIDDEN" });
+  };
+}
+
+export function requireRoleAny(roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (req.auth?.role && roles.includes(req.auth.role)) return next();
+    return res.status(403).json({ error: "Acceso denegado", code: "ROLE_FORBIDDEN" });
+  };
+}
+
+
+export const requireSuperAdmin = superAuth;

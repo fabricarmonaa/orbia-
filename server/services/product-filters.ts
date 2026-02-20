@@ -1,7 +1,8 @@
-import { and, asc, count, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { db } from "../db";
 import { productStockByBranch, products } from "@shared/schema";
+import { escapeLikePattern, sanitizeShortText } from "../security/sanitize";
 
 const emptyToUndefined = (value: unknown) => {
   if (value === "" || value === null || value === undefined) return undefined;
@@ -17,7 +18,7 @@ const statusSchema = z.preprocess(
 );
 
 export const productFiltersSchema = z.object({
-  q: z.preprocess(emptyToUndefined, z.string().trim().max(120).optional()),
+  q: z.preprocess(emptyToUndefined, z.string().transform((value) => sanitizeShortText(value, 120)).optional()),
   categoryId: z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional()),
   status: statusSchema.optional().default("all"),
   state: statusSchema.optional(),
@@ -72,8 +73,14 @@ export async function queryProductsByFilters(
   }
 
   if (filters.q) {
-    const q = `%${filters.q}%`;
-    conditions.push(or(ilike(products.name, q), ilike(products.sku, q), ilike(products.description, q)));
+    const q = `%${escapeLikePattern(filters.q)}%`;
+    conditions.push(
+      or(
+        sql`${products.name} ILIKE ${q} ESCAPE '\\'`,
+        sql`${products.sku} ILIKE ${q} ESCAPE '\\'`,
+        sql`${products.description} ILIKE ${q} ESCAPE '\\'`
+      )
+    );
   }
   if (filters.categoryId) conditions.push(eq(products.categoryId, filters.categoryId));
   if (status === "active") conditions.push(eq(products.isActive, true));
@@ -111,6 +118,10 @@ export async function queryProductsByFilters(
       sku: products.sku,
       isActive: products.isActive,
       createdAt: products.createdAt,
+      pricingMode: products.pricingMode,
+      costAmount: products.costAmount,
+      costCurrency: products.costCurrency,
+      marginPct: products.marginPct,
       stockTotal: stockExpr.as("stock_total"),
     })
     .from(products)

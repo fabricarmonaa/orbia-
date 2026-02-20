@@ -13,6 +13,7 @@ import { db } from "../db";
 import { superAdminAuditLogs, superAdminTotp } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { verify as verifyTotp } from "otplib";
+import { sanitizeShortText } from "../security/sanitize";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -29,7 +30,7 @@ const superLoginSchema = z.object({
 });
 
 const tenantLoginSchema = z.object({
-  tenantCode: z.string().trim().min(2).max(40),
+  tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
   password: z.string().min(6).max(128),
 });
@@ -146,6 +147,18 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const user = await storage.getSuperAdminByEmail(email);
+      if (user) {
+        const rootCode = (process.env.ROOT_TENANT_CODE || "t_root").toLowerCase();
+        if (!user.tenantId) {
+          await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "ROOT_TENANT_REQUIRED" });
+          return res.status(403).json({ error: "Superadmin inválido: requiere tenant root", code: "SUPERADMIN_ROOT_REQUIRED" });
+        }
+        const rootTenant = await storage.getTenantById(user.tenantId);
+        if (!rootTenant || String(rootTenant.code || "").toLowerCase() !== rootCode) {
+          await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "ROOT_TENANT_MISMATCH" });
+          return res.status(403).json({ error: "Superadmin no pertenece al tenant root", code: "SUPERADMIN_ROOT_REQUIRED" });
+        }
+      }
       if (!user) {
         markFailure(superLoginByIp, ipKey);
         markFailure(superLoginByEmail, emailKey);

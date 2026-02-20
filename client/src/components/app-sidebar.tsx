@@ -24,6 +24,10 @@ import {
   Lock,
   Truck,
   MessageCircle,
+  ShoppingCart,
+  ReceiptText,
+  Users,
+  FileSpreadsheet,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -40,6 +44,7 @@ interface MenuItem {
   feature?: string;
   addon?: string;
   adminOnly?: boolean;
+  planCodes?: string[];
 }
 
 const menuItems: MenuItem[] = [
@@ -47,6 +52,11 @@ const menuItems: MenuItem[] = [
   { title: "Pedidos", url: "/app/orders", icon: ClipboardList },
   { title: "Caja", url: "/app/cash", icon: Wallet },
   { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
+  { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, feature: "products", adminOnly: true },
+  { title: "Clientes", url: "/app/customers", icon: Users, feature: "products", adminOnly: true },
+  { title: "POS", url: "/app/pos", icon: ShoppingCart, feature: "products" },
+  { title: "Ventas", url: "/app/sales", icon: ReceiptText, feature: "products" },
+  { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true, planCodes: ["PROFESIONAL", "ESCALA"] },
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
@@ -120,6 +130,8 @@ export function AppSidebar() {
                 .filter((item) => !item.addon || addonStatus[item.addon])
                 .filter((item) => !item.adminOnly || isTenantAdmin)
                 .filter((item) => item.url !== "/app/branches" || planCode === "ESCALA")
+                .filter((item) => !item.planCodes || item.planCodes.includes(planCode))
+                                .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url))
                 .map((item) => {
                 const blocked = item.feature && !hasFeature(item.feature);
                 return (

@@ -7,12 +7,19 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
+import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
 
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(6).max(128),
   newPassword: z.string().min(8).max(128),
   confirmPassword: z.string().min(8).max(128),
+});
+
+const deleteTenantSchema = z.object({
+  confirm: z.string().trim(),
+  password: z.string().min(6).max(128),
+  exportBeforeDelete: z.boolean().optional().default(false),
 });
 
 const tenantConfigSchema = z.object({
@@ -93,7 +100,10 @@ export function registerTenantRoutes(app: Express) {
   app.get("/api/me/plan", tenantAuth, async (req, res) => {
     try {
       const plan = await getTenantPlan(req.auth!.tenantId!);
-      res.json({ data: plan || null });
+      const tenant = await storage.getTenantById(req.auth!.tenantId!);
+      const plans = await storage.getPlans();
+      const dbPlan = plans.find((p) => p.id === tenant?.planId);
+      res.json({ data: plan ? { ...plan, description: (dbPlan as any)?.description || null, priceMonthly: (dbPlan as any)?.priceMonthly || null, currency: (dbPlan as any)?.currency || "ARS" } : null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -231,6 +241,63 @@ export function registerTenantRoutes(app: Express) {
       }
   });
 
+
+
+  app.get("/api/tenant/export/:token", tenantAuth, async (req, res) => {
+    try {
+      const token = String(req.params.token || "");
+      const { zipPath, zipName } = validateExportToken(token, req.auth!.tenantId!, req.auth!.userId);
+      return res.download(zipPath, zipName);
+    } catch (err: any) {
+      if (err.message === "EXPORT_TOKEN_EXPIRED") return res.status(410).json({ error: "Export expirado", code: "EXPORT_TOKEN_EXPIRED" });
+      if (err.message === "EXPORT_TOKEN_FORBIDDEN") return res.status(403).json({ error: "Export no autorizado", code: "EXPORT_FORBIDDEN" });
+      return res.status(400).json({ error: "Token de export inválido", code: "EXPORT_TOKEN_INVALID" });
+    }
+  });
+
+  app.delete("/api/tenant", tenantAuth, requireTenantAdmin, async (req, res) => {
+    try {
+      if (req.auth?.role === "CASHIER") {
+        return res.status(403).json({ error: "Acceso denegado", code: "FORBIDDEN" });
+      }
+      const payload = deleteTenantSchema.parse(req.body || {});
+      if (payload.confirm !== "ELIMINAR MI CUENTA") {
+        return res.status(400).json({ error: "Confirmación inválida", code: "DELETE_CONFIRM_INVALID" });
+      }
+      const tenant = await storage.getTenantById(req.auth!.tenantId!);
+      if (!tenant) return res.status(404).json({ error: "Tenant no encontrado", code: "TENANT_NOT_FOUND" });
+      if ((tenant.code || "").toLowerCase() === (process.env.ROOT_TENANT_CODE || "t_root").toLowerCase()) {
+        return res.status(403).json({ error: "No se puede eliminar tenant root", code: "ROOT_TENANT_DELETE_FORBIDDEN" });
+      }
+
+      const user = await storage.getUserById(req.auth!.userId, req.auth!.tenantId!);
+      if (!user) return res.status(404).json({ error: "Usuario no encontrado", code: "USER_NOT_FOUND" });
+      const validPassword = await comparePassword(payload.password, user.password);
+      if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
+
+      let exportToken: string | undefined;
+      if (payload.exportBeforeDelete) {
+        const exportData = await generateTenantExportZip(req.auth!.tenantId!, req.auth!.userId);
+        exportToken = exportData.token;
+      }
+
+      const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
+      return res.json({
+        deleted: true,
+        exportUrl: exportToken ? `/api/tenant/export/${exportToken}` : undefined,
+        deletedCounts,
+      });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
+      }
+      if (String(err?.message || "").includes("EXPORT")) {
+        return res.status(500).json({ error: "No se pudo generar exportación", code: "EXPORT_FAILED" });
+      }
+      return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR" });
+    }
+  });
+
   app.get("/api/subscription/status", tenantAuth, async (req, res) => {
     try {
       const tenant = await storage.getTenantById(req.auth!.tenantId!);
@@ -272,6 +339,17 @@ export function registerTenantRoutes(app: Express) {
           warning,
         },
       });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+
+  app.get("/api/subscription/transfer-info", tenantAuth, async (_req, res) => {
+    try {
+      const row = await storage.getSystemSetting("transfer_info");
+      const data = row?.value ? JSON.parse(row.value) : null;
+      res.json({ data });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

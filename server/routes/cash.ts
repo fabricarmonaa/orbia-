@@ -4,13 +4,21 @@ import { tenantAuth, requireFeature, enforceBranchScope } from "../auth";
 import { z } from "zod";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
+import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { validateBody } from "../middleware/validate";
+
+const sanitizeOptionalShort = (max: number) =>
+  z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().transform((value) => sanitizeShortText(value, max)).optional());
+
+const sanitizeOptionalLong = (max: number) =>
+  z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().transform((value) => sanitizeLongText(value, max)).optional());
 
 const cashMovementSchema = z.object({
   type: z.enum(["ingreso", "egreso"]),
   amount: z.coerce.number().positive(),
-  method: z.string().trim().max(40).optional(),
-  category: z.string().trim().max(80).optional().nullable(),
-  description: z.string().trim().max(200).optional().nullable(),
+  method: sanitizeOptionalShort(40),
+  category: sanitizeOptionalShort(80).nullable(),
+  description: sanitizeOptionalLong(200).nullable(),
   expenseDefinitionId: z.coerce.number().int().positive().optional().nullable(),
   sessionId: z.coerce.number().int().positive().optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
@@ -29,7 +37,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.post("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, async (req, res) => {
+  app.post("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, validateBody(z.object({ openingAmount: z.coerce.number().min(0), branchId: z.coerce.number().int().positive().optional().nullable() })), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (req.body.branchId || null);
@@ -51,7 +59,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/cash/sessions/:id/close", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, async (req, res) => {
+  app.patch("/api/cash/sessions/:id/close", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, validateBody(z.object({ closingAmount: z.coerce.number().min(0) })), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
@@ -123,9 +131,9 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.post("/api/cash/movements", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.post("/api/cash/movements", tenantAuth, enforceBranchScope, validateBody(cashMovementSchema), async (req, res) => {
     try {
-      const payload = cashMovementSchema.parse(req.body);
+      const payload = req.body as z.infer<typeof cashMovementSchema>;
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (payload.branchId || null);

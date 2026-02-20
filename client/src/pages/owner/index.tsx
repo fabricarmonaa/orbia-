@@ -107,6 +107,9 @@ export default function OwnerDashboard() {
   const [, setLocation] = useLocation();
   const [tenants, setTenants] = useState<(Tenant & { plan?: Plan; ownerName?: string | null; ownerEmail?: string | null; planName?: string | null; addonsActive?: string[]; status?: string })[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [planSavingCode, setPlanSavingCode] = useState<string | null>(null);
+  const [transferInfo, setTransferInfo] = useState({ bank_name: "", account_holder: "", cbu: "", alias: "", whatsapp_contact: "" });
+  const [savingTransferInfo, setSavingTransferInfo] = useState(false);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -222,15 +225,18 @@ export default function OwnerDashboard() {
 
   async function fetchData() {
     try {
-      const [tenantsRes, plansRes] = await Promise.all([
+      const [tenantsRes, plansRes, transferRes] = await Promise.all([
         apiRequest("GET", "/api/super/tenants"),
         apiRequest("GET", "/api/super/plans"),
+        apiRequest("GET", "/api/super/transfer-info"),
       ]);
       const tenantsData = await tenantsRes.json();
       const plansData = await plansRes.json();
+      const transferData = await transferRes.json();
       const tenantsList: (Tenant & { plan?: Plan })[] = tenantsData.data || [];
       setTenants(tenantsList);
       setPlans(plansData.data || []);
+      setTransferInfo(transferData?.data || { bank_name: "", account_holder: "", cbu: "", alias: "", whatsapp_contact: "" });
 
       const dates: Record<number, { start: string; end: string }> = {};
       tenantsList.forEach((t) => {
@@ -385,6 +391,31 @@ export default function OwnerDashboard() {
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function savePlan(planCode: string, payload: Record<string, unknown>) {
+    setPlanSavingCode(planCode);
+    try {
+      await apiRequest("PATCH", `/api/super/plans/${planCode}`, payload);
+      await fetchData();
+      toast({ title: "Plan actualizado" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setPlanSavingCode(null);
+    }
+  }
+
+  async function saveTransferInfo() {
+    setSavingTransferInfo(true);
+    try {
+      await apiRequest("PATCH", "/api/super/transfer-info", transferInfo);
+      toast({ title: "Datos de transferencia actualizados" });
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setSavingTransferInfo(false);
     }
   }
 
@@ -1150,6 +1181,41 @@ export default function OwnerDashboard() {
 
           <TabsContent value="subscriptions" className="space-y-4">
             <h2 className="text-xl font-semibold">Suscripciones</h2>
+
+            <Card>
+              <CardContent className="py-4 space-y-4">
+                <h3 className="font-semibold">Planes</h3>
+                <div className="space-y-3">
+                  {plans.map((plan) => (
+                    <div key={plan.planCode} className="border rounded-md p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="font-medium">{plan.name} ({plan.planCode})</p>
+                        <Button size="sm" onClick={() => savePlan(plan.planCode, plan as any)} disabled={planSavingCode === plan.planCode}>{planSavingCode === plan.planCode ? "Guardando..." : "Guardar"}</Button>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                        <Input value={(plan as any).description || ""} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, description: e.target.value } as any) : p))} placeholder="Descripción" />
+                        <Input type="number" value={String((plan as any).priceMonthly || "0")} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, priceMonthly: e.target.value } as any) : p))} placeholder="Precio" />
+                        <Input type="number" value={String((plan as any).maxBranches || 0)} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, maxBranches: Number(e.target.value) } as any) : p))} placeholder="Máx sucursales" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="py-4 space-y-3">
+                <h3 className="font-semibold">Datos de Transferencia</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                  <Input value={transferInfo.bank_name} onChange={(e) => setTransferInfo((p) => ({ ...p, bank_name: e.target.value }))} placeholder="Banco" />
+                  <Input value={transferInfo.account_holder} onChange={(e) => setTransferInfo((p) => ({ ...p, account_holder: e.target.value }))} placeholder="Titular" />
+                  <Input value={transferInfo.cbu} onChange={(e) => setTransferInfo((p) => ({ ...p, cbu: e.target.value }))} placeholder="CBU" />
+                  <Input value={transferInfo.alias} onChange={(e) => setTransferInfo((p) => ({ ...p, alias: e.target.value }))} placeholder="Alias" />
+                  <Input value={transferInfo.whatsapp_contact} onChange={(e) => setTransferInfo((p) => ({ ...p, whatsapp_contact: e.target.value }))} placeholder="WhatsApp" className="md:col-span-2" />
+                </div>
+                <Button onClick={saveTransferInfo} disabled={savingTransferInfo}>{savingTransferInfo ? "Guardando..." : "Guardar datos"}</Button>
+              </CardContent>
+            </Card>
 
             {loading ? (
               <div className="space-y-3">

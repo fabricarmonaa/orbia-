@@ -17,6 +17,8 @@ export default function TenantLogin() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [mode, setMode] = useState<"admin" | "cashier">("admin");
+  const [pin, setPin] = useState("");
   const { toast } = useToast();
   const { appBranding } = useBranding();
 
@@ -24,10 +26,14 @@ export default function TenantLogin() {
     e.preventDefault();
     setLoading(true);
     try {
-      const res = await fetch("/api/auth/login", {
+      const endpoint = mode === "cashier" ? "/api/cashiers/login" : "/api/auth/login";
+      const body = mode === "cashier"
+        ? { tenant_code: tenantCode, pin }
+        : { tenantCode, email, password };
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tenantCode, email, password }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error de autenticación");
@@ -66,6 +72,11 @@ export default function TenantLogin() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+                            <div className="grid grid-cols-2 gap-2">
+                <Button type="button" variant={mode === "admin" ? "default" : "outline"} onClick={() => setMode("admin")}>Ingresar como Administrador</Button>
+                <Button type="button" variant={mode === "cashier" ? "default" : "outline"} onClick={() => setMode("cashier")}>Ingresar como Cajero</Button>
+              </div>
+
               <div className="space-y-2">
                 <Label htmlFor="tenantCode">Código de negocio</Label>
                 <Input
@@ -77,42 +88,28 @@ export default function TenantLogin() {
                   data-testid="input-tenant-code"
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="email">Email</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="usuario@empresa.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  data-testid="input-email"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="password">Contraseña</Label>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    placeholder="Contraseña"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    data-testid="input-password"
-                  />
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-0 top-0"
-                    onClick={() => setShowPassword(!showPassword)}
-                    data-testid="button-toggle-password"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </Button>
+              {mode === "admin" ? (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email</Label>
+                    <Input id="email" type="email" placeholder="usuario@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-email" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Contraseña</Label>
+                    <div className="relative">
+                      <Input id="password" type={showPassword ? "text" : "password"} placeholder="Contraseña" value={password} onChange={(e) => setPassword(e.target.value)} required data-testid="input-password" />
+                      <Button type="button" variant="ghost" size="icon" className="absolute right-0 top-0" onClick={() => setShowPassword(!showPassword)} data-testid="button-toggle-password">
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </Button>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="pin">PIN</Label>
+                  <Input id="pin" type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value)} required data-testid="input-cashier-pin" />
                 </div>
-              </div>
+              )}
               <Button
                 type="submit"
                 className="w-full"
