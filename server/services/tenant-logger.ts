@@ -14,25 +14,36 @@ function ensureDir(dir: string) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 }
 
-export function appendTenantEvent(data: { tenantId: number; userId?: number | null; action: string; entityType: string; entityId?: number | null; metadata?: any; ts?: string; }) {
+function sanitizeTenantKey(value: string | number) {
+  return String(value).trim().replace(/[^a-zA-Z0-9_-]/g, "_") || "tenant";
+}
+
+function tenantLogKey(input: { tenantId: number; tenantSlug?: string | null }) {
+  return sanitizeTenantKey(input.tenantSlug || input.tenantId);
+}
+
+export function appendTenantEvent(data: { tenantId: number; tenantSlug?: string | null; userId?: number | null; action: string; entityType: string; entityId?: number | null; metadata?: any; ts?: string; }) {
   try {
     const ts = data.ts || new Date().toISOString();
-    const tenantDir = path.join(LOG_ROOT, `tenant_${data.tenantId}`);
-    ensureDir(tenantDir);
-    const file = path.join(tenantDir, `events_${ym(new Date(ts))}.log`);
-    fs.appendFileSync(file, JSON.stringify({ ts, tenantId: data.tenantId, userId: data.userId ?? null, action: data.action, entityType: data.entityType, entityId: data.entityId ?? null, metadata: data.metadata ?? null }) + "\n", "utf8");
-    cleanupTenantOldLogs(tenantDir);
+    ensureDir(LOG_ROOT);
+    const key = tenantLogKey(data);
+    const file = path.join(LOG_ROOT, `${key}_events_${ym(new Date(ts))}.log`);
+    fs.appendFileSync(file, JSON.stringify({ ts, tenantId: data.tenantId, tenantSlug: data.tenantSlug || null, userId: data.userId ?? null, action: data.action, entityType: data.entityType, entityId: data.entityId ?? null, metadata: data.metadata ?? null }) + "\n", "utf8");
+    cleanupTenantOldLogs(key);
   } catch {
     // non-blocking
   }
 }
 
-function cleanupTenantOldLogs(tenantDir: string) {
+function cleanupTenantOldLogs(tenantKey: string) {
   if (!RETENTION_MONTHS || RETENTION_MONTHS <= 0) return;
-  const files = fs.readdirSync(tenantDir).filter((f) => /^events_\d{4}-\d{2}\.log$/.test(f)).sort();
+  ensureDir(LOG_ROOT);
+  const escapedKey = tenantKey.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`^${escapedKey}_events_\\d{4}-\\d{2}\\.log$`);
+  const files = fs.readdirSync(LOG_ROOT).filter((f) => pattern.test(f)).sort();
   const keep = Math.max(1, RETENTION_MONTHS);
   const remove = files.slice(0, Math.max(0, files.length - keep));
   for (const f of remove) {
-    try { fs.unlinkSync(path.join(tenantDir, f)); } catch {}
+    try { fs.unlinkSync(path.join(LOG_ROOT, f)); } catch {}
   }
 }
