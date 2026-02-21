@@ -71,11 +71,23 @@ export default function SalesHistoryPage() {
       const res = await apiRequest("GET", `/api/sales?${params.toString()}`);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "No se pudo cargar historial de ventas");
-      setRows(json?.data || []);
+      const rows = (json?.data || (json?.items || []).map((it: any) => ({
+        id: it.id,
+        number: it.number,
+        createdAt: it.createdAt,
+        customer: it.customerName ? { name: it.customerName } : null,
+        paymentMethod: it.paymentMethod,
+        subtotal: String(it.totalAmount || 0),
+        discount: "0",
+        surcharge: "0",
+        total: String(it.totalAmount || 0),
+        branch: it.branchName ? { name: it.branchName } : null,
+      })));
+      setRows(rows);
       setMeta({
         limit: Number(json?.meta?.limit || defaultLimit),
         offset: Number(json?.meta?.offset || 0),
-        total: Number(json?.meta?.total || 0),
+        total: Number(json?.meta?.total || json?.total || 0),
       });
     } catch (err: any) {
       setRows([]);

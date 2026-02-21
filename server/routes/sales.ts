@@ -61,6 +61,16 @@ function toDate(value?: string) {
   return date;
 }
 
+function parseDateOnly(value?: string, endExclusive = false) {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const date = new Date(`${raw}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  if (endExclusive) date.setUTCDate(date.getUTCDate() + 1);
+  return date;
+}
+
 function tokenExpiresAt() {
   const days = Number(process.env.SALE_PUBLIC_TOKEN_DAYS || 30);
   return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
@@ -157,17 +167,16 @@ export function registerSaleRoutes(app: Express) {
   });
 
   app.get("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateQuery(saleQuerySchema), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
+      tenantId = req.auth!.tenantId!;
       const raw = req.query as Record<string, string | undefined>;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (raw.branch_id ? Number(raw.branch_id) : undefined);
 
-      const fromRaw = String(raw.from ?? "").trim();
-      const toRaw = String(raw.to ?? "").trim();
-      const from = fromRaw ? new Date(fromRaw) : undefined;
-      const to = toRaw ? new Date(toRaw) : undefined;
-      if (fromRaw && Number.isNaN(from?.getTime())) return res.status(400).json({ error: "Fecha desde inválida", code: "INVALID_DATE" });
-      if (toRaw && Number.isNaN(to?.getTime())) return res.status(400).json({ error: "Fecha hasta inválida", code: "INVALID_DATE" });
+      const from = parseDateOnly(raw.from);
+      const to = parseDateOnly(raw.to, true);
+      if (raw.from && from === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
+      if (raw.to && to === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
 
       const limitParsed = Number(raw.limit ?? "50");
       const offsetParsed = Number(raw.offset ?? "0");
@@ -176,28 +185,55 @@ export function registerSaleRoutes(app: Express) {
 
       const customerIdParsed = Number(raw.customerId ?? "");
       const customerId = Number.isFinite(customerIdParsed) && customerIdParsed > 0 ? customerIdParsed : undefined;
+      const sort = raw.sort === "date_asc" ? "date_asc" : "date_desc";
 
       const result = await storage.listSales(tenantId, {
         branchId,
-        from,
-        to,
+        from: from || undefined,
+        to: to || undefined,
         number: String(raw.number ?? "").trim() || undefined,
         customerId,
-        customerQuery: String(raw.customerQuery ?? "").trim() || undefined,
+        customerQuery: String(raw.customerQuery ?? raw.q ?? "").trim() || undefined,
         limit,
         offset,
-        sort: raw.sort === "date_asc" ? "date_asc" : "date_desc",
+        sort,
       });
 
-      const payload: any = { data: result.data, meta: result.meta };
+      const items = (result.data || []).map((row: any) => ({
+        id: Number(row.id),
+        number: row.number,
+        createdAt: row.createdAt,
+        totalAmount: Number(row.total || 0),
+        paymentMethod: row.paymentMethod,
+        customerName: row.customer?.name || null,
+        branchName: row.branch?.name || null,
+        publicToken: row.publicToken || null,
+      }));
+
+      const payload: any = {
+        items,
+        total: Number(result.meta?.total || 0),
+        data: result.data,
+        meta: result.meta,
+      };
       if (process.env.NODE_ENV !== "production") payload.debug = { usedMaterializedView: result.usedMaterializedView };
       return res.json(payload);
     } catch (err: any) {
-      console.error("[sales] SALES_LIST_ERROR", err);
+      console.error("[sales] SALES_LIST_ERROR", {
+        tenantId,
+        from: req.query?.from,
+        to: req.query?.to,
+        limit: req.query?.limit,
+        offset: req.query?.offset,
+        sort: req.query?.sort,
+        message: err?.message,
+        code: err?.code,
+        stack: err?.stack,
+      });
       if (err?.code === "MIGRATION_MISSING") {
         return res.status(500).json({ error: "Faltan migraciones de ventas, ejecutar migrations/*.sql", code: "MIGRATION_MISSING" });
       }
-      return res.status(500).json({ error: "No se pudo obtener historial de ventas", code: "SALES_LIST_ERROR" });
+      return res.status(500).json({ error: "SALES_LIST_FAILED", code: "SALES_LIST_FAILED" });
     }
   });
 
