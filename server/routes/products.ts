@@ -12,8 +12,9 @@ import {
 import { queryProductsByFilters, productFiltersSchema } from "../services/product-filters";
 import { generatePriceListPdf } from "../services/pdf/price-list";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
-import { validateBody } from "../middleware/validate";
+import { validateBody, validateQuery } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
+import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -41,6 +42,7 @@ const productBaseSchema = z.object({
   costAmount: z.coerce.number().min(0).optional().nullable(),
   costCurrency: sanitizeOptionalShort(10).nullable(),
   marginPct: z.coerce.number().min(0).max(1000).optional().nullable(),
+  statusCode: z.string().max(40).optional().nullable(),
 });
 
 const productInputSchema = productBaseSchema.superRefine((value, ctx) => {
@@ -67,6 +69,11 @@ const productUpdateSchema = productBaseSchema.partial().superRefine((value, ctx)
   }
 });
 
+
+
+const lookupQuerySchema = z.object({
+  code: z.string().transform((value) => sanitizeShortText(value, 120)).refine((value) => value.length > 0, "Código requerido"),
+});
 
 function toNumber(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -105,8 +112,9 @@ export function registerProductRoutes(app: Express) {
   app.get("/api/products", tenantAuth, requireFeature("products"), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
       const filters = productFiltersSchema.parse(req.query);
       const { data, total } = await queryProductsByFilters(tenantId, hasBranches, filters);
 
@@ -123,12 +131,18 @@ export function registerProductRoutes(app: Express) {
         }
       }
 
-      const normalized = await Promise.all(data.map(async (p) => ({
-        ...p,
-        stockTotal: toNumber(p.stockTotal),
-        estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
-        branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
-      })));
+      const statuses = await getStatuses(tenantId, "PRODUCT", true);
+      const statusMap = new Map(statuses.map((s) => [s.code, s]));
+      const normalized = await Promise.all(data.map(async (p) => {
+        const code = p.statusCode || (p.isActive ? "ACTIVE" : "INACTIVE");
+        return {
+          ...p,
+          stockTotal: toNumber(p.stockTotal),
+          status: statusMap.get(code) ? { code, label: statusMap.get(code)!.label, color: statusMap.get(code)!.color } : { code, label: code, color: "#6B7280" },
+          estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
+          branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
+        };
+      }));
 
       const page = filters.page ?? 1;
       const pageSize = filters.pageSize ?? 20;
@@ -153,6 +167,21 @@ export function registerProductRoutes(app: Express) {
     }
   });
 
+
+
+  app.get("/api/products/lookup", tenantAuth, requireFeature("products"), validateQuery(lookupQuerySchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const query = req.query as z.infer<typeof lookupQuerySchema>;
+      const product = await storage.getProductByCode(tenantId, query.code);
+      if (!product) return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND" });
+      const stockTotal = Number((product as any).stock ?? 0);
+      const estimatedSalePrice = await resolveProductUnitPrice(product as any, tenantId, "ARS").catch(() => Number(product.price));
+      return res.json({ data: { ...product, stockTotal, estimatedSalePrice } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "No se pudo buscar el producto" });
+    }
+  });
   app.post(
     "/api/products",
     tenantAuth,
@@ -163,10 +192,13 @@ export function registerProductRoutes(app: Express) {
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
       const payload = req.body as z.infer<typeof productInputSchema>;
 
+      const statusCode = payload.statusCode ? normalizeStatusCode(payload.statusCode) : (await getDefaultStatus(tenantId, "PRODUCT"))?.code || "ACTIVE";
+      await ensureStatusExists(tenantId, "PRODUCT", statusCode);
       const data = await storage.createProduct({
         tenantId,
         name: payload.name,
@@ -180,6 +212,8 @@ export function registerProductRoutes(app: Express) {
         costCurrency: payload.costCurrency || null,
         marginPct: payload.marginPct !== null && payload.marginPct !== undefined ? String(payload.marginPct) : null,
         stock: hasBranches ? null : (payload.stock ?? 0),
+        statusCode,
+        isActive: statusCode !== "INACTIVE",
       });
       res.status(201).json({ data });
     } catch (err: any) {
@@ -196,8 +230,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
 
       if (!hasBranches) {
         return res.json({
@@ -234,51 +269,67 @@ export function registerProductRoutes(app: Express) {
     requireFeature("products"),
     enforceBranchScope,
     validateBody(z.object({
-      branchId: z.coerce.number().int().positive().optional().nullable(),
-      stock: z.coerce.number().int().min(0),
+      mode: z.enum(["global", "by_branch"]),
+      stock: z.coerce.number().int().min(0).optional(),
+      branches: z.array(z.object({ branchId: z.coerce.number().int().positive(), stock: z.coerce.number().int().min(0) })).optional(),
       reason: sanitizeOptionalLong(200).nullable(),
     })),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const productId = parseInt(req.params.id as string);
-      const { branchId, stock, reason } = req.body as { branchId?: number | null; stock: number; reason?: string | null };
-      if (branchId === undefined || stock === undefined) {
-        return res.status(400).json({ error: "branchId y stock son obligatorios" });
-      }
-      const stockNum = stock;
+      const { mode, stock, branches, reason } = req.body as { mode: "global" | "by_branch"; stock?: number; branches?: Array<{ branchId: number; stock: number }>; reason?: string | null };
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
-      const targetBranchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : branchId;
-      if (!targetBranchId) {
-        return res.status(400).json({ error: "branchId es obligatorio" });
+      const plan = await getTenantPlan(tenantId);
+      const branchCount = await storage.countBranchesByTenant(tenantId);
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+
+      if (mode === "by_branch" && !hasBranches) {
+        return res.status(403).json({ error: "Tu plan no permite stock por sucursal", code: "FEATURE_BLOCKED" });
       }
+
+      if (mode === "global") {
+        if (stock === undefined) return res.status(400).json({ error: "stock es obligatorio en modo global", code: "STOCK_REQUIRED" });
+        await storage.updateProduct(productId, tenantId, { stock });
+        return res.json({ data: { mode: "global", stockTotal: stock } });
+      }
+
+      const branchPayload = branches || [];
+      if (!branchPayload.length) return res.status(400).json({ error: "branches es obligatorio en modo by_branch", code: "BRANCHES_REQUIRED" });
+      const tenantBranches = await storage.getBranches(tenantId);
+      const allowedIds = new Set(tenantBranches.map((b) => b.id));
+      for (const item of branchPayload) {
+        if (!allowedIds.has(item.branchId)) {
+          return res.status(400).json({ error: `Sucursal inválida: ${item.branchId}`, code: "BRANCH_INVALID" });
+        }
+      }
+
       const existing = await storage.getProductStockByBranch(productId, tenantId);
-      const prev = existing.find(s => s.branchId === targetBranchId);
-      const prevStock = prev?.stock || 0;
-      const delta = stockNum - prevStock;
+      const existingMap = new Map(existing.map((x) => [x.branchId, Number(x.stock || 0)]));
 
-      await storage.upsertProductStockByBranch({
-        tenantId,
-        productId,
-        branchId: targetBranchId,
-        stock: stockNum,
-      });
-
-      if (delta !== 0) {
-        await storage.createStockMovement({
-          tenantId,
-          productId,
-          branchId: targetBranchId,
-          quantity: delta,
-          reason: reason || null,
-          userId: req.auth!.userId,
-        });
+      for (const item of branchPayload) {
+        const before = existingMap.get(item.branchId) || 0;
+        const after = Number(item.stock);
+        await storage.upsertProductStockByBranch({ tenantId, productId, branchId: item.branchId, stock: after });
+        const delta = after - before;
+        if (delta !== 0) {
+          await storage.createStockMovement({
+            tenantId,
+            productId,
+            branchId: item.branchId,
+            quantity: String(Math.abs(delta)),
+            reason: reason || "Renovación stock",
+            userId: req.auth!.userId,
+          });
+        }
       }
 
-      const updatedStock = await storage.getProductStockByBranch(productId, tenantId);
-      res.json({ data: updatedStock });
+      const updated = await storage.getProductStockByBranch(productId, tenantId);
+      const stockTotal = updated.reduce((acc, row) => acc + Number(row.stock || 0), 0);
+      await storage.updateProduct(productId, tenantId, { stock: stockTotal });
+      return res.json({ data: { mode: "by_branch", stockTotal, branches: updated } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -297,8 +348,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado" });
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
 
       const payload = req.body as z.infer<typeof productUpdateSchema>;
 
@@ -314,6 +366,12 @@ export function registerProductRoutes(app: Express) {
       if (payload.stock !== undefined && !hasBranches) updateData.stock = payload.stock;
       if (payload.sku !== undefined) updateData.sku = payload.sku;
       if (payload.categoryId !== undefined) updateData.categoryId = payload.categoryId;
+      if (payload.statusCode !== undefined) {
+        const statusCode = normalizeStatusCode(payload.statusCode || "");
+        await ensureStatusExists(tenantId, "PRODUCT", statusCode);
+        updateData.statusCode = statusCode;
+        updateData.isActive = statusCode !== "INACTIVE";
+      }
 
       const product = await storage.updateProduct(productId, tenantId, updateData);
       res.json({ data: product });
@@ -337,8 +395,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado" });
-      await storage.toggleProductActive(productId, tenantId, !existing.isActive);
-      res.json({ data: { isActive: !existing.isActive } });
+      const nextActive = !existing.isActive;
+      await storage.updateProduct(productId, tenantId, { isActive: nextActive, statusCode: nextActive ? "ACTIVE" : "INACTIVE" });
+      res.json({ data: { isActive: nextActive, statusCode: nextActive ? "ACTIVE" : "INACTIVE" } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -357,7 +416,7 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND" });
-      await storage.toggleProductActive(productId, tenantId, false);
+      await storage.updateProduct(productId, tenantId, { isActive: false, statusCode: "INACTIVE" });
       res.json({ data: { id: productId, deleted: true } });
     } catch {
       res.status(500).json({ error: "No se pudo eliminar el producto", code: "PRODUCT_DELETE_ERROR" });

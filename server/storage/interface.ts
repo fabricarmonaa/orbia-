@@ -80,6 +80,7 @@ export interface IStorage {
   createOrder(data: InsertOrder): Promise<Order>;
   updateOrderStatus(id: number, tenantId: number, statusId: number): Promise<void>;
   updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date): Promise<void>;
+  linkOrderSale(id: number, tenantId: number, saleId: number, salePublicToken: string | null): Promise<void>;
   getNextOrderNumber(tenantId: number): Promise<number>;
   countOrders(tenantId: number, branchId?: number | null): Promise<number>;
 
@@ -125,6 +126,7 @@ export interface IStorage {
   createProductCategory(data: InsertProductCategory): Promise<ProductCategory>;
 
   getProducts(tenantId: number): Promise<Product[]>;
+  getProductByCode(tenantId: number, code: string): Promise<Product | undefined>;
   getProductById(id: number, tenantId: number): Promise<Product | undefined>;
   createProduct(data: InsertProduct): Promise<Product>;
   updateProduct(id: number, tenantId: number, data: Partial<InsertProduct>): Promise<Product>;
@@ -138,13 +140,15 @@ export interface IStorage {
     currency: string;
     paymentMethod: string;
     notes: string | null;
+    customerId?: number | null;
+    hasBranchesFeature?: boolean;
     discountType: "NONE" | "PERCENT" | "FIXED";
     discountValue: number;
     surchargeType: "NONE" | "PERCENT" | "FIXED";
     surchargeValue: number;
     items: Array<{ productId: number; quantity: number; unitPrice?: number | null }>;
   }): Promise<{ sale: Sale }>;
-  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }): Promise<Sale[]>;
+  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }): Promise<Sale[]>;
   getSaleById(id: number, tenantId: number): Promise<Sale | undefined>;
   getSaleItems(id: number, tenantId: number): Promise<SaleItem[]>;
 

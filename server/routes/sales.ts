@@ -1,9 +1,13 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { enforceBranchScope, requireRoleAny, tenantAuth } from "../auth";
+import { and, eq, isNull } from "drizzle-orm";
+import { randomBytes } from "crypto";
+import { enforceBranchScope, getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { db } from "../db";
+import { sales } from "@shared/schema";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -32,6 +36,7 @@ const createSaleSchema = z.object({
   surcharge: adjustmentSchema,
   payment_method: z.enum(["EFECTIVO", "TRANSFERENCIA", "TARJETA", "OTRO"]),
   notes: optionalLong(2000).nullable(),
+  customer_id: z.coerce.number().int().positive().nullable().optional(),
 });
 
 const saleQuerySchema = z.object({
@@ -39,11 +44,13 @@ const saleQuerySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   q: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
+  customer: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+const tokenParamSchema = z.object({ token: z.string().min(16).max(120) });
 
 function toDate(value?: string) {
   if (!value) return undefined;
@@ -52,13 +59,43 @@ function toDate(value?: string) {
   return date;
 }
 
+function tokenExpiresAt() {
+  const days = Number(process.env.SALE_PUBLIC_TOKEN_DAYS || 30);
+  return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+}
+
+async function ensureSalePublicToken(saleId: number, tenantId: number) {
+  const [existing] = await db
+    .select({ token: sales.publicToken, expiresAt: sales.publicTokenExpiresAt })
+    .from(sales)
+    .where(and(eq(sales.id, saleId), eq(sales.tenantId, tenantId)));
+  const now = new Date();
+  if (existing?.token && (!existing.expiresAt || new Date(existing.expiresAt) > now)) return existing.token;
+  const token = randomBytes(24).toString("base64url");
+  await db
+    .update(sales)
+    .set({ publicToken: token, publicTokenCreatedAt: now, publicTokenExpiresAt: tokenExpiresAt(), updatedAt: now })
+    .where(and(eq(sales.id, saleId), eq(sales.tenantId, tenantId)));
+  return token;
+}
+
+function buildPublicBaseUrl(slug?: string | null) {
+  const base = (process.env.PUBLIC_APP_URL || "").trim();
+  if (base && slug) return `${base.replace(/\/$/, "")}/t/${slug}`;
+  if (base) return `${base.replace(/\/$/, "")}/public`;
+  if (slug) return `${process.env.APP_ORIGIN || ""}/t/${slug}`;
+  return `${process.env.APP_ORIGIN || ""}/public`;
+}
+
 export function registerSaleRoutes(app: Express) {
   app.post("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateBody(createSaleSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const payload = req.body as z.infer<typeof createSaleSchema>;
 
-      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (payload.branch_id ?? null);
+      const plan = await getTenantPlan(tenantId);
+      const hasBranchesFeature = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES);
+      const branchId = hasBranchesFeature ? (req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (payload.branch_id ?? null)) : null;
       if (branchId) {
         const branch = await storage.getBranchById(branchId, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
@@ -71,6 +108,7 @@ export function registerSaleRoutes(app: Express) {
         currency: "ARS",
         paymentMethod: payload.payment_method,
         notes: payload.notes || null,
+        customerId: payload.customer_id ?? null,
         discountType: payload.discount?.type || "NONE",
         discountValue: payload.discount?.value || 0,
         surchargeType: payload.surcharge?.type || "NONE",
@@ -81,6 +119,8 @@ export function registerSaleRoutes(app: Express) {
           unitPrice: item.unit_price,
         })),
       });
+
+      await ensureSalePublicToken(created.sale.id, tenantId);
 
       return res.status(201).json({
         sale_id: created.sale.id,
@@ -123,6 +163,7 @@ export function registerSaleRoutes(app: Express) {
         from: toDate(query.from),
         to: toDate(query.to),
         q: query.q,
+        customer: query.customer,
         limit: query.limit,
         offset: query.offset,
       });
@@ -157,24 +198,55 @@ export function registerSaleRoutes(app: Express) {
       if (req.auth!.scope === "BRANCH" && sale.branchId !== req.auth!.branchId) {
         return res.status(403).json({ error: "Sin acceso a esta venta", code: "BRANCH_FORBIDDEN" });
       }
-      const [items, branding, cashierUser, cashierProfile, allBranches] = await Promise.all([
+
+      const [items, branding, cashierUser, cashierProfile, allBranches, tenant] = await Promise.all([
         storage.getSaleItems(saleId, tenantId),
         storage.getTenantBranding(tenantId),
         sale.cashierUserId ? storage.getUserById(sale.cashierUserId, tenantId) : Promise.resolve(undefined),
         sale.cashierUserId ? storage.getCashierById(sale.cashierUserId, tenantId) : Promise.resolve(undefined),
         storage.getBranches(tenantId),
+        storage.getTenantById(tenantId),
       ]);
       const branch = sale.branchId ? allBranches.find((b) => b.id === sale.branchId) : null;
+      const token = await ensureSalePublicToken(sale.id, tenantId);
+      const base = buildPublicBaseUrl((tenant as any)?.slug || null);
+      const publicUrl = `${base}/sale/${token}`;
+
       res.json({
         data: {
-          empresa: {
-            nombre: branding.displayName,
-            logo_url: branding.logoUrl,
+          tenant: {
+            name: branding.displayName,
+            slug: (tenant as any)?.slug || null,
+            logoUrl: branding.logoUrl,
             slogan: String(branding.texts?.trackingFooter || ""),
           },
-          cajero: {
-            nombre: cashierProfile?.name || cashierUser?.fullName || "Sistema",
+          branch: branch ? { name: branch.name } : null,
+          cashier: { name: cashierProfile?.name || cashierUser?.fullName || "Sistema" },
+          sale: {
+            id: sale.id,
+            number: sale.saleNumber,
+            createdAt: sale.saleDatetime,
+            paymentMethod: sale.paymentMethod,
+            notes: sale.notes,
           },
+          totals: {
+            subtotal: sale.subtotalAmount,
+            discount: sale.discountAmount,
+            surcharge: sale.surchargeAmount,
+            total: sale.totalAmount,
+            currency: sale.currency,
+          },
+          items: items.map((item) => ({
+            qty: item.quantity,
+            name: item.productNameSnapshot,
+            code: item.skuSnapshot,
+            unitPrice: item.unitPrice,
+            subtotal: item.lineTotal,
+          })),
+          qr: { publicUrl },
+          // backward compatibility
+          empresa: { nombre: branding.displayName, logo_url: branding.logoUrl, slogan: String(branding.texts?.trackingFooter || "") },
+          cajero: { nombre: cashierProfile?.name || cashierUser?.fullName || "Sistema" },
           sucursal: branch ? { id: branch.id, nombre: branch.name } : { id: null, nombre: "CENTRAL" },
           venta: {
             id: sale.id,
@@ -188,17 +260,41 @@ export function registerSaleRoutes(app: Express) {
             notes: sale.notes,
             currency: sale.currency,
           },
-          items: items.map((item) => ({
-            qty: item.quantity,
-            name: item.productNameSnapshot,
-            sku: item.skuSnapshot,
-            unit_price: item.unitPrice,
-            line_total: item.lineTotal,
-          })),
+          items_legacy: items.map((item) => ({ qty: item.quantity, name: item.productNameSnapshot, sku: item.skuSnapshot, unit_price: item.unitPrice, line_total: item.lineTotal })),
         },
       });
     } catch {
       res.status(500).json({ error: "No se pudo preparar ticket", code: "SALE_PRINT_ERROR" });
+    }
+  });
+
+  app.get("/api/public/sale/:token", validateParams(tokenParamSchema), async (req, res) => {
+    try {
+      const token = req.params.token as string;
+      const [sale] = await db.select().from(sales).where(and(eq(sales.publicToken, token), isNull(sales.publicTokenExpiresAt))).limit(1);
+      const target = sale
+        ? sale
+        : (await db.select().from(sales).where(and(eq(sales.publicToken, token))).limit(1))[0];
+      if (!target) return res.status(404).json({ error: "Comprobante no encontrado" });
+      if (target.publicTokenExpiresAt && new Date(target.publicTokenExpiresAt) < new Date()) return res.status(404).json({ error: "Comprobante no disponible" });
+
+      const [items, branding] = await Promise.all([
+        storage.getSaleItems(target.id, target.tenantId),
+        storage.getTenantBranding(target.tenantId),
+      ]);
+      return res.json({
+        data: {
+          saleNumber: target.saleNumber,
+          datetime: target.saleDatetime,
+          paymentMethod: target.paymentMethod,
+          total: target.totalAmount,
+          currency: target.currency,
+          items: items.map((i) => ({ qty: i.quantity, name: i.productNameSnapshot, unitPrice: i.unitPrice, subtotal: i.lineTotal })),
+          tenant: { name: branding.displayName, logoUrl: branding.logoUrl },
+        },
+      });
+    } catch {
+      return res.status(500).json({ error: "No se pudo obtener comprobante" });
     }
   });
 }

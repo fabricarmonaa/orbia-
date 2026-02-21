@@ -12,6 +12,7 @@ import { eq, and, isNull } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
+import { evaluatePassword } from "../services/password-policy";
 
 const createTenantSchema = z.object({
   code: z.string().trim().min(2).max(40),
@@ -21,7 +22,7 @@ const createTenantSchema = z.object({
     z.coerce.number().int().positive().nullable()
   ).optional(),
   adminEmail: z.string().trim().email().max(120),
-  adminPassword: z.string().min(6).max(128),
+  adminPassword: z.string().min(12).max(256),
   adminName: z.string().trim().min(2).max(80),
 });
 
@@ -38,7 +39,7 @@ const renameSchema = z.object({
 });
 
 const setPasswordSchema = z.object({
-  newPassword: z.string().min(6).max(128),
+  newPassword: z.string().min(12).max(256),
 });
 
 const deleteSchema = z.object({
@@ -48,7 +49,7 @@ const deleteSchema = z.object({
 const updateSuperCredentialsSchema = z.object({
   currentPassword: z.string().min(6).max(128),
   newEmail: z.string().trim().email().max(120).optional(),
-  newPassword: z.string().min(10).max(128).regex(/[A-Z]/, "Debe incluir una mayúscula").regex(/[0-9]/, "Debe incluir un número").optional(),
+  newPassword: z.string().min(12).max(256).optional(),
 });
 
 const setup2faSchema = z.object({
@@ -266,6 +267,10 @@ export function registerSuperRoutes(app: Express) {
         planId: planId || null,
         isActive: true,
       });
+      const passEval = evaluatePassword(adminPassword, { email: adminEmail, tenantCode: code, tenantName: name });
+      if (!passEval.isValid) {
+        return res.status(400).json({ error: "Password admin inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
+      }
       const hashedPassword = await hashPassword(adminPassword);
       await storage.createUser({
         tenantId: tenant.id,
@@ -498,9 +503,12 @@ export function registerSuperRoutes(app: Express) {
       const tenantId = parseInt(req.params.tenantId as string);
       const { newPassword } = setPasswordSchema.parse(req.body);
       const admin = await storage.getPrimaryTenantAdmin(tenantId);
+      const tenant = await storage.getTenantById(tenantId);
       if (!admin) {
         return res.status(404).json({ error: "No se encontró un admin principal" });
       }
+      const passEval = evaluatePassword(newPassword, { email: admin.email, tenantCode: tenant?.code, tenantName: tenant?.name });
+      if (!passEval.isValid) return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
       const hashedPassword = await hashPassword(newPassword);
       await storage.updateUser(admin.id, tenantId, { password: hashedPassword });
       await storage.createAuditLog({
@@ -594,6 +602,8 @@ export function registerSuperRoutes(app: Express) {
         payload.email = newEmail;
       }
       if (newPassword) {
+        const passEval = evaluatePassword(newPassword, { email: user.email, tenantCode: "t_root", tenantName: "root" });
+        if (!passEval.isValid) return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
         payload.password = await hashPassword(newPassword);
       }
 

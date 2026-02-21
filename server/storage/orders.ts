@@ -61,6 +61,13 @@ export const orderStorage = {
       .set({ publicTrackingId: trackingId, trackingExpiresAt: expiresAt, trackingRevoked: false })
       .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
   },
+  async linkOrderSale(id: number, tenantId: number, saleId: number, salePublicToken: string | null) {
+    await db
+      .update(orders)
+      .set({ saleId, salePublicToken, updatedAt: new Date() })
+      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+  },
+
   async getNextOrderNumber(tenantId: number) {
     const result = await db
       .select({ maxNum: sql<number>`COALESCE(MAX(${orders.orderNumber}), 0)` })

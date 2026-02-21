@@ -1,149 +1,269 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
-interface PreviewData {
-  detectedHeaders: string[];
-  suggestedMapping: Record<string, string>;
-  extraColumns: string[];
-  rowsPreview: Array<{ raw: Record<string, string>; normalized: Record<string, string | number | null>; errors: string[] }>;
-  warnings: string[];
+interface PurchaseRow {
+  id: number;
+  providerName?: string | null;
+  totalAmount?: string | number | null;
+  purchaseDate?: string;
 }
 
-const fields = [
-  { key: "code", label: "Código" },
-  { key: "name", label: "Nombre" },
-  { key: "quantity", label: "Cantidad" },
-  { key: "unit_price", label: "Precio unitario" },
-  { key: "currency", label: "Moneda" },
-];
+interface ManualFormItem {
+  productName: string;
+  productCode: string;
+  unitPrice: string;
+  qty: string;
+}
 
 export default function PurchasesPage() {
   const { toast } = useToast();
+  const [purchases, setPurchases] = useState<PurchaseRow[]>([]);
+  const [providerName, setProviderName] = useState("");
+  const [currency, setCurrency] = useState("ARS");
+  const [notes, setNotes] = useState("");
+  const [draftItem, setDraftItem] = useState<ManualFormItem>({ productName: "", productCode: "", unitPrice: "", qty: "" });
+  const [items, setItems] = useState<ManualFormItem[]>([]);
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
+
   const [file, setFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<PreviewData | null>(null);
+  const [preview, setPreview] = useState<any>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
-  const [includeExtra, setIncludeExtra] = useState(false);
-  const [selectedExtra, setSelectedExtra] = useState<string[]>([]);
-  const [summary, setSummary] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
 
-  const canCommit = useMemo(() => Boolean(file && preview), [file, preview]);
+  const total = useMemo(
+    () => items.reduce((acc, r) => acc + (Number(r.qty || 0) * Number(r.unitPrice || 0)), 0),
+    [items]
+  );
 
-  async function loadPreview() {
-    if (!file) return;
-    setLoading(true);
+  async function loadPurchases() {
+    const p2 = await apiRequest("GET", "/api/purchases?limit=30").then((r) => r.json()).catch(() => ({ data: [] }));
+    setPurchases(p2.data || []);
+  }
+
+  useEffect(() => {
+    loadPurchases();
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
+  }, []);
+
+  function addItem() {
+    if (!draftItem.productName.trim() || !draftItem.productCode.trim() || Number(draftItem.unitPrice) <= 0 || Number(draftItem.qty) <= 0) {
+      toast({ title: "Datos incompletos", description: "Completá nombre, código, precio y cantidad válidos.", variant: "destructive" });
+      return;
+    }
+    setItems((prev) => [...prev, { ...draftItem }]);
+    setDraftItem({ productName: "", productCode: "", unitPrice: "", qty: "" });
+  }
+
+
+  function handleScanCode(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    setDraftItem((prev) => ({
+      ...prev,
+      productCode: parsed.code,
+      productName: prev.productName || parsed.name || prev.productName,
+    }));
+    toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
+  }
+
+  async function saveManual() {
     try {
+      if (!providerName.trim()) throw new Error("Ingresá proveedor");
+      if (!items.length) throw new Error("Agregá al menos un ítem");
+      const payload = {
+        supplierName: providerName,
+        currency,
+        notes,
+        items: items.map((i) => ({
+          productName: i.productName,
+          productCode: i.productCode,
+          unitPrice: Number(i.unitPrice),
+          qty: Number(i.qty),
+        })),
+      };
+      const res = await apiRequest("POST", "/api/purchases/manual", payload);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo guardar");
+      toast({ title: "Compra guardada", description: `ID #${json.purchaseId}` });
+      setProviderName("");
+      setNotes("");
+      setItems([]);
+      await loadPurchases();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    }
+  }
+
+  async function previewImport() {
+    try {
+      if (!file) throw new Error("Seleccioná archivo .xlsx");
       const fd = new FormData();
       fd.append("file", file);
-      const resp = await apiRequest("POST", "/api/purchases/import/preview", fd);
-      const data = await resp.json();
-      setPreview(data);
-      setMapping(data.suggestedMapping || {});
-      setSelectedExtra(data.extraColumns || []);
-    } catch {
-      toast({ title: "Error", description: "No se pudo generar preview", variant: "destructive" });
-    } finally {
-      setLoading(false);
+      const res = await apiRequest("POST", "/api/purchases/import/preview", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Preview inválido");
+      setPreview(json);
+      setMapping(json.suggestedMapping || {});
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   }
 
   async function commitImport() {
-    if (!file) return;
-    setLoading(true);
     try {
+      if (!file) throw new Error("Seleccioná archivo .xlsx");
       const fd = new FormData();
       fd.append("file", file);
       fd.append("mapping", JSON.stringify(mapping));
-      fd.append("includeExtraColumns", String(includeExtra));
-      fd.append("selectedExtraColumns", JSON.stringify(selectedExtra));
-      const resp = await apiRequest("POST", "/api/purchases/import/commit", fd);
-      const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.error || "No se pudo importar");
-      setSummary(data);
+      const res = await apiRequest("POST", "/api/purchases/import/commit", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "Importación inválida");
       toast({ title: "Importación completada" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
+      setPreview(null);
+      setFile(null);
+      await loadPurchases();
+    } catch (e: any) {
+      toast({ title: "Error", description: e.message, variant: "destructive" });
     }
   }
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardHeader><CardTitle>Importar Compras desde Excel</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>Archivo .xlsx</Label>
-            <Input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-          </div>
-          <Button onClick={loadPreview} disabled={!file || loading}>Generar preview</Button>
-        </CardContent>
-      </Card>
+      <Tabs defaultValue="manual">
+        <TabsList>
+          <TabsTrigger value="manual">Manual</TabsTrigger>
+          <TabsTrigger value="excel">Importar Excel</TabsTrigger>
+        </TabsList>
 
-      {preview && (
-        <Card>
-          <CardHeader><CardTitle>Mapeo de columnas</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {fields.map((field) => (
-                <div key={field.key} className="space-y-1">
-                  <Label>{field.label}</Label>
-                  <select
-                    className="w-full border rounded px-2 h-9 bg-background"
-                    value={mapping[field.key] || ""}
-                    onChange={(e) => setMapping((prev) => ({ ...prev, [field.key]: e.target.value }))}
-                  >
-                    <option value="">Sin mapear</option>
-                    {preview.detectedHeaders.map((h) => <option key={h} value={h}>{h}</option>)}
-                  </select>
+        <TabsContent value="manual">
+          <div className="grid lg:grid-cols-3 gap-4">
+            <Card className="lg:col-span-2">
+              <CardHeader><CardTitle>Nueva compra manual</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid md:grid-cols-3 gap-2">
+                  <div>
+                    <Label>Proveedor</Label>
+                    <Input value={providerName} onChange={(e) => setProviderName(e.target.value)} />
+                  </div>
+                  <div>
+                    <Label>Moneda</Label>
+                    <Input value={currency} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+                  </div>
+                  <div>
+                    <Label>Notas</Label>
+                    <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+                  </div>
                 </div>
-              ))}
-            </div>
-            <div className="flex items-center gap-2">
-              <Checkbox checked={includeExtra} onCheckedChange={(v) => setIncludeExtra(Boolean(v))} />
-              <span className="text-sm">Cargar también campos extra detectados</span>
-            </div>
-            {preview.warnings?.length > 0 && <p className="text-sm text-amber-600">{preview.warnings.join(" • ")}</p>}
-            <div className="overflow-auto border rounded max-h-80">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b bg-muted/40">
-                    <th className="text-left p-2">Fila</th>
-                    <th className="text-left p-2">Normalizado</th>
-                    <th className="text-left p-2">Errores</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {preview.rowsPreview.map((row, idx) => (
-                    <tr key={idx} className="border-b align-top">
-                      <td className="p-2">{idx + 2}</td>
-                      <td className="p-2 whitespace-pre-wrap">{JSON.stringify(row.normalized)}</td>
-                      <td className="p-2 text-red-600">{row.errors.join(", ") || "-"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <Button onClick={commitImport} disabled={!canCommit || loading}>Confirmar importación</Button>
-          </CardContent>
-        </Card>
-      )}
 
-      {summary && (
-        <Card>
-          <CardHeader><CardTitle>Resultado</CardTitle></CardHeader>
-          <CardContent>
-            <pre className="text-xs whitespace-pre-wrap">{JSON.stringify(summary, null, 2)}</pre>
-          </CardContent>
-        </Card>
-      )}
+                <div className="grid md:grid-cols-5 gap-2">
+                  <div>
+                    <Label>Nombre producto</Label>
+                    <Input value={draftItem.productName} onChange={(e) => setDraftItem((p) => ({ ...p, productName: e.target.value }))} />
+                  </div>
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>Código producto</Label>
+                      {addonStatus.barcode_scanner && (
+                        <Button type="button" size="sm" variant="outline" onClick={() => setScanEnabled((v) => !v)}>
+                          <ScanLine className="h-4 w-4 mr-1" />
+                          {scanEnabled ? "Escuchando..." : "Escanear"}
+                        </Button>
+                      )}
+                    </div>
+                    <Input value={draftItem.productCode} onChange={(e) => setDraftItem((p) => ({ ...p, productCode: e.target.value }))} />
+                    <BarcodeListener enabled={scanEnabled} onCode={handleScanCode} durationMs={10000} />
+                  </div>
+                  <div>
+                    <Label>Precio por unidad</Label>
+                    <Input type="number" min={0} value={draftItem.unitPrice} onChange={(e) => setDraftItem((p) => ({ ...p, unitPrice: e.target.value }))} />
+                  </div>
+                  <div>
+                    <Label>Cantidad de unidades</Label>
+                    <Input type="number" min={0} value={draftItem.qty} onChange={(e) => setDraftItem((p) => ({ ...p, qty: e.target.value }))} />
+                  </div>
+                  <div className="flex items-end">
+                    <Button variant="outline" className="w-full" onClick={addItem}>Agregar ítem</Button>
+                  </div>
+                </div>
+
+                <div className="border rounded-md overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/40">
+                      <tr>
+                        <th className="text-left p-2">Nombre</th>
+                        <th className="text-left p-2">Código</th>
+                        <th className="text-right p-2">P. Unitario</th>
+                        <th className="text-right p-2">Cantidad</th>
+                        <th className="text-right p-2">Subtotal</th>
+                        <th className="text-right p-2">Acción</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {!items.length ? (
+                        <tr><td colSpan={6} className="p-3 text-center text-muted-foreground">Sin ítems agregados.</td></tr>
+                      ) : items.map((it, idx) => (
+                        <tr key={`${it.productCode}-${idx}`} className="border-t">
+                          <td className="p-2">{it.productName}</td>
+                          <td className="p-2">{it.productCode}</td>
+                          <td className="p-2 text-right">${Number(it.unitPrice).toLocaleString("es-AR")}</td>
+                          <td className="p-2 text-right">{Number(it.qty).toLocaleString("es-AR")}</td>
+                          <td className="p-2 text-right">${(Number(it.qty) * Number(it.unitPrice)).toLocaleString("es-AR")}</td>
+                          <td className="p-2 text-right"><Button size="sm" variant="ghost" onClick={() => setItems((prev) => prev.filter((_, i) => i !== idx))}>Quitar</Button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold">Total: ${total.toLocaleString("es-AR")}</p>
+                  <Button onClick={saveManual}>Guardar compra</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle>Últimas compras</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                {purchases.map((p) => (
+                  <div key={p.id} className="border rounded p-2 text-sm flex justify-between">
+                    <span>#{p.id} · {p.providerName || "Sin proveedor"}</span>
+                    <span>${Number(p.totalAmount || 0).toLocaleString("es-AR")}</span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="excel">
+          <Card>
+            <CardHeader><CardTitle>Importar Excel</CardTitle></CardHeader>
+            <CardContent className="space-y-2">
+              <Input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+              <Button onClick={previewImport}>Preview</Button>
+              {preview && (
+                <div className="space-y-2">
+                  <pre className="text-xs overflow-auto">{JSON.stringify(preview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre>
+                  <Button onClick={commitImport}>Confirmar importación</Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

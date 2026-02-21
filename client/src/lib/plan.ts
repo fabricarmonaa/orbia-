@@ -92,6 +92,7 @@ export function usePlan() {
     const code = (plan.planCode || "").toUpperCase();
     if (feature === "branches") return code === "ESCALA";
     if (feature === "stt") return code === "ESCALA";
+    if (feature === "cashiers" || feature === "CASHIERS") return ["PROFESIONAL", "ESCALA"].includes(code) || plan.features["CASHIERS"] === true || plan.features["cashiers"] === true;
     return plan.features[feature] === true;
   }, [plan]);
 

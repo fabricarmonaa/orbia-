@@ -1,8 +1,13 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { comparePassword, generateToken, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
+import { and, count, eq } from "drizzle-orm";
+import { db } from "../db";
+import { cashiers } from "@shared/schema";
+import { comparePassword, generateToken, getTenantPlan, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams } from "../middleware/validate";
+import { createRateLimiter } from "../middleware/rate-limit";
+import { validateCashierPin } from "../services/password-policy";
 import { sanitizeShortText } from "../security/sanitize";
 
 const pinSchema = z.string().regex(/^\d{4,8}$/);
@@ -28,7 +33,26 @@ const cashierLoginSchema = z.object({
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
 export function registerCashierRoutes(app: Express) {
-  app.post("/api/cashiers/login", validateBody(cashierLoginSchema), async (req, res) => {
+  const cashierLoginLimiter = createRateLimiter({
+    windowMs: 10 * 60 * 1000,
+    max: 15,
+    keyGenerator: (req) => `cashier-login:${req.ip}:${String(req.body?.tenant_code || "").toLowerCase()}`,
+    errorMessage: "Demasiados intentos. Reintentá más tarde.",
+    code: "RATE_LIMITED",
+    onLimit: async ({ req, retryAfterSec }) => {
+      const tenantCode = String(req.body?.tenant_code || "");
+      const tenant = await storage.getTenantByCode(tenantCode).catch(() => undefined);
+      if (!tenant) return;
+      await storage.createAuditLog({
+        tenantId: tenant.id,
+        userId: null,
+        action: "brute_force_blocked",
+        entityType: "cashier_auth",
+        metadata: { route: "/api/cashiers/login", ip: req.ip, retryAfterSec },
+      }).catch(() => undefined);
+    },
+  });
+  app.post("/api/cashiers/login", cashierLoginLimiter, validateBody(cashierLoginSchema), async (req, res) => {
     try {
       const { tenant_code, pin } = req.body as z.infer<typeof cashierLoginSchema>;
       const tenant = await storage.getTenantByCode(tenant_code);
@@ -87,9 +111,19 @@ export function registerCashierRoutes(app: Express) {
     try {
       const tenantId = req.auth!.tenantId!;
       const payload = req.body as z.infer<typeof createCashierSchema>;
+      const pinCheck = validateCashierPin(payload.pin);
+      if (!pinCheck.isValid) return res.status(400).json({ error: pinCheck.reason, code: "PIN_POLICY_FAILED" });
       if (payload.branch_id) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
+      }
+      const plan = await getTenantPlan(tenantId);
+      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
+      if (perBranchLimit > 0 && payload.branch_id) {
+        const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
+        if (Number(row?.c || 0) >= perBranchLimit) {
+          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        }
       }
       const pinHash = await hashPassword(payload.pin);
       const data = await storage.createCashier({
@@ -122,6 +156,18 @@ export function registerCashierRoutes(app: Express) {
       if (payload.branch_id) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
+      }
+      const plan = await getTenantPlan(tenantId);
+      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
+      if (perBranchLimit > 0 && payload.branch_id) {
+        const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
+        if (Number(row?.c || 0) >= perBranchLimit) {
+          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        }
+      }
+      if (payload.pin) {
+        const pinCheck = validateCashierPin(payload.pin);
+        if (!pinCheck.isValid) return res.status(400).json({ error: pinCheck.reason, code: "PIN_POLICY_FAILED" });
       }
       const data = await storage.updateCashier(id, tenantId, {
         name: payload.name,

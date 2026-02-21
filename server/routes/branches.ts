@@ -14,11 +14,16 @@ export function registerBranchRoutes(app: Express) {
     "/api/branches",
     tenantAuth,
     requireTenantAdmin,
-    requireFeature("branches"),
-    requirePlanCodes(["ESCALA"]),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
+      const tenant = await storage.getTenantById(tenantId);
+      const plan = tenant?.planId ? await storage.getPlanById(tenant.planId) : null;
+      const features = (plan?.featuresJson || {}) as Record<string, boolean>;
+      const hasBranchesFeature = Boolean(features.branches) || Boolean((plan as any)?.allowBranches);
+      if (!hasBranchesFeature) {
+        return res.json({ data: [{ id: 0, tenantId, name: "Casa Central", address: null, phone: null, isActive: true }] });
+      }
       if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
         const branch = await storage.getBranchById(req.auth!.branchId, tenantId);
         return res.json({ data: branch ? [branch] : [] });

@@ -7,6 +7,7 @@ import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams } from "../middleware/validate";
+import { getDefaultStatus, resolveOrderStatusIdByCode, ensureStatusExists, normalizeStatusCode } from "../services/statuses";
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
@@ -32,6 +33,7 @@ const createOrderSchema = z.object({
   ).nullable(),
   description: sanitizeOptionalLong(500).nullable(),
   statusId: z.coerce.number().int().positive().optional().nullable(),
+  statusCode: z.string().max(40).optional().nullable(),
   totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
   requiresDelivery: z.boolean().optional(),
@@ -41,13 +43,18 @@ const createOrderSchema = z.object({
 });
 
 const orderStatusSchema = z.object({
-  statusId: z.coerce.number().int().positive(),
+  statusId: z.coerce.number().int().positive().optional(),
+  statusCode: z.string().max(40).optional(),
   note: z.string().transform((value) => sanitizeLongText(value, 200)).optional().nullable(),
 });
 
 const orderCommentSchema = z.object({
   content: z.string().transform((value) => sanitizeLongText(value, 500)).refine((value) => value.length > 0, "Comentario requerido"),
   isPublic: z.boolean().optional(),
+});
+
+const linkSaleSchema = z.object({
+  saleId: z.coerce.number().int().positive(),
 });
 
 export function registerOrderRoutes(app: Express) {
@@ -88,6 +95,11 @@ export function registerOrderRoutes(app: Express) {
 
       const orderNumber = await storage.getNextOrderNumber(tenantId);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (payload.branchId || null);
+      const defaultOrderStatus = await getDefaultStatus(tenantId, "ORDER");
+      const resolvedCreateStatusId = payload.statusId
+        || (payload.statusCode ? await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(payload.statusCode)) : null)
+        || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
+        || null;
       const data = await storage.createOrder({
         tenantId,
         orderNumber,
@@ -96,7 +108,7 @@ export function registerOrderRoutes(app: Express) {
         customerPhone: payload.customerPhone || null,
         customerEmail: payload.customerEmail || null,
         description: payload.description || null,
-        statusId: payload.statusId || null,
+        statusId: resolvedCreateStatusId,
         totalAmount: payload.totalAmount !== undefined && payload.totalAmount !== null ? String(payload.totalAmount) : null,
         branchId,
         createdById: req.auth!.userId,
@@ -143,21 +155,28 @@ export function registerOrderRoutes(app: Express) {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
-      const { statusId, note } = req.body as z.infer<typeof orderStatusSchema>;
+      const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
+      let resolvedStatusId = statusId || null;
+      if (!resolvedStatusId && statusCode) {
+        const normalizedCode = normalizeStatusCode(statusCode);
+        await ensureStatusExists(tenantId, "ORDER", normalizedCode);
+        resolvedStatusId = await resolveOrderStatusIdByCode(tenantId, normalizedCode);
+      }
+      if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
       const order = await storage.getOrderById(orderId, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
       if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
         return res.status(403).json({ error: "No tenés acceso a este pedido" });
       }
-      await storage.updateOrderStatus(orderId, tenantId, statusId);
+      await storage.updateOrderStatus(orderId, tenantId, resolvedStatusId);
       await storage.createOrderHistory({
         tenantId,
         orderId,
-        statusId,
+        statusId: resolvedStatusId,
         changedById: req.auth!.userId,
         note: note || null,
       });
-      const status = await storage.getOrderStatusById(statusId, tenantId);
+      const status = await storage.getOrderStatusById(resolvedStatusId, tenantId);
       if (status?.isFinal) {
         const config = await storage.getConfig(tenantId);
         const hours = config?.trackingExpirationHours || 24;
@@ -173,6 +192,29 @@ export function registerOrderRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+    }
+  });
+
+
+  app.patch("/api/orders/:id/link-sale", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(linkSaleSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = req.params.id as unknown as number;
+      const { saleId } = req.body as z.infer<typeof linkSaleSchema>;
+      const order = await storage.getOrderById(orderId, tenantId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a este pedido" });
+      }
+      const sale = await storage.getSaleById(saleId, tenantId);
+      if (!sale) return res.status(404).json({ error: "Venta no encontrada" });
+      if (req.auth!.scope === "BRANCH" && sale.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a esta venta" });
+      }
+      await storage.linkOrderSale(orderId, tenantId, saleId, (sale as any).publicToken || null);
+      return res.json({ ok: true, data: { orderId, saleId, salePublicToken: (sale as any).publicToken || null } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo vincular venta", code: "ORDER_LINK_SALE_ERROR" });
     }
   });
 
@@ -246,6 +288,66 @@ export function registerOrderRoutes(app: Express) {
       res.json({ data });
     } catch (err: any) {
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+    }
+  });
+
+
+  app.get("/api/orders/:id/print-data", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = req.params.id as unknown as number;
+      const order = await storage.getOrderById(orderId, tenantId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a este pedido" });
+      }
+
+      const [tenant, branding, statuses] = await Promise.all([
+        storage.getTenantById(tenantId),
+        storage.getTenantBranding(tenantId),
+        storage.getOrderStatuses(tenantId),
+      ]);
+      const status = statuses.find((s) => s.id === order.statusId);
+
+      if (!order.publicTrackingId) {
+        const config = await storage.getConfig(tenantId);
+        const hours = config?.trackingExpirationHours || 24;
+        const trackingId = randomUUID();
+        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+        await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
+        order.publicTrackingId = trackingId as any;
+      }
+
+      const slug = (tenant as any)?.slug || null;
+      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
+      const trackUrl = slug
+        ? `${base || ""}/tracking/${order.publicTrackingId}`
+        : `${base || ""}/tracking/${order.publicTrackingId}`;
+
+      return res.json({
+        data: {
+          tenant: { name: branding.displayName, logoUrl: branding.logoUrl, slug },
+          order: {
+            id: order.id,
+            number: order.orderNumber,
+            type: order.type,
+            customerName: order.customerName,
+            customerPhone: order.customerPhone,
+            createdAt: order.createdAt,
+            status: status?.name || "Sin estado",
+            statusColor: status?.color || "#6B7280",
+            description: order.description,
+            deliveryAddress: order.deliveryAddress,
+            deliveryCity: order.deliveryCity,
+            totalAmount: order.totalAmount,
+          },
+          qr: {
+            publicUrl: trackUrl,
+          },
+        },
+      });
+    } catch {
+      return res.status(500).json({ error: "No se pudo preparar ticket de pedido" });
     }
   });
 

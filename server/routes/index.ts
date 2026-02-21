@@ -21,6 +21,10 @@ import { registerMessageTemplateRoutes } from "./message-templates";
 import { registerSaleRoutes } from "./sales";
 import { registerCashierRoutes } from "./cashiers";
 import { registerImportRoutes } from "./imports";
+import { registerStatusRoutes } from "./statuses";
+import { registerStockRoutes } from "./stock";
+import { registerPurchaseCrudRoutes } from "./purchases";
+import { registerCustomerRoutes } from "./customers";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -48,5 +52,9 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerSaleRoutes(app);
   registerCashierRoutes(app);
   registerImportRoutes(app);
+  registerStatusRoutes(app);
+  registerStockRoutes(app);
+  registerPurchaseCrudRoutes(app);
+  registerCustomerRoutes(app);
   return httpServer;
 }

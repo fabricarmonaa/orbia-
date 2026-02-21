@@ -19,6 +19,7 @@ export const customers = pgTable(
   },
   (table) => [
     index("idx_customers_tenant").on(table.tenantId),
+    index("idx_customers_tenant_created").on(table.tenantId, table.createdAt),
     index("idx_customers_tenant_doc").on(table.tenantId, table.doc),
     index("idx_customers_tenant_email").on(table.tenantId, table.email),
   ]

@@ -1,10 +1,23 @@
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import QRCode from "qrcode";
+import { TicketLayout, type PrintMode, type UnifiedPrintData } from "@/components/print/TicketLayout";
+
 export type TicketSize = "58mm" | "80mm" | "A4";
 
 export interface TicketData {
-  empresa: { nombre: string; logo_url?: string | null; slogan?: string | null };
-  cajero: { nombre: string };
-  sucursal: { nombre: string };
-  venta: {
+  tenant?: { name: string; logoUrl?: string | null; slogan?: string | null };
+  branch?: { name?: string | null } | null;
+  cashier?: { name?: string | null } | null;
+  sale?: { number: string; createdAt: string; paymentMethod?: string; notes?: string | null };
+  totals?: { subtotal?: string; discount?: string; surcharge?: string; total?: string; currency?: string };
+  items?: Array<{ qty: number; name: string; code?: string | null; unitPrice?: string; subtotal?: string }>;
+  qr?: { publicUrl?: string | null };
+  // legacy
+  empresa?: { nombre: string; logo_url?: string | null; slogan?: string | null };
+  cajero?: { nombre: string };
+  sucursal?: { nombre: string };
+  venta?: {
     number: string;
     datetime: string;
     payment: string;
@@ -15,59 +28,64 @@ export interface TicketData {
     notes?: string | null;
     currency: string;
   };
-  items: Array<{ qty: number; name: string; unit_price: string; line_total: string }>;
+  items_legacy?: Array<{ qty: number; name: string; sku?: string | null; unit_price: string; line_total: string }>;
 }
 
-function ticketWidth(size: TicketSize) {
-  if (size === "58mm") return "58mm";
-  if (size === "80mm") return "80mm";
-  return "210mm";
+function toMode(size: TicketSize): PrintMode {
+  if (size === "58mm") return "TICKET_58";
+  if (size === "80mm") return "TICKET_80";
+  return "A4";
 }
 
-export function printTicket(data: TicketData, size: TicketSize) {
-  const width = ticketWidth(size);
-  const date = new Date(data.venta.datetime).toLocaleString();
-  const rows = data.items
-    .map(
-      (item) =>
-        `<tr><td>${item.qty}</td><td>${item.name}</td><td style="text-align:right">${item.unit_price}</td><td style="text-align:right">${item.line_total}</td></tr>`
-    )
-    .join("");
+function normalize(data: TicketData): UnifiedPrintData {
+  if (data.tenant && data.sale) {
+    return {
+      tenant: data.tenant,
+      branch: data.branch,
+      cashier: data.cashier,
+      sale: data.sale,
+      totals: data.totals,
+      items: data.items,
+      qr: data.qr,
+    };
+  }
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8" /><title>Ticket ${data.venta.number}</title>
-<style>
-body{font-family:Arial,sans-serif;padding:8px;margin:0}
-.ticket{width:${width};max-width:100%;margin:0 auto}
-h1,h2,p{margin:4px 0}
-table{width:100%;border-collapse:collapse;font-size:12px}th,td{border-bottom:1px dashed #ccc;padding:4px 2px;vertical-align:top}
-.totals{margin-top:8px;font-size:12px}.right{text-align:right}
-@media print{@page{size:auto;margin:6mm} body{padding:0}}
-</style></head>
-<body><div class="ticket">
-${data.empresa.logo_url ? `<img src="${data.empresa.logo_url}" style="max-height:56px;max-width:100%;display:block;margin:0 auto 6px;" />` : ""}
-<h2 style="text-align:center">${data.empresa.nombre}</h2>
-<p style="text-align:center">${data.empresa.slogan || ""}</p>
-<p><strong>Venta:</strong> ${data.venta.number}</p>
-<p><strong>Fecha:</strong> ${date}</p>
-<p><strong>Sucursal:</strong> ${data.sucursal.nombre}</p>
-<p><strong>CAJERO:</strong> ${data.cajero.nombre}</p>
-<p><strong>Pago:</strong> ${data.venta.payment}</p>
-<table><thead><tr><th>Cant</th><th>Producto</th><th>P.Unit</th><th>Total</th></tr></thead><tbody>${rows}</tbody></table>
-<div class="totals">
-<p class="right">Subtotal: ${data.venta.subtotal}</p>
-<p class="right">Descuento: ${data.venta.discount}</p>
-<p class="right">Recargo: ${data.venta.surcharge}</p>
-<p class="right"><strong>Total: ${data.venta.total}</strong></p>
-</div>
-${data.venta.notes ? `<p><strong>Notas:</strong> ${data.venta.notes}</p>` : ""}
-<p style="text-align:center;margin-top:12px">Gracias por su compra</p>
-</div></body></html>`;
+  return {
+    tenant: { name: data.empresa?.nombre || "Negocio", logoUrl: data.empresa?.logo_url, slogan: data.empresa?.slogan || null },
+    branch: { name: data.sucursal?.nombre || null },
+    cashier: { name: data.cajero?.nombre || null },
+    sale: data.venta ? { number: data.venta.number, createdAt: data.venta.datetime, paymentMethod: data.venta.payment, notes: data.venta.notes } : undefined,
+    totals: data.venta
+      ? { subtotal: data.venta.subtotal, discount: data.venta.discount, surcharge: data.venta.surcharge, total: data.venta.total, currency: data.venta.currency }
+      : undefined,
+    items: (data.items_legacy || []).map((i) => ({ qty: i.qty, name: i.name, code: i.sku, unitPrice: i.unit_price, subtotal: i.line_total })),
+    qr: data.qr,
+  };
+}
+
+export async function printTicket(data: TicketData, size: TicketSize) {
+  const mode = toMode(size);
+  const normalized = normalize(data);
+  let qrImage: string | null = null;
+  if (normalized.qr?.publicUrl) {
+    qrImage = await QRCode.toDataURL(normalized.qr.publicUrl, { margin: 1, width: mode === "A4" ? 220 : mode === "TICKET_80" ? 160 : 140 });
+  }
+
+  const html = renderToStaticMarkup(
+    React.createElement(TicketLayout, {
+      mode,
+      variant: "SALE",
+      data: {
+        ...normalized,
+        qr: { ...(normalized.qr || {}), imageDataUrl: qrImage },
+      },
+    })
+  );
 
   const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
   if (!printWindow) return;
   printWindow.document.open();
-  printWindow.document.write(html);
+  printWindow.document.write(`<!doctype html><html><head><meta charset=\"utf-8\" /><title>Ticket</title></head><body>${html}</body></html>`);
   printWindow.document.close();
   printWindow.focus();
   printWindow.print();

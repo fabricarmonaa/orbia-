@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { printTicket, type TicketData, type TicketSize } from "@/components/sales/ticket-print";
+import { ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
 interface ProductRow {
   id: number;
@@ -26,6 +28,16 @@ interface CartItem {
   quantity: number;
 }
 
+interface PendingSaleFromOrder {
+  orderId: number;
+  customerId?: number | null;
+  customerDni?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  requiresDelivery?: boolean;
+  branchId?: number | null;
+}
+
 export default function PosPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -40,7 +52,34 @@ export default function PosPage() {
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
-  const [ticketSize, setTicketSize] = useState<TicketSize>("80mm");
+  const [pendingSale, setPendingSale] = useState<PendingSaleFromOrder | null>(null);
+  const [pendingCustomerName, setPendingCustomerName] = useState("");
+  const [pendingCustomerDni, setPendingCustomerDni] = useState("");
+  const [pendingCustomerPhone, setPendingCustomerPhone] = useState("");
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
+  const ticketSizeKey = "orbia_ticket_size_pref";
+  const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
+
+
+  useEffect(() => {
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
+
+    try {
+      const raw = sessionStorage.getItem("pendingSaleFromOrder");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PendingSaleFromOrder;
+      setPendingSale(parsed);
+      setPendingCustomerName(parsed.customerName || "");
+      setPendingCustomerDni(parsed.customerDni || "");
+      setPendingCustomerPhone(parsed.customerPhone || "");
+    } catch {
+      setPendingSale(null);
+    }
+  }, []);
 
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.product.estimatedSalePrice ?? item.product.price) * item.quantity, 0), [cart]);
   const discountAmount = useMemo(() => {
@@ -63,25 +102,74 @@ export default function PosPage() {
   }
 
   function addToCart(product: ProductRow) {
+    const available = Number(product.stockTotal ?? 0);
     setCart((prev) => {
       const existing = prev.find((row) => row.product.id === product.id);
-      if (existing) return prev.map((row) => (row.product.id === product.id ? { ...row, quantity: row.quantity + 1 } : row));
+      const nextQty = (existing?.quantity || 0) + 1;
+      if (available <= 0) {
+        toast({ title: "Sin stock", description: `${product.name} no tiene stock disponible`, variant: "destructive" });
+        return prev;
+      }
+      if (nextQty > available) {
+        toast({ title: "Stock insuficiente", description: `${product.name}: máximo ${available}`, variant: "destructive" });
+        return prev;
+      }
+      if (existing) return prev.map((row) => (row.product.id === product.id ? { ...row, quantity: nextQty } : row));
       return [...prev, { product, quantity: 1 }];
     });
   }
 
+
+  async function handleScanToCart(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    try {
+      const res = await apiRequest("GET", `/api/products/lookup?code=${encodeURIComponent(parsed.code)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No encontrado");
+      const product = json.data as ProductRow | null;
+      if (!product) {
+        toast({ title: "Sin coincidencias", description: `No existe producto con código ${parsed.code}`, variant: "destructive" });
+        return;
+      }
+      addToCart(product);
+      toast({ title: "Producto escaneado", description: product.name });
+    } catch (err: any) {
+      toast({ title: "Error al escanear", description: err?.message || "No se pudo buscar", variant: "destructive" });
+    }
+  }
+
   async function submitSale() {
     if (!cart.length) return;
+    const orderCustomerSummary = pendingSale
+      ? [pendingCustomerName, pendingCustomerDni ? `DNI:${pendingCustomerDni}` : "", pendingCustomerPhone ? `TEL:${pendingCustomerPhone}` : ""]
+          .filter(Boolean)
+          .join(" | ")
+      : "";
     const res = await apiRequest("POST", "/api/sales", {
-      branch_id: user?.branchId ?? null,
+      branch_id: pendingSale?.branchId ?? user?.branchId ?? null,
       items: cart.map((item) => ({ product_id: item.product.id, quantity: item.quantity })),
       discount: discountType === "NONE" ? null : { type: discountType, value: discountValue },
       surcharge: surchargeType === "NONE" ? null : { type: surchargeType, value: surchargeValue },
       payment_method: payment,
-      notes,
+      notes: [notes, pendingSale ? `PEDIDO_ORIGEN:${pendingSale.orderId}` : "", orderCustomerSummary].filter(Boolean).join(" | "),
     });
     const sale = await res.json();
     setLatestSale({ id: sale.sale_id, number: sale.sale_number, total: sale.total_amount });
+    if (pendingSale?.orderId) {
+      try {
+        await apiRequest("PATCH", `/api/orders/${pendingSale.orderId}/link-sale`, { saleId: sale.sale_id });
+        sessionStorage.removeItem("pendingSaleFromOrder");
+        setPendingSale(null);
+      } catch (err: any) {
+        toast({
+          title: "Venta registrada",
+          description: `No se pudo vincular con el pedido #${pendingSale.orderId}: ${err?.message || "error"}`,
+          variant: "destructive",
+        });
+      }
+    }
     toast({ title: "Venta registrada", description: sale.sale_number });
     const printRes = await apiRequest("POST", `/api/sales/${sale.sale_id}/print-data`);
     const printJson = await printRes.json();
@@ -95,16 +183,37 @@ export default function PosPage() {
       <Card>
         <CardHeader><CardTitle>Punto de Venta</CardTitle></CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" />
+          {pendingSale && (
+            <Card className="border-primary/30 bg-primary/5">
+              <CardHeader><CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div><Label>Cliente</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
+                  <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
+                  <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
+                </div>
+                <div className="flex justify-end"><Button variant="outline" size="sm" onClick={() => setPendingSale({ ...pendingSale, customerName: pendingCustomerName, customerDni: pendingCustomerDni, customerPhone: pendingCustomerPhone })}>Confirmar cliente</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex gap-2 flex-wrap">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" className="flex-1 min-w-[220px]" />
             <Button onClick={searchProducts}>Buscar</Button>
+            {addonStatus.barcode_scanner && (
+              <Button variant="outline" onClick={() => setScanEnabled((v) => !v)}>
+                <ScanLine className="w-4 h-4 mr-1" />
+                {scanEnabled ? "Escuchando..." : "Escanear"}
+              </Button>
+            )}
           </div>
+          <BarcodeListener enabled={scanEnabled} onCode={handleScanToCart} durationMs={10000} />
           <div className="space-y-2 max-h-[420px] overflow-auto">
             {products.map((product) => (
               <div key={product.id} className="border rounded p-2 flex justify-between items-center">
                 <div>
                   <p className="font-medium">{product.name}</p>
-                  <p className="text-xs text-muted-foreground">{product.sku || "Sin código"} · ${Number(product.estimatedSalePrice ?? product.price).toFixed(2)} {product.pricingMode === "MARGIN" ? "(auto)" : ""}</p>
+                  <p className="text-xs text-muted-foreground">{product.sku || "Sin código"} · Stock: {Number(product.stockTotal ?? 0)} · ${Number(product.estimatedSalePrice ?? product.price).toFixed(2)} {product.pricingMode === "MARGIN" ? "(auto)" : ""}</p>
                 </div>
                 <Button size="sm" onClick={() => addToCart(product)}>Agregar</Button>
               </div>
@@ -120,7 +229,7 @@ export default function PosPage() {
             <div key={row.product.id} className="flex items-center justify-between border rounded px-2 py-1">
               <div>
                 <p className="text-sm font-medium">{row.product.name}</p>
-                <p className="text-xs text-muted-foreground">${Number(row.product.estimatedSalePrice ?? row.product.price).toFixed(2)}</p>
+                <p className="text-xs text-muted-foreground">${Number(row.product.estimatedSalePrice ?? row.product.price).toFixed(2)} · Stock actual: {Number(row.product.stockTotal ?? 0)} · Stock post-venta: {Math.max(0, Number(row.product.stockTotal ?? 0) - row.quantity)}</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => setCart((prev) => prev.map((i) => i.product.id === row.product.id ? { ...i, quantity: Math.max(1, i.quantity - 1) } : i))}>-</Button>
@@ -196,7 +305,7 @@ export default function PosPage() {
               <p className="font-medium">Detalle de venta {latestSale.number}</p>
               <p>Total: {latestSale.total}</p>
               <div className="flex gap-2">
-                <Select value={ticketSize} onValueChange={(v: TicketSize) => setTicketSize(v)}>
+                <Select value={ticketSize} onValueChange={(v: TicketSize) => { setTicketSize(v); localStorage.setItem(ticketSizeKey, v); }}>
                   <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="58mm">58mm</SelectItem>

@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, pool } from "../db";
 import { and, count, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { calculateSaleTotals, round2, validateStock } from "../services/sales-calculation";
 import { resolveProductUnitPrice } from "../services/pricing";
@@ -7,9 +7,12 @@ import {
   cashMovements,
   cashSessions,
   productStockByBranch,
+  stockLevels,
+  stockMovements,
   products,
   saleItems,
   sales,
+  customers,
   tenantCounters,
   type InsertCashMovement,
 } from "@shared/schema";
@@ -23,6 +26,8 @@ interface CreateSaleInput {
   currency: string;
   paymentMethod: string;
   notes: string | null;
+  customerId?: number | null;
+  hasBranchesFeature?: boolean;
   discountType: SaleAdjustmentType;
   discountValue: number;
   surchargeType: SaleAdjustmentType;
@@ -38,7 +43,7 @@ export const salesStorage = {
         .select({ count: count() })
         .from(branches)
         .where(and(eq(branches.tenantId, input.tenantId), sql`${branches.deletedAt} IS NULL`));
-      const hasBranches = (branchCount?.count || 0) > 0;
+      const hasBranches = Boolean(input.hasBranchesFeature) && (branchCount?.count || 0) > 0;
       const effectiveBranchId = hasBranches ? input.branchId : null;
 
       const requestedIds = Array.from(new Set(input.items.map((item) => item.productId)));
@@ -128,6 +133,7 @@ export const salesStorage = {
           totalAmount: String(totalAmount),
           paymentMethod: input.paymentMethod,
           notes: input.notes,
+          customerId: input.customerId ?? null,
         })
         .returning();
 
@@ -167,6 +173,38 @@ export const salesStorage = {
             .set({ stock: current - item.quantity })
             .where(and(eq(products.tenantId, input.tenantId), eq(products.id, item.productId)));
         }
+
+      for (const item of enrichedItems) {
+        const [level] = await tx
+          .select()
+          .from(stockLevels)
+          .where(and(eq(stockLevels.tenantId, input.tenantId), eq(stockLevels.productId, item.productId), effectiveBranchId ? eq(stockLevels.branchId, effectiveBranchId) : sql`${stockLevels.branchId} IS NULL`));
+        const currentLevel = Number(level?.quantity || 0);
+        const nextLevel = currentLevel - item.quantity;
+        if (nextLevel < 0) {
+          throw Object.assign(new Error("INSUFFICIENT_STOCK"), { code: "INSUFFICIENT_STOCK", productId: item.productId, requested: item.quantity, available: currentLevel });
+        }
+        if (level) {
+          await tx.update(stockLevels).set({ quantity: String(nextLevel), updatedAt: new Date() }).where(eq(stockLevels.id, level.id));
+        } else {
+          await tx.insert(stockLevels).values({ tenantId: input.tenantId, productId: item.productId, branchId: effectiveBranchId, quantity: String(nextLevel), averageCost: "0" });
+        }
+        await tx.insert(stockMovements).values({
+          tenantId: input.tenantId,
+          productId: item.productId,
+          branchId: effectiveBranchId,
+          movementType: "SALE",
+          referenceId: sale.id,
+          quantity: String(item.quantity),
+          note: `Venta ${saleNumber}`,
+          reason: `Venta ${saleNumber}`,
+          createdByUserId: input.cashierUserId,
+          userId: input.cashierUserId,
+          unitCost: null,
+          totalCost: null,
+        });
+      }
+
       }
 
       const [openSession] = await tx
@@ -202,20 +240,50 @@ export const salesStorage = {
     });
   },
 
-  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }) {
-    const conditions = [eq(sales.tenantId, tenantId)];
-    if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
-    if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
-    if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
-    if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
-
-    return db
-      .select()
-      .from(sales)
-      .where(and(...conditions))
-      .orderBy(desc(sales.saleDatetime))
-      .limit(filters.limit)
-      .offset(filters.offset);
+  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }) {
+    try {
+      const where: string[] = ["tenant_id = $1"];
+      const params: any[] = [tenantId];
+      if (filters.branchId !== undefined && filters.branchId !== null) { params.push(filters.branchId); where.push(`branch_id = $${params.length}`); }
+      if (filters.from) { params.push(filters.from); where.push(`sale_datetime >= $${params.length}`); }
+      if (filters.to) { params.push(filters.to); where.push(`sale_datetime <= $${params.length}`); }
+      if (filters.q) { params.push(`%${filters.q}%`); where.push(`sale_number ILIKE $${params.length}`); }
+      if (filters.customer) {
+        const c = String(filters.customer).trim();
+        if (/^\d+$/.test(c)) { params.push(Number(c)); where.push(`customer_id = $${params.length}`); }
+        else { params.push(`%${c}%`); where.push(`COALESCE(customer_name,'') ILIKE $${params.length}`); }
+      }
+      params.push(Number(filters.limit));
+      params.push(Number(filters.offset));
+      const q = `SELECT id, sale_number as "saleNumber", sale_datetime as "saleDatetime", total_amount as "totalAmount", payment_method as "paymentMethod", branch_id as "branchId", customer_name as "customerName" FROM mv_sales_history WHERE ${where.join(" AND ")} ORDER BY sale_datetime DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
+      const rows = await pool.query(q, params);
+      return rows.rows || [];
+    } catch {
+      const conditions = [eq(sales.tenantId, tenantId)] as any[];
+      if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
+      if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
+      if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
+      if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
+      const customerFilter = String(filters.customer || "").trim();
+      if (customerFilter && /^\d+$/.test(customerFilter)) conditions.push(eq(sales.customerId, Number(customerFilter)));
+      if (customerFilter && !/^\d+$/.test(customerFilter)) conditions.push(ilike(customers.name, `%${customerFilter}%`));
+      return db
+        .select({
+          id: sales.id,
+          saleNumber: sales.saleNumber,
+          saleDatetime: sales.saleDatetime,
+          totalAmount: sales.totalAmount,
+          paymentMethod: sales.paymentMethod,
+          branchId: sales.branchId,
+          customerName: customers.name,
+        })
+        .from(sales)
+        .leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId)))
+        .where(and(...conditions))
+        .orderBy(desc(sales.saleDatetime))
+        .limit(filters.limit)
+        .offset(filters.offset);
+    }
   },
 
   async getSaleById(id: number, tenantId: number) {

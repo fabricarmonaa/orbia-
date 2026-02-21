@@ -5,12 +5,13 @@ import { storage } from "./storage";
 import "dotenv/config";
 
 const JWT_SECRET_ENV = process.env.SESSION_SECRET;
+const ALLOW_SEED_SECRET_FALLBACK = process.env.NODE_ENV === "seed" || process.env.SEED_MODE === "1";
 
-if (!JWT_SECRET_ENV) {
+if (!JWT_SECRET_ENV && !ALLOW_SEED_SECRET_FALLBACK) {
   throw new Error("SESSION_SECRET is not defined");
 }
 
-const JWT_SECRET: string = JWT_SECRET_ENV;
+const JWT_SECRET: string = JWT_SECRET_ENV || "seed-mode-insecure-secret";
 
 function unauthorizedResponse(res: Response, type: "required" | "expired" | "invalid") {
   if (type == "required") {
@@ -124,7 +125,8 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   const baseFeatures = (plan.featuresJson || {}) as PlanFeatures;
   const computedFeatures: PlanFeatures = {
     ...baseFeatures,
-    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS),
+    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
+    cashiers: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.cashiers) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
     MARGIN_PRICING: Boolean((plan as any).allowMarginPricing) || Boolean(baseFeatures.MARGIN_PRICING),
     EXCEL_IMPORT: Boolean((plan as any).allowExcelImport) || Boolean(baseFeatures.EXCEL_IMPORT),
     CUSTOM_TOS: Boolean((plan as any).allowCustomTos) || Boolean(baseFeatures.CUSTOM_TOS),

@@ -133,6 +133,7 @@ export const cashMovements = pgTable(
   (table) => [
     index("idx_cash_movements_tenant").on(table.tenantId),
     index("idx_cash_movements_tenant_created_session").on(table.tenantId, table.createdAt, table.sessionId),
+    index("idx_cash_movements_tenant_created_branch").on(table.tenantId, table.createdAt, table.branchId),
   ]
 );
 

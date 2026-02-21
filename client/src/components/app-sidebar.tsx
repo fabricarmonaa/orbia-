@@ -54,9 +54,9 @@ const menuItems: MenuItem[] = [
   { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
   { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, feature: "products", adminOnly: true },
   { title: "Clientes", url: "/app/customers", icon: Users, feature: "products", adminOnly: true },
-  { title: "POS", url: "/app/pos", icon: ShoppingCart, feature: "products" },
-  { title: "Ventas", url: "/app/sales", icon: ReceiptText, feature: "products" },
-  { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true, planCodes: ["PROFESIONAL", "ESCALA"] },
+  { title: "Ventas", url: "/app/pos", icon: ShoppingCart, feature: "products" },
+  { title: "Historial ventas", url: "/app/sales", icon: ReceiptText, feature: "products" },
+      { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true, planCodes: ["PROFESIONAL", "ESCALA"] },
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
@@ -69,6 +69,7 @@ export function AppSidebar() {
   const { plan, hasFeature } = usePlan();
   const { appBranding } = useBranding();
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [lowStockAlerts, setLowStockAlerts] = useState(0);
   const isTenantAdmin = user?.role === "admin";
   const planCode = (plan?.planCode || "").toUpperCase();
 
@@ -76,6 +77,10 @@ export function AppSidebar() {
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
       .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => {});
+    apiRequest("GET", "/api/stock/alerts")
+      .then((r) => r.json())
+      .then((d) => setLowStockAlerts(Number(d.total || (d.data || []).length || 0)))
       .catch(() => {});
   }, []);
 
@@ -142,7 +147,7 @@ export function AppSidebar() {
                         data-testid={`nav-${item.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}
                       >
                         <item.icon className="w-4 h-4" />
-                        <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>
+                        <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>{item.url === "/app/stock/kardex" && lowStockAlerts > 0 ? <Badge variant="destructive" className="ml-auto text-[10px]">{lowStockAlerts}</Badge> : null}
                         {blocked && <Lock className="w-3 h-3 ml-auto text-muted-foreground" />}
                       </Link>
                     </SidebarMenuButton>

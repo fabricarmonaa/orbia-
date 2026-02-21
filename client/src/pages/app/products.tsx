@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -32,7 +33,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Filter, MoreHorizontal, Plus, Search, SlidersHorizontal, Download, Pencil, Power, Trash2, Warehouse } from "lucide-react";
+import { Filter, MoreHorizontal, Plus, Search, SlidersHorizontal, Download, Pencil, Power, Trash2, Warehouse, ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
 type StockMode = "global" | "by_branch";
 
@@ -119,12 +121,17 @@ export default function ProductsPage() {
   const [productDialog, setProductDialog] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
   const [catDialog, setCatDialog] = useState(false);
-  const [stockDialog, setStockDialog] = useState(false);
-  const [stockByBranch, setStockByBranch] = useState<Array<{ branchId: number; branchName: string; stock: number }>>([]);
-  const [stockProduct, setStockProduct] = useState<ProductRow | null>(null);
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewProduct, setRenewProduct] = useState<ProductRow | null>(null);
+  const [renewStockMode, setRenewStockMode] = useState<StockMode>("global");
+  const [renewGlobalStock, setRenewGlobalStock] = useState("0");
+  const [renewByBranch, setRenewByBranch] = useState<Array<{ branchId: number; branchName: string; stock: string }>>([]);
+  const [tenantBranches, setTenantBranches] = useState<Array<{ id: number; name: string }>>([]);
   const [newCat, setNewCat] = useState("");
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [editProduct, setEditProduct] = useState<ProductRow | null>(null);
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
   const [editForm, setEditForm] = useState(emptyProduct);
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
@@ -148,6 +155,10 @@ export default function ProductsPage() {
       return;
     }
     void fetchCategories();
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
   }, [canAccess]);
 
   useEffect(() => {
@@ -194,6 +205,18 @@ export default function ProductsPage() {
     }
   }
 
+
+  async function scanIntoProductForm(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    setNewProduct((prev) => ({
+      ...prev,
+      sku: parsed.code,
+      name: prev.name || parsed.name || prev.name,
+    }));
+    toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
+  }
   async function createCategory(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -298,16 +321,50 @@ export default function ProductsPage() {
     }
   }
 
-  async function openStockDialog(product: ProductRow) {
-    setStockDialog(true);
-    setStockProduct(product);
+  async function openRenewStock(product: ProductRow) {
+    setRenewProduct(product);
+    setRenewGlobalStock(String(product.stockTotal ?? 0));
     try {
-      const res = await apiRequest("GET", `/api/products/${product.id}/stock`);
-      const data = await res.json();
-      setStockByBranch(data.data?.stockByBranch || []);
+      const [stockRes, branchRes] = await Promise.all([
+        apiRequest("GET", `/api/products/${product.id}/stock`),
+        apiRequest("GET", "/api/branches").then((r) => r).catch(() => null),
+      ]);
+      const stockJson = await stockRes.json();
+      const stockMode = stockJson?.data?.stockMode === "by_branch" ? "by_branch" : "global";
+      setRenewStockMode(stockMode);
+      const byBranch = stockJson?.data?.stockByBranch || [];
+      setRenewByBranch(byBranch.map((x: any) => ({ branchId: x.branchId, branchName: x.branchName, stock: String(x.stock ?? 0) })));
+      if (branchRes) {
+        const branchJson = await branchRes.json();
+        const list = branchJson.data || [];
+        setTenantBranches(list);
+        if (!byBranch.length && list.length) {
+          setRenewByBranch(list.map((b: any) => ({ branchId: b.id, branchName: b.name, stock: "0" })));
+        }
+      } else {
+        setTenantBranches([]);
+      }
     } catch {
-      setStockByBranch([]);
+      setRenewStockMode(meta.stockMode);
+      setRenewByBranch([]);
+      setTenantBranches([]);
     }
+    setRenewOpen(true);
+  }
+
+  async function submitRenewStock() {
+    if (!renewProduct) return;
+    if (renewStockMode === "global") {
+      await apiRequest("PATCH", `/api/products/${renewProduct.id}/stock`, { mode: "global", stock: Number(renewGlobalStock || 0) });
+    } else {
+      await apiRequest("PATCH", `/api/products/${renewProduct.id}/stock`, {
+        mode: "by_branch",
+        branches: renewByBranch.map((b) => ({ branchId: b.branchId, stock: Number(b.stock || 0) })),
+      });
+    }
+    setRenewOpen(false);
+    await fetchProducts(filters);
+    toast({ title: "Stock renovado" });
   }
 
   async function selectAllFiltered() {
@@ -535,7 +592,11 @@ export default function ProductsPage() {
                           stockMode={meta.stockMode}
                           onSubmit={createProduct}
                           submitText="Crear producto"
+                          scannerEnabled={Boolean(addonStatus.barcode_scanner)}
+                          scanActive={scanEnabled}
+                          onToggleScan={() => setScanEnabled((v) => !v)}
                         />
+                        <BarcodeListener enabled={scanEnabled} onCode={scanIntoProductForm} durationMs={10000} />
                       </DialogContent>
                     </Dialog>
                   </>
@@ -598,9 +659,7 @@ export default function ProductsPage() {
                             {row.stockTotal <= Number(filters.lowStockThreshold || 5) && <Badge variant="outline">Bajo</Badge>}
                           </div>
                         ) : (
-                          <button className="text-left hover:underline" onClick={() => openStockDialog(row)}>
-                            <span className="inline-flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" /> {row.stockTotal}</span>
-                          </button>
+                          <span className="inline-flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" /> {row.stockTotal}</span>
                         )}
                       </td>
                       <td className="p-2"><Badge variant={row.isActive ? "default" : "secondary"}>{row.isActive ? "Activo" : "Inactivo"}</Badge></td>
@@ -611,6 +670,7 @@ export default function ProductsPage() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => openEdit(row)}><Pencil className="h-4 w-4 mr-2" />Editar</DropdownMenuItem>
                               <DropdownMenuItem onClick={() => toggleActive(row)}><Power className="h-4 w-4 mr-2" />{row.isActive ? "Desactivar" : "Activar"}</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openRenewStock(row)}><Warehouse className="h-4 w-4 mr-2" />Renovar stock</DropdownMenuItem>
                               <DropdownMenuItem className="text-destructive" onClick={() => deleteProduct(row)}><Trash2 className="h-4 w-4 mr-2" />Eliminar</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -647,26 +707,46 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={stockDialog} onOpenChange={setStockDialog}>
+      <Dialog open={renewOpen} onOpenChange={setRenewOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Stock por sucursal {stockProduct ? `- ${stockProduct.name}` : ""}</DialogTitle></DialogHeader>
-          <div className="space-y-2">
-            {stockByBranch.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin detalle disponible.</p>
-            ) : stockByBranch.map((entry) => (
-              <div key={entry.branchId} className="flex items-center justify-between border rounded-md p-2">
-                <span>{entry.branchName}</span>
-                <Badge variant="outline">{entry.stock}</Badge>
+          <DialogHeader><DialogTitle>Renovar stock {renewProduct ? `- ${renewProduct.name}` : ""}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            {meta.stockMode === "by_branch" ? (
+              <div className="flex items-center justify-between border rounded-md p-2">
+                <Label>Por sucursal</Label>
+                <Switch checked={renewStockMode === "by_branch"} onCheckedChange={(v) => setRenewStockMode(v ? "by_branch" : "global")} />
               </div>
-            ))}
+            ) : null}
+
+            {renewStockMode === "global" ? (
+              <div className="space-y-2">
+                <Label>Stock actual</Label>
+                <Input type="number" min={0} value={renewGlobalStock} onChange={(e) => setRenewGlobalStock(e.target.value)} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {(renewByBranch.length ? renewByBranch : tenantBranches.map((b) => ({ branchId: b.id, branchName: b.name, stock: "0" }))).map((b) => (
+                  <div key={b.branchId} className="grid grid-cols-2 gap-2 items-center">
+                    <Label>{b.branchName}</Label>
+                    <Input type="number" min={0} value={b.stock} onChange={(e) => setRenewByBranch((prev) => prev.map((x) => x.branchId === b.branchId ? { ...x, stock: e.target.value } : x))} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button onClick={submitRenewStock}>Confirmar</Button>
           </div>
         </DialogContent>
       </Dialog>
+
+
     </div>
   );
 }
 
 type ProductFormProps = {
+  scannerEnabled?: boolean;
+  scanActive?: boolean;
+  onToggleScan?: () => void;
   value: typeof emptyProduct;
   onChange: (next: typeof emptyProduct) => void;
   categories: Category[];
@@ -675,7 +755,7 @@ type ProductFormProps = {
   submitText: string;
 };
 
-function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText }: ProductFormProps) {
+function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onToggleScan }: ProductFormProps) {
   const marginMode = value.pricingMode === "MARGIN";
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
@@ -702,15 +782,9 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </Select>
       </div>
       {!marginMode ? (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-2">
-            <Label>Precio</Label>
-            <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
-          </div>
-          <div className="space-y-2">
-            <Label>SKU</Label>
-            <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
-          </div>
+        <div className="space-y-2">
+          <Label>Precio</Label>
+          <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
         </div>
       ) : (
         <div className="space-y-2 border rounded-md p-3 bg-muted/30">
@@ -750,7 +824,15 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>SKU</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label>SKU</Label>
+            {scannerEnabled && (
+              <Button type="button" variant="outline" size="sm" onClick={onToggleScan}>
+                <ScanLine className="h-4 w-4 mr-1" />
+                {scanActive ? "Escuchando..." : "Escanear"}
+              </Button>
+            )}
+          </div>
           <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
         </div>
       </div>
@@ -760,7 +842,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
           <Input type="number" min={0} value={value.stock} onChange={(e) => onChange({ ...value, stock: e.target.value })} placeholder="0" />
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal.</p>
+        <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal. Usá “Stock” del producto para ajustar por cada sucursal.</p>
       )}
       <Button type="submit" className="w-full">{submitText}</Button>
     </form>

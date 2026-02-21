@@ -83,6 +83,7 @@ export class DatabaseStorage implements IStorage {
   createOrder = orderStorage.createOrder;
   updateOrderStatus = orderStorage.updateOrderStatus;
   updateOrderTracking = orderStorage.updateOrderTracking;
+  linkOrderSale = orderStorage.linkOrderSale;
   getNextOrderNumber = orderStorage.getNextOrderNumber;
   countOrders = orderStorage.countOrders;
   getOrderHistory = orderStorage.getOrderHistory;
@@ -111,6 +112,7 @@ export class DatabaseStorage implements IStorage {
   getProductCategories = productStorage.getProductCategories;
   createProductCategory = productStorage.createProductCategory;
   getProducts = productStorage.getProducts;
+  getProductByCode = productStorage.getProductByCode;
   getProductById = productStorage.getProductById;
   createProduct = productStorage.createProduct;
   updateProduct = productStorage.updateProduct;

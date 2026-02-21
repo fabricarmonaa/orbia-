@@ -93,74 +93,26 @@ export function BillingSettings({ plan }: { plan: PlanInfo | null }) {
       <CardContent className="space-y-4">
         {plan ? (
           <>
-            <div className="flex items-center gap-2">
-              <Badge variant="default">{plan.name}</Badge>
-              <Button variant="outline" size="sm" onClick={openUpgradeWhatsApp}>
-                Enviar comprobante por WhatsApp
-              </Button>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-              <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Precio</span><span>{plan.priceMonthly ? `${plan.currency || "ARS"} ${plan.priceMonthly}` : "—"}</span></div>
-              <div className="sm:col-span-2 flex items-start justify-between gap-2"><span className="text-muted-foreground">Descripción</span><span className="text-right">{plan.description || "—"}</span></div>
-            </div>
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Funcionalidades</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                {Object.entries(plan.features || {}).map(([key, val]) => (
-                  <div key={key} className="flex items-center justify-between gap-2">
-                    <span className="text-muted-foreground">{featureLabels[key] || key}</span>
-                    <span>{val ? "Sí" : "No"}</span>
-                  </div>
-                ))}
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-muted-foreground">Plan actual</p>
+                <p className="text-xl font-semibold">{plan.name}</p>
               </div>
+              <Badge variant={mapSubscriptionState(subscriptionStatus?.status) === "ACTIVA" ? "default" : "destructive"}>{mapSubscriptionState(subscriptionStatus?.status)}</Badge>
             </div>
-            {plan.limits && Object.keys(plan.limits).length > 0 && (
-              <div className="space-y-2">
-                <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Límites</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  {Object.entries(plan.limits).map(([key, val]) => (
-                    <div key={key} className="flex items-center justify-between gap-2">
-                      <span className="text-muted-foreground">{limitLabels[key] || key}</span>
-                      <span>{val === -1 ? "Ilimitado" : val === 0 ? "No incluido" : val}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Suscripción</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
-                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Fecha inicio</span><span>{formatDate(subscriptionStatus?.subscriptionStartDate)}</span></div>
-                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Fecha vencimiento</span><span>{formatDate(subscriptionStatus?.subscriptionEndDate)}</span></div>
-                <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Estado</span><span>{mapSubscriptionState(subscriptionStatus?.status)}</span></div>
-              </div>
+            <div className="grid sm:grid-cols-3 gap-3 text-sm">
+              <div><p className="text-muted-foreground">Vence</p><p>{formatDate(subscriptionStatus?.subscriptionEndDate)}</p></div>
+              <div><p className="text-muted-foreground">Precio</p><p>{plan.priceMonthly ? `${plan.currency || "ARS"} ${plan.priceMonthly}` : "—"}</p></div>
+              <div><p className="text-muted-foreground">Días restantes</p><p>{subscriptionStatus?.daysToExpire ?? "—"}</p></div>
             </div>
-
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Datos para transferencia</p>
-              {transferInfo ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Banco</span><span>{transferInfo.bank_name || "—"}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Titular</span><span>{transferInfo.account_holder || "—"}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">CBU</span><span>{transferInfo.cbu || "—"}</span></div>
-                  <div className="flex items-center justify-between gap-2"><span className="text-muted-foreground">Alias</span><span>{transferInfo.alias || "—"}</span></div>
-                  <div className="sm:col-span-2 flex items-center justify-between gap-2"><span className="text-muted-foreground">WhatsApp</span><span>{transferInfo.whatsapp_contact || "—"}</span></div>
-                </div>
-              ) : <p className="text-sm text-muted-foreground">Sin datos configurados</p>}
+            <div className="flex gap-2">
+              <Button onClick={openUpgradeWhatsApp}>Renovar / Informar pago por WhatsApp</Button>
             </div>
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Addons</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                {["delivery", "messaging_whatsapp"].map((addonKey) => {
-                  const enabled = !!addons[addonKey];
-                  return (
-                    <div key={addonKey} className="flex items-center justify-between border rounded-md px-3 py-2">
-                      <span className="text-muted-foreground">{addonLabels[addonKey] || addonKey}</span>
-                      <Badge variant={enabled ? "default" : "secondary"}>{enabled ? "Activo" : "Inactivo"}</Badge>
-                    </div>
-                  );
-                })}
-              </div>
+            <div className="rounded border p-3 text-sm space-y-1">
+              <p className="font-medium">Transferencia</p>
+              <p>Alias: {transferInfo?.alias || "—"}</p>
+              <p>CBU: {transferInfo?.cbu || "—"}</p>
+              <p>Titular: {transferInfo?.account_holder || "—"}</p>
             </div>
           </>
         ) : (

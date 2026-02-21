@@ -1,0 +1,10 @@
+import fs from "fs";
+const ordersApi = fs.readFileSync("server/routes/orders.ts", "utf8");
+const ordersUi = fs.readFileSync("client/src/pages/app/orders.tsx", "utf8");
+const posUi = fs.readFileSync("client/src/pages/app/pos.tsx", "utf8");
+if (!ordersApi.includes('/api/orders/:id/link-sale')) throw new Error('missing link-sale endpoint');
+if (!ordersUi.includes('VENTA')) throw new Error('VENTA button missing in orders UI');
+if (!ordersUi.includes('pendingSaleFromOrder')) throw new Error('orders does not set pending sale payload');
+if (!posUi.includes('pendingSaleFromOrder')) throw new Error('pos does not read pending sale payload');
+if (!posUi.includes('/link-sale')) throw new Error('pos does not link order with sale');
+console.log('order-sale-link-check: OK');

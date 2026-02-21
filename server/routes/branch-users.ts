@@ -1,6 +1,10 @@
 import type { Express } from "express";
 import { storage } from "../storage";
-import { tenantAuth, blockBranchScope, hashPassword, requireTenantAdmin } from "../auth";
+import { tenantAuth, blockBranchScope, getTenantPlan, hashPassword, requireTenantAdmin } from "../auth";
+import { evaluatePassword } from "../services/password-policy";
+import { db } from "../db";
+import { and, count, eq } from "drizzle-orm";
+import { users } from "@shared/schema";
 
 export function registerBranchUserRoutes(app: Express) {
   app.get("/api/branch-users", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
@@ -28,10 +32,31 @@ export function registerBranchUserRoutes(app: Express) {
       if (!branch) {
         return res.status(400).json({ error: "Sucursal no encontrada" });
       }
+      const plan = await getTenantPlan(tenantId);
+      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
+      if (perBranchLimit > 0) {
+        const [row] = await db.select({ c: count() }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.branchId, branchId), eq(users.scope, "BRANCH"), eq(users.isActive, true)));
+        if (Number(row?.c || 0) >= perBranchLimit) {
+          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        }
+      }
 
       const existingUser = await storage.getUserByEmail(email, tenantId);
       if (existingUser) {
         return res.status(400).json({ error: "Ya existe un usuario con ese email" });
+      }
+
+      const tenant = await storage.getTenantById(tenantId);
+      const passEval = evaluatePassword(String(password || ""), { email, tenantCode: tenant?.code, tenantName: tenant?.name });
+      if (!passEval.isValid) {
+        await storage.createAuditLog({
+          tenantId,
+          userId: req.auth!.userId,
+          action: "password_change_fail_policy",
+          entityType: "branch_user",
+          metadata: { score: passEval.score, warnings: passEval.warnings },
+        });
+        return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
       }
 
       const hashedPassword = await hashPassword(password);

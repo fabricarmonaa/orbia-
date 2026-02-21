@@ -11,6 +11,8 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ReportsDashboardPage from "./reports-dashboard";
 import {
   Dialog,
   DialogContent,
@@ -204,7 +206,15 @@ export default function CashPage() {
   const definitionLabel = (def: ExpenseDefinition) =>
     `${def.name}${def.category ? ` · ${def.category}` : ""}${def.type === "FIXED" ? " (Fijo)" : " (Variable)"}`;
 
+  const activeTab = new URLSearchParams(window.location.search).get("tab") || "movements";
+
   return (
+    <Tabs defaultValue={activeTab} className="space-y-4">
+      <TabsList className="grid grid-cols-2 lg:w-[360px]">
+        <TabsTrigger value="movements">Movimientos</TabsTrigger>
+        <TabsTrigger value="kpis">Indicadores</TabsTrigger>
+      </TabsList>
+      <TabsContent value="movements">
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <div>
@@ -639,5 +649,8 @@ export default function CashPage() {
         )}
       </div>
     </div>
+      </TabsContent>
+      <TabsContent value="kpis"><div className="space-y-3"><h2 className="text-xl font-semibold">Indicador Clave Desempeño</h2><ReportsDashboardPage /></div></TabsContent>
+    </Tabs>
   );
 }

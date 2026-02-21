@@ -12,6 +12,9 @@ import {
   ArrowDownRight,
 } from "lucide-react";
 
+interface HighlightOrderItem { id:number; number:number; customerName?:string; createdAt:string; }
+interface HighlightStatusBlock { statusCode:string; label:string; color?:string; total:number; items: HighlightOrderItem[]; }
+
 interface DashboardStats {
   totalOrders: number;
   openOrders: number;
@@ -27,6 +30,7 @@ export default function Dashboard() {
   const { plan } = usePlan();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [highlightStatuses, setHighlightStatuses] = useState<HighlightStatusBlock[]>([]);
 
   useEffect(() => {
     fetchStats();
@@ -34,9 +38,14 @@ export default function Dashboard() {
 
   async function fetchStats() {
     try {
-      const res = await apiRequest("GET", "/api/dashboard/stats");
+      const [res, highlightRes] = await Promise.all([
+        apiRequest("GET", "/api/dashboard/stats"),
+        apiRequest("GET", "/api/dashboard/highlight-orders?limit=5"),
+      ]);
       const data = await res.json();
+      const highlightData = await highlightRes.json();
       setStats(data.data);
+      setHighlightStatuses(highlightData.highlightStatuses || []);
     } catch {
       setStats({
         totalOrders: 0,
@@ -221,9 +230,25 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                Los pedidos recientes aparecerán aquí
-              </p>
+              <div className="space-y-3">
+                {highlightStatuses.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Sin pedidos para estados destacados.</p>
+                ) : highlightStatuses.map((group) => {
+                  const hiddenCount = Math.max(0, Number(group.total || 0) - Number(group.items?.length || 0));
+                  return (
+                    <div key={group.statusCode} className="space-y-1.5">
+                      <p className="text-xs uppercase text-muted-foreground">{group.label}</p>
+                      {(group.items || []).map((item) => (
+                        <div key={item.id} className="flex items-center justify-between text-sm border rounded px-2 py-1">
+                          <span className="truncate">#{item.number || item.id} · {item.customerName || "Sin cliente"}</span>
+                          <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(item.createdAt).toLocaleDateString("es-AR")}</span>
+                        </div>
+                      ))}
+                      {hiddenCount > 0 ? <p className="text-xs text-muted-foreground">+{hiddenCount} pedidos {group.label.toUpperCase()}</p> : null}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </CardContent>
         </Card>
