@@ -327,60 +327,97 @@ export function registerTenantRoutes(app: Express) {
       const statusMap = new Map(statuses.map((s: any) => [String(s.code || "").toUpperCase(), s]));
       const result: any[] = [];
       try {
+        const mvParams: any[] = [tenantId, statusCodes, limit];
+        const mvBranchClause = branchId ? ` AND branch_id = $4` : "";
+        if (branchId) mvParams.push(branchId);
+        const mvSql = `SELECT status_code AS "statusCode",
+                              order_id AS id,
+                              order_number AS number,
+                              customer_name AS "customerName",
+                              created_at AS "createdAt",
+                              total_count AS total
+                       FROM (
+                         SELECT status_code,
+                                order_id,
+                                order_number,
+                                customer_name,
+                                created_at,
+                                COUNT(*) OVER (PARTITION BY status_code) AS total_count,
+                                ROW_NUMBER() OVER (PARTITION BY status_code ORDER BY created_at DESC) AS rn
+                         FROM mv_orders_by_status
+                         WHERE tenant_id = $1
+                           AND status_code = ANY($2::text[])${mvBranchClause}
+                       ) ranked
+                       WHERE rn <= $3
+                       ORDER BY "statusCode", "createdAt" DESC`;
+        const mvRows = await pool.query(mvSql, mvParams);
+        const grouped = new Map<string, { total: number; items: any[] }>();
+        for (const row of mvRows.rows || []) {
+          const code = String(row.statusCode || "").toUpperCase();
+          const current = grouped.get(code) || { total: 0, items: [] };
+          current.total = Number(row.total || 0);
+          current.items.push({ id: row.id, number: row.number, customerName: row.customerName, createdAt: row.createdAt });
+          grouped.set(code, current);
+        }
+
         for (const code of statusCodes) {
-          const params: any[] = [tenantId, code, limit];
-          const branchClause = branchId ? ` AND branch_id = $4` : "";
-          if (branchId) params.push(branchId);
-          const itemsQuery = `SELECT order_id AS id, order_number AS number, customer_name AS "customerName", created_at AS "createdAt"
-                             FROM mv_orders_by_status
-                             WHERE tenant_id = $1 AND status_code = $2${branchClause}
-                             ORDER BY created_at DESC LIMIT $3`;
-          const totalQuery = `SELECT COUNT(*)::int AS total
-                             FROM mv_orders_by_status
-                             WHERE tenant_id = $1 AND status_code = $2${branchClause}`;
-          const [itemsRows, totalRows] = await Promise.all([
-            pool.query(itemsQuery, params),
-            pool.query(totalQuery, branchId ? [tenantId, code, branchId] : [tenantId, code]),
-          ]);
           const statusDef = statusMap.get(code);
+          const payload = grouped.get(code) || { total: 0, items: [] };
           result.push({
             statusCode: code,
             label: statusDef?.label || code,
             color: statusDef?.color || "#6B7280",
-            total: Number(totalRows.rows[0]?.total || 0),
-            items: itemsRows.rows || [],
+            total: payload.total,
+            items: payload.items,
           });
         }
       } catch {
+        const fallbackParams: any[] = [tenantId, statusCodes, limit];
+        const fallbackBranchClause = branchId ? ` AND o.branch_id = $4` : "";
+        if (branchId) fallbackParams.push(branchId);
+        const fallbackSql = `SELECT status_code AS "statusCode",
+                                    id,
+                                    number,
+                                    "customerName",
+                                    "createdAt",
+                                    total_count AS total
+                             FROM (
+                               SELECT UPPER(sd.code) AS status_code,
+                                      o.id,
+                                      o.order_number AS number,
+                                      o.customer_name AS "customerName",
+                                      o.created_at AS "createdAt",
+                                      COUNT(*) OVER (PARTITION BY UPPER(sd.code)) AS total_count,
+                                      ROW_NUMBER() OVER (PARTITION BY UPPER(sd.code) ORDER BY o.created_at DESC) AS rn
+                               FROM orders o
+                               INNER JOIN status_definitions sd
+                                 ON sd.id = o.status_id
+                                AND sd.tenant_id = o.tenant_id
+                                AND sd.entity_type = 'ORDER'
+                               WHERE o.tenant_id = $1
+                                 AND UPPER(sd.code) = ANY($2::text[])${fallbackBranchClause}
+                             ) ranked
+                             WHERE rn <= $3
+                             ORDER BY "statusCode", "createdAt" DESC`;
+        const fallbackRows = await pool.query(fallbackSql, fallbackParams);
+        const grouped = new Map<string, { total: number; items: any[] }>();
+        for (const row of fallbackRows.rows || []) {
+          const code = String(row.statusCode || "").toUpperCase();
+          const current = grouped.get(code) || { total: 0, items: [] };
+          current.total = Number(row.total || 0);
+          current.items.push({ id: row.id, number: row.number, customerName: row.customerName, createdAt: row.createdAt });
+          grouped.set(code, current);
+        }
+
         for (const code of statusCodes) {
-          const branchClause = branchId ? ` AND o.branch_id = $3` : "";
-          const itemsSql = `SELECT o.id, o.order_number AS number, o.customer_name AS "customerName", o.created_at AS "createdAt"
-                            FROM orders o
-                            INNER JOIN status_definitions sd
-                              ON sd.id = o.status_id
-                             AND sd.tenant_id = o.tenant_id
-                             AND sd.entity_type = 'ORDER'
-                            WHERE o.tenant_id = $1
-                              AND UPPER(sd.code) = $2${branchClause}
-                            ORDER BY o.created_at DESC
-                            LIMIT ${limit}`;
-          const countSql = `SELECT COUNT(*)::int AS total
-                            FROM orders o
-                            INNER JOIN status_definitions sd
-                              ON sd.id = o.status_id
-                             AND sd.tenant_id = o.tenant_id
-                             AND sd.entity_type = 'ORDER'
-                            WHERE o.tenant_id = $1
-                              AND UPPER(sd.code) = $2${branchClause}`;
-          const params = branchId ? [tenantId, code, branchId] : [tenantId, code];
-          const [itemsRows, totalRows] = await Promise.all([pool.query(itemsSql, params), pool.query(countSql, params)]);
           const statusDef = statusMap.get(code);
+          const payload = grouped.get(code) || { total: 0, items: [] };
           result.push({
             statusCode: code,
             label: statusDef?.label || code,
             color: statusDef?.color || "#6B7280",
-            total: Number(totalRows.rows[0]?.total || 0),
-            items: itemsRows.rows || [],
+            total: payload.total,
+            items: payload.items,
           });
         }
       }
