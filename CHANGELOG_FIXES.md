@@ -96,3 +96,25 @@
 - Se agregó middleware de gating `requireAddon("barcode_scanner")` y se aplicó a `GET /api/products/lookup` (403 `ADDON_NOT_ENABLED` cuando no está habilitado).
 - Frontend consume helper `fetchAddons()` para mostrar/ocultar botones de escaneo según flag real del tenant.
 - Script `script/addons-check.ts` + comando `npm run check:addons` para validar toggle superadmin + gating backend.
+
+## Etapa 8B: listener barcode_scanner (modo pistola/teclado)
+- Addon lector: modo pistola/teclado con escucha 10s y lookup sin spam.
+- `BarcodeListener` reutilizable con modal de escaneo, countdown, finalización por Enter, cancelación por Escape y cleanup completo de listeners/timers.
+- Integraciones en POS/Compras/Productos con botón “Escanear” solo cuando `addons.barcode_scanner` está activo.
+- `GET /api/products/lookup` robustecido con normalización de código, respuesta estable `{ product }` y gating por addon.
+- Nuevo script `script/barcode-scanner-check.ts` para validar 403 con addon off y 200/404 con addon on.
+
+## Etapa 8C: addon barcode_scanner modo cámara
+- Addon lector: modo cámara con permisos + timeout 10s + integración POS/Compras/Productos.
+- Nuevo componente reusable `CameraScanner` con `facingMode: environment`, timeout, cancelación y cleanup estricto de scanner/tracks.
+- UX unificada “Escanear con…” (Pistola/Teclado o Cámara) en POS, Compras manual y alta de Productos.
+- Fallbacks claros para navegador sin cámara, permiso denegado o contexto no seguro (HTTPS requerido), sugiriendo modo teclado.
+- Documentación manual en `docs/addon-barcode-scanner.md`.
+
+## Etapa 8D: superadmin planes en cards + limpieza final
+- SuperAdmin: edición de planes en cards responsive (precio + descripción + límites visibles) con guardado individual por plan.
+- Backend: agregado `PUT /api/super/plans/:planCode` para actualización tipada (`priceMonthly`, `description`, `limits`) con validaciones y códigos de error.
+- SuperAdmin tenants: pulido visual del switch “Lector códigos” para verificación final de addon `barcode_scanner`.
+- Hardening: `server/config.ts` centraliza `SESSION_SECRET` con fallback seguro para ejecución de scripts/seed en entorno local.
+- Limpieza: eliminadas páginas de reportes legacy no enrutadas (`reports-sales`, `reports-products`, `reports-customers`, `reports-cash`).
+- Documentación final de validación agregada en `docs/FINAL_CHECKLIST.md`.

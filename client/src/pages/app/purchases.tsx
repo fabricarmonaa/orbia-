@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/auth";
+import { apiRequest, authFetch } from "@/lib/auth";
 import { fetchAddons } from "@/lib/addons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,16 +9,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import CameraScanner from "@/components/addons/CameraScanner";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 interface PurchaseRow {
   id: number;
-  number: number | string;
+  number?: number | string;
   supplierName?: string | null;
   total?: string | number | null;
+  totalAmount?: string | number | null;
   createdAt?: string;
   currency?: string | null;
   itemCount?: number;
+  itemsCount?: number;
 }
 
 interface ManualFormItem {
@@ -43,6 +47,7 @@ export default function PurchasesPage() {
   const [items, setItems] = useState<ManualFormItem[]>([]);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const [savingManual, setSavingManual] = useState(false);
   const [lastCreatedId, setLastCreatedId] = useState<number | null>(null);
 
@@ -61,7 +66,8 @@ export default function PurchasesPage() {
       const res = await apiRequest("GET", "/api/purchases?limit=30&offset=0");
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "No se pudo listar compras");
-      setPurchases(json.data || []);
+      const rows = (json.items || json.data || []) as PurchaseRow[];
+      setPurchases(rows);
     } catch (err: any) {
       toast({ title: "Error", description: err?.message || "No se pudo listar compras", variant: "destructive" });
       setPurchases([]);
@@ -84,11 +90,26 @@ export default function PurchasesPage() {
     setDraftItem({ productName: "", productCode: "", unitPrice: "", qty: "" });
   }
 
-  function handleScanCode(rawCode: string) {
+  async function handleScanCode(rawCode: string) {
     setScanEnabled(false);
     const parsed = parseScannedCode(rawCode);
     if (!parsed.code) return;
-    setDraftItem((prev) => ({ ...prev, productCode: parsed.code, productName: prev.productName || parsed.name || prev.productName }));
+    setDraftItem((prev) => ({ ...prev, productCode: parsed.code }));
+
+    try {
+      const res = await authFetch(`/api/products/lookup?code=${encodeURIComponent(parsed.code)}`);
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 403) {
+        setAddonStatus((prev) => ({ ...prev, barcode_scanner: false }));
+        toast({ title: "Addon no activo", description: "El addon de lector está deshabilitado.", variant: "destructive" });
+      }
+      if (res.status === 200 && json?.product?.name) {
+        setDraftItem((prev) => ({ ...prev, productCode: parsed.code, productName: prev.productName || json.product.name }));
+      }
+    } catch {
+      // lookup opcional
+    }
+
     toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
   }
 
@@ -205,14 +226,23 @@ export default function PurchasesPage() {
                     <div className="flex items-center justify-between gap-2">
                       <Label>Código producto</Label>
                       {addonStatus.barcode_scanner && (
-                        <Button type="button" size="sm" variant="outline" onClick={() => setScanEnabled((v) => !v)}>
-                          <ScanLine className="h-4 w-4 mr-1" />
-                          {scanEnabled ? "Escuchando..." : "Escanear"}
-                        </Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button type="button" size="sm" variant="outline">
+                              <ScanLine className="h-4 w-4 mr-1" />
+                              Escanear con...
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setScanEnabled(true)}>Pistola/Teclado</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => setCameraScanOpen(true)}>Cámara (móvil)</DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       )}
                     </div>
                     <Input value={draftItem.productCode} onChange={(e) => setDraftItem((p) => ({ ...p, productCode: e.target.value }))} />
-                    <BarcodeListener enabled={scanEnabled} onCode={handleScanCode} durationMs={10000} />
+                    <BarcodeListener enabled={scanEnabled} onCode={handleScanCode} onCancel={() => setScanEnabled(false)} durationMs={10000} />
+                    <CameraScanner open={cameraScanOpen} onClose={() => setCameraScanOpen(false)} onCode={handleScanCode} timeoutMs={10000} />
                   </div>
                   <div>
                     <Label>Precio por unidad</Label>
@@ -272,9 +302,9 @@ export default function PurchasesPage() {
                   <button key={p.id} className={`w-full border rounded p-2 text-sm text-left ${lastCreatedId === p.id ? "bg-primary/5 border-primary/40" : ""}`} onClick={() => openDetail(p.id)}>
                     <div className="flex justify-between gap-2">
                       <span>#{p.number || p.id} · {p.supplierName || "Sin proveedor"}</span>
-                      <span>${Number(p.total || 0).toLocaleString("es-AR")}</span>
+                      <span>${Number(p.totalAmount ?? p.total ?? 0).toLocaleString("es-AR")}</span>
                     </div>
-                    <div className="text-xs text-muted-foreground">{p.createdAt ? new Date(p.createdAt).toLocaleDateString("es-AR") : "-"} · {p.itemCount || 0} ítems</div>
+                    <div className="text-xs text-muted-foreground">{p.createdAt ? new Date(p.createdAt).toLocaleDateString("es-AR") : "-"} · {p.itemsCount ?? p.itemCount ?? 0} ítems</div>
                   </button>
                 ))}
               </CardContent>
@@ -303,6 +333,7 @@ export default function PurchasesPage() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Detalle de compra</DialogTitle>
+            <DialogDescription>Revisá los ítems, cantidades y montos de la compra seleccionada.</DialogDescription>
           </DialogHeader>
           {detailLoading ? (
             <p className="text-sm text-muted-foreground">Cargando detalle...</p>

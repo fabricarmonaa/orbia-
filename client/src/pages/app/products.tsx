@@ -36,6 +36,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Filter, MoreHorizontal, Plus, Search, SlidersHorizontal, Download, Pencil, Power, Trash2, Warehouse, ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
+import CameraScanner from "@/components/addons/CameraScanner";
 
 type StockMode = "global" | "by_branch";
 
@@ -133,6 +134,7 @@ export default function ProductsPage() {
   const [editProduct, setEditProduct] = useState<ProductRow | null>(null);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const [editForm, setEditForm] = useState(emptyProduct);
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
@@ -213,7 +215,6 @@ export default function ProductsPage() {
     setNewProduct((prev) => ({
       ...prev,
       sku: parsed.code,
-      name: prev.name || parsed.name || prev.name,
     }));
     toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
   }
@@ -594,9 +595,11 @@ export default function ProductsPage() {
                           submitText="Crear producto"
                           scannerEnabled={Boolean(addonStatus.barcode_scanner)}
                           scanActive={scanEnabled}
-                          onToggleScan={() => setScanEnabled((v) => !v)}
+                          onOpenKeyboardScan={() => setScanEnabled(true)}
+                          onOpenCameraScan={() => setCameraScanOpen(true)}
                         />
-                        <BarcodeListener enabled={scanEnabled} onCode={scanIntoProductForm} durationMs={10000} />
+                        <BarcodeListener enabled={scanEnabled} onCode={scanIntoProductForm} onCancel={() => setScanEnabled(false)} durationMs={10000} />
+                        <CameraScanner open={cameraScanOpen} onClose={() => setCameraScanOpen(false)} onCode={scanIntoProductForm} timeoutMs={10000} />
                       </DialogContent>
                     </Dialog>
                   </>
@@ -620,7 +623,7 @@ export default function ProductsPage() {
                       />
                     </th>
                     <th className="text-left p-2">Nombre</th>
-                    <th className="text-left p-2">SKU</th>
+                    <th className="text-left p-2">CÓDIGO</th>
                     <th className="text-left p-2">Categoría</th>
                     <th className="text-right p-2">Precio</th>
                     <th className="text-left p-2">Stock</th>
@@ -746,7 +749,8 @@ export default function ProductsPage() {
 type ProductFormProps = {
   scannerEnabled?: boolean;
   scanActive?: boolean;
-  onToggleScan?: () => void;
+  onOpenKeyboardScan?: () => void;
+  onOpenCameraScan?: () => void;
   value: typeof emptyProduct;
   onChange: (next: typeof emptyProduct) => void;
   categories: Category[];
@@ -755,7 +759,7 @@ type ProductFormProps = {
   submitText: string;
 };
 
-function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onToggleScan }: ProductFormProps) {
+function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onOpenKeyboardScan, onOpenCameraScan }: ProductFormProps) {
   const marginMode = value.pricingMode === "MARGIN";
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
@@ -765,7 +769,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
     <form className="space-y-3" onSubmit={onSubmit}>
       <div className="space-y-2">
         <Label>Nombre</Label>
-        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Ej: Remera Talle M / Servicio de Limpieza" />
+        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Nombre del producto" />
       </div>
       <div className="space-y-2">
         <Label>Descripción</Label>
@@ -825,12 +829,20 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label>SKU</Label>
+            <Label>CÓDIGO</Label>
             {scannerEnabled && (
-              <Button type="button" variant="outline" size="sm" onClick={onToggleScan}>
-                <ScanLine className="h-4 w-4 mr-1" />
-                {scanActive ? "Escuchando..." : "Escanear"}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <ScanLine className="h-4 w-4 mr-1" />
+                    {scanActive ? "Escuchando..." : "Escanear con..."}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={onOpenKeyboardScan}>Pistola/Teclado</DropdownMenuItem>
+                  <DropdownMenuItem onClick={onOpenCameraScan}>Cámara (móvil)</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
           <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />

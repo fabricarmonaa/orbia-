@@ -1,28 +1,22 @@
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type BarcodeListenerProps = {
   enabled: boolean;
   onCode: (code: string) => void;
   durationMs?: number;
+  onCancel?: () => void;
+  allowTimeoutEmit?: boolean;
 };
 
-export function parseScannedCode(raw: string): { code: string; name?: string } {
-  const value = raw.trim();
+export function parseScannedCode(raw: string): { code: string } {
+  const value = raw.trim().replace(/\s+/g, "").replace(/^\]C1/i, "");
   if (!value) return { code: "" };
-
-  const gs1Match = value.match(/\(01\)(\d{8,14})/);
-  if (gs1Match?.[1]) {
-    const nameMatch = value.match(/\(10\)([^\(]+)/);
-    return { code: gs1Match[1], name: nameMatch?.[1]?.trim() || undefined };
-  }
-
-  const ai01Match = value.match(/^01(\d{14})/);
-  if (ai01Match?.[1]) return { code: ai01Match[1] };
-
   return { code: value };
 }
 
-export default function BarcodeListener({ enabled, onCode, durationMs = 10000 }: BarcodeListenerProps) {
+export default function BarcodeListener({ enabled, onCode, durationMs = 10000, onCancel, allowTimeoutEmit = false }: BarcodeListenerProps) {
   const [remainingMs, setRemainingMs] = useState(0);
   const bufferRef = useRef("");
 
@@ -39,30 +33,42 @@ export default function BarcodeListener({ enabled, onCode, durationMs = 10000 }:
 
     let active = true;
 
-    const flush = () => {
+    const stop = (reason: "enter" | "timeout" | "escape") => {
       if (!active) return;
       active = false;
       const code = bufferRef.current.trim();
       bufferRef.current = "";
       setRemainingMs(0);
-      if (code) onCode(code);
+
+      if (reason === "enter") {
+        if (code) onCode(code);
+        return;
+      }
+
+      if (reason === "timeout" && allowTimeoutEmit && code) {
+        onCode(code);
+        return;
+      }
+
+      onCancel?.();
     };
 
     const tickId = window.setInterval(() => {
       const next = Math.max(0, deadline - Date.now());
       setRemainingMs(next);
-      if (next <= 0) flush();
+      if (next <= 0) stop("timeout");
     }, 100);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (!active) return;
       if (event.key === "Enter") {
         event.preventDefault();
-        flush();
+        stop("enter");
         return;
       }
-      if (event.key === "Backspace") {
-        bufferRef.current = bufferRef.current.slice(0, -1);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        stop("escape");
         return;
       }
       if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
@@ -84,8 +90,21 @@ export default function BarcodeListener({ enabled, onCode, durationMs = 10000 }:
   if (!enabled || remainingMs <= 0) return null;
 
   return (
-    <p className="text-xs text-muted-foreground">
-      Escuchando lector: {Math.ceil(remainingMs / 1000)}s (finaliza con Enter)
-    </p>
+    <Dialog open={enabled}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Escaneando... ({Math.ceil(remainingMs / 1000)}s)</DialogTitle>
+          <DialogDescription>
+            Modo lector: Pistola/Teclado · Entrada: Capturar escaneo (recomendado). Apuntá y escaneá el producto. Se cerrará en 10 segundos.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+          <span>Finalizá con Enter o cancelá con Escape.</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => onCancel?.()}>
+            Cancelar
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

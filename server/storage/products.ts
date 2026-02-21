@@ -2,6 +2,10 @@ import { db } from "../db";
 import { eq, and, desc, count, or, ilike } from "drizzle-orm";
 import { products, productCategories, type InsertProduct, type InsertProductCategory } from "@shared/schema";
 
+export function normalizeProductCode(raw: string | null | undefined) {
+  return (raw || "").toUpperCase().replace(/\s+/g, "").trim();
+}
+
 export const productStorage = {
   async getProductCategories(tenantId: number) {
     return db
@@ -30,7 +34,7 @@ export const productStorage = {
   },
 
   async getProductByCode(tenantId: number, code: string) {
-    const term = code.trim();
+    const term = normalizeProductCode(code);
     if (!term) return undefined;
     const [product] = await db
       .select()
@@ -40,13 +44,21 @@ export const productStorage = {
     return product;
   },
   async createProduct(data: InsertProduct) {
-    const [product] = await db.insert(products).values(data).returning();
+    const payload: InsertProduct = {
+      ...data,
+      sku: data.sku ? normalizeProductCode(data.sku) : null,
+    };
+    const [product] = await db.insert(products).values(payload).returning();
     return product;
   },
   async updateProduct(id: number, tenantId: number, data: Partial<InsertProduct>) {
+    const nextData: Partial<InsertProduct> = {
+      ...data,
+      ...(data.sku !== undefined ? { sku: data.sku ? normalizeProductCode(data.sku) : null } : {}),
+    };
     const [product] = await db
       .update(products)
-      .set(data)
+      .set(nextData)
       .where(and(eq(products.id, id), eq(products.tenantId, tenantId)))
       .returning();
     return product;

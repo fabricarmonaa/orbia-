@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ClipboardList, Wallet, Package, TrendingUp } from "lucide-react";
+import { ClipboardList, Wallet, Package, TrendingUp, TrendingDown } from "lucide-react";
 
 type DashboardSummary = {
   orders: {
@@ -66,9 +66,9 @@ export default function Dashboard() {
   const cards = useMemo(
     () => [
       {
-        title: "Pedidos Abiertos",
-        value: summary.orders.openCount.toLocaleString("es-AR"),
-        subtitle: `de ${summary.orders.totalCount.toLocaleString("es-AR")} totales`,
+        title: "Pedidos Totales",
+        value: summary.orders.totalCount.toLocaleString("es-AR"),
+        subtitle: `${summary.orders.openCount.toLocaleString("es-AR")} abiertos`,
         icon: ClipboardList,
       },
       {
@@ -156,16 +156,22 @@ export default function Dashboard() {
               <div className="space-y-2">
                 <div className="flex items-center justify-between rounded-md border p-3">
                   <span className="text-sm text-muted-foreground">Ingresos</span>
-                  <span className="font-semibold">${summary.cash.monthIncome.toLocaleString("es-AR")}</span>
+                  <span className="font-semibold inline-flex items-center gap-1 text-emerald-600">
+                    <TrendingUp className="w-4 h-4" />
+                    ${summary.cash.monthIncome.toLocaleString("es-AR")}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between rounded-md border p-3">
                   <span className="text-sm text-muted-foreground">Egresos</span>
-                  <span className="font-semibold">${summary.cash.monthExpense.toLocaleString("es-AR")}</span>
+                  <span className="font-semibold inline-flex items-center gap-1 text-rose-600">
+                    <TrendingDown className="w-4 h-4" />
+                    ${summary.cash.monthExpense.toLocaleString("es-AR")}
+                  </span>
                 </div>
                 <div className="flex items-center justify-between rounded-md border p-3 bg-primary/5">
                   <span className="text-sm font-medium">Resultado</span>
-                  <span className="font-bold inline-flex items-center gap-1">
-                    <TrendingUp className="w-4 h-4" />
+                  <span className={`font-bold inline-flex items-center gap-1 ${summary.cash.monthResult >= 0 ? "text-emerald-600" : "text-rose-600"}`}>
+                    {summary.cash.monthResult >= 0 ? <TrendingUp className="w-4 h-4" /> : <TrendingDown className="w-4 h-4" />}
                     ${summary.cash.monthResult.toLocaleString("es-AR")}
                   </span>
                 </div>

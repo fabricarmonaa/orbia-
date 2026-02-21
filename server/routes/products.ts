@@ -16,6 +16,7 @@ import { validateBody, validateQuery } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
 import { requireAddon } from "../middleware/require-addon";
 import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
+import { normalizeProductCode } from "../storage/products";
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -73,7 +74,7 @@ const productUpdateSchema = productBaseSchema.partial().superRefine((value, ctx)
 
 
 const lookupQuerySchema = z.object({
-  code: z.string().transform((value) => sanitizeShortText(value, 120)).refine((value) => value.length > 0, "Código requerido"),
+  code: z.string().transform((value) => normalizeProductCode(sanitizeShortText(value, 120))).refine((value) => value.length > 0, "Código requerido"),
 });
 
 function toNumber(value: string | number | null | undefined) {
@@ -199,7 +200,7 @@ export function registerProductRoutes(app: Express) {
       if (!product) return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND" });
       const stockTotal = Number((product as any).stock ?? 0);
       const estimatedSalePrice = await resolveProductUnitPrice(product as any, tenantId, "ARS").catch(() => Number(product.price));
-      return res.json({ data: { ...product, stockTotal, estimatedSalePrice } });
+      return res.json({ product: { id: product.id, name: product.name, code: product.sku, price: product.price, stock: stockTotal, stockTotal, estimatedSalePrice } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message || "No se pudo buscar el producto" });
     }
@@ -225,7 +226,7 @@ export function registerProductRoutes(app: Express) {
         name: payload.name,
         description: payload.description || null,
         price: String(payload.price),
-        sku: payload.sku || null,
+        sku: payload.sku ? normalizeProductCode(payload.sku) : null,
         categoryId: payload.categoryId || null,
         cost: payload.cost !== null && payload.cost !== undefined ? String(payload.cost) : null,
         pricingMode: payload.pricingMode || "MANUAL",
@@ -382,7 +383,7 @@ export function registerProductRoutes(app: Express) {
       if (payload.costCurrency !== undefined) updateData.costCurrency = payload.costCurrency || null;
       if (payload.marginPct !== undefined) updateData.marginPct = payload.marginPct !== null ? String(payload.marginPct) : null;
       if (payload.stock !== undefined && !byBranchMode) updateData.stock = payload.stock;
-      if (payload.sku !== undefined) updateData.sku = payload.sku;
+      if (payload.sku !== undefined) updateData.sku = payload.sku ? normalizeProductCode(payload.sku) : null;
       if (payload.categoryId !== undefined) updateData.categoryId = payload.categoryId;
       if (payload.statusCode !== undefined) {
         const statusCode = normalizeStatusCode(payload.statusCode || "");
