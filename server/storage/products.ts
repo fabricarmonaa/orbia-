@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, count } from "drizzle-orm";
+import { eq, and, desc, count, or, ilike } from "drizzle-orm";
 import { products, productCategories, type InsertProduct, type InsertProductCategory } from "@shared/schema";
 
 export const productStorage = {
@@ -26,6 +26,17 @@ export const productStorage = {
       .select()
       .from(products)
       .where(and(eq(products.id, id), eq(products.tenantId, tenantId)));
+    return product;
+  },
+
+  async getProductByCode(tenantId: number, code: string) {
+    const term = code.trim();
+    if (!term) return undefined;
+    const [product] = await db
+      .select()
+      .from(products)
+      .where(and(eq(products.tenantId, tenantId), or(eq(products.sku, term), ilike(products.sku, term))))
+      .limit(1);
     return product;
   },
   async createProduct(data: InsertProduct) {

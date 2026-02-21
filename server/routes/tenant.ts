@@ -569,10 +569,18 @@ export function registerTenantRoutes(app: Express) {
 
   app.get("/api/addons/status", tenantAuth, async (req, res) => {
     try {
-      const addons = await storage.getTenantAddons(req.auth!.tenantId!);
+      const tenantId = req.auth!.tenantId!;
+      const [addons, config] = await Promise.all([
+        storage.getTenantAddons(tenantId),
+        storage.getConfig(tenantId),
+      ]);
       const result: Record<string, boolean> = {};
       for (const a of addons) {
         result[a.addonKey] = a.enabled;
+      }
+      const settingsAddons = ((config?.configJson as any)?.addons || {}) as Record<string, boolean>;
+      for (const [key, enabled] of Object.entries(settingsAddons)) {
+        if (typeof enabled === "boolean") result[key] = enabled;
       }
       res.json({ data: result });
     } catch (err: any) {

@@ -8,6 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { printTicket, type TicketData, type TicketSize } from "@/components/sales/ticket-print";
+import { ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
 interface ProductRow {
   id: number;
@@ -54,11 +56,18 @@ export default function PosPage() {
   const [pendingCustomerName, setPendingCustomerName] = useState("");
   const [pendingCustomerDni, setPendingCustomerDni] = useState("");
   const [pendingCustomerPhone, setPendingCustomerPhone] = useState("");
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
   const ticketSizeKey = "orbia_ticket_size_pref";
   const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
 
 
   useEffect(() => {
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
+
     try {
       const raw = sessionStorage.getItem("pendingSaleFromOrder");
       if (!raw) return;
@@ -108,6 +117,27 @@ export default function PosPage() {
       if (existing) return prev.map((row) => (row.product.id === product.id ? { ...row, quantity: nextQty } : row));
       return [...prev, { product, quantity: 1 }];
     });
+  }
+
+
+  async function handleScanToCart(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    try {
+      const res = await apiRequest("GET", `/api/products/lookup?code=${encodeURIComponent(parsed.code)}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No encontrado");
+      const product = json.data as ProductRow | null;
+      if (!product) {
+        toast({ title: "Sin coincidencias", description: `No existe producto con código ${parsed.code}`, variant: "destructive" });
+        return;
+      }
+      addToCart(product);
+      toast({ title: "Producto escaneado", description: product.name });
+    } catch (err: any) {
+      toast({ title: "Error al escanear", description: err?.message || "No se pudo buscar", variant: "destructive" });
+    }
   }
 
   async function submitSale() {
@@ -167,10 +197,17 @@ export default function PosPage() {
             </Card>
           )}
 
-          <div className="flex gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" />
+          <div className="flex gap-2 flex-wrap">
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" className="flex-1 min-w-[220px]" />
             <Button onClick={searchProducts}>Buscar</Button>
+            {addonStatus.barcode_scanner && (
+              <Button variant="outline" onClick={() => setScanEnabled((v) => !v)}>
+                <ScanLine className="w-4 h-4 mr-1" />
+                {scanEnabled ? "Escuchando..." : "Escanear"}
+              </Button>
+            )}
           </div>
+          <BarcodeListener enabled={scanEnabled} onCode={handleScanToCart} durationMs={10000} />
           <div className="space-y-2 max-h-[420px] overflow-auto">
             {products.map((product) => (
               <div key={product.id} className="border rounded p-2 flex justify-between items-center">

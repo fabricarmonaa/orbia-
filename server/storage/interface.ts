@@ -126,6 +126,7 @@ export interface IStorage {
   createProductCategory(data: InsertProductCategory): Promise<ProductCategory>;
 
   getProducts(tenantId: number): Promise<Product[]>;
+  getProductByCode(tenantId: number, code: string): Promise<Product | undefined>;
   getProductById(id: number, tenantId: number): Promise<Product | undefined>;
   createProduct(data: InsertProduct): Promise<Product>;
   updateProduct(id: number, tenantId: number, data: Partial<InsertProduct>): Promise<Product>;

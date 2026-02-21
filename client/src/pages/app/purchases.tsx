@@ -6,6 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
 interface PurchaseRow {
   id: number;
@@ -29,6 +31,8 @@ export default function PurchasesPage() {
   const [notes, setNotes] = useState("");
   const [draftItem, setDraftItem] = useState<ManualFormItem>({ productName: "", productCode: "", unitPrice: "", qty: "" });
   const [items, setItems] = useState<ManualFormItem[]>([]);
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any>(null);
@@ -46,6 +50,10 @@ export default function PurchasesPage() {
 
   useEffect(() => {
     loadPurchases();
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
   }, []);
 
   function addItem() {
@@ -55,6 +63,19 @@ export default function PurchasesPage() {
     }
     setItems((prev) => [...prev, { ...draftItem }]);
     setDraftItem({ productName: "", productCode: "", unitPrice: "", qty: "" });
+  }
+
+
+  function handleScanCode(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    setDraftItem((prev) => ({
+      ...prev,
+      productCode: parsed.code,
+      productName: prev.productName || parsed.name || prev.productName,
+    }));
+    toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
   }
 
   async function saveManual() {
@@ -152,8 +173,17 @@ export default function PurchasesPage() {
                     <Input value={draftItem.productName} onChange={(e) => setDraftItem((p) => ({ ...p, productName: e.target.value }))} />
                   </div>
                   <div>
-                    <Label>Código producto</Label>
+                    <div className="flex items-center justify-between gap-2">
+                      <Label>Código producto</Label>
+                      {addonStatus.barcode_scanner && (
+                        <Button type="button" size="sm" variant="outline" onClick={() => setScanEnabled((v) => !v)}>
+                          <ScanLine className="h-4 w-4 mr-1" />
+                          {scanEnabled ? "Escuchando..." : "Escanear"}
+                        </Button>
+                      )}
+                    </div>
                     <Input value={draftItem.productCode} onChange={(e) => setDraftItem((p) => ({ ...p, productCode: e.target.value }))} />
+                    <BarcodeListener enabled={scanEnabled} onCode={handleScanCode} durationMs={10000} />
                   </div>
                   <div>
                     <Label>Precio por unidad</Label>

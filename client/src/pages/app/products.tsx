@@ -33,7 +33,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useToast } from "@/hooks/use-toast";
-import { Filter, MoreHorizontal, Plus, Search, SlidersHorizontal, Download, Pencil, Power, Trash2, Warehouse } from "lucide-react";
+import { Filter, MoreHorizontal, Plus, Search, SlidersHorizontal, Download, Pencil, Power, Trash2, Warehouse, ScanLine } from "lucide-react";
+import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
 type StockMode = "global" | "by_branch";
 
@@ -129,6 +130,8 @@ export default function ProductsPage() {
   const [newCat, setNewCat] = useState("");
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [editProduct, setEditProduct] = useState<ProductRow | null>(null);
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
+  const [scanEnabled, setScanEnabled] = useState(false);
   const [editForm, setEditForm] = useState(emptyProduct);
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
@@ -152,6 +155,10 @@ export default function ProductsPage() {
       return;
     }
     void fetchCategories();
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => setAddonStatus(d.data || {}))
+      .catch(() => setAddonStatus({}));
   }, [canAccess]);
 
   useEffect(() => {
@@ -198,6 +205,18 @@ export default function ProductsPage() {
     }
   }
 
+
+  async function scanIntoProductForm(rawCode: string) {
+    setScanEnabled(false);
+    const parsed = parseScannedCode(rawCode);
+    if (!parsed.code) return;
+    setNewProduct((prev) => ({
+      ...prev,
+      sku: parsed.code,
+      name: prev.name || parsed.name || prev.name,
+    }));
+    toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
+  }
   async function createCategory(e: React.FormEvent) {
     e.preventDefault();
     try {
@@ -573,7 +592,11 @@ export default function ProductsPage() {
                           stockMode={meta.stockMode}
                           onSubmit={createProduct}
                           submitText="Crear producto"
+                          scannerEnabled={Boolean(addonStatus.barcode_scanner)}
+                          scanActive={scanEnabled}
+                          onToggleScan={() => setScanEnabled((v) => !v)}
                         />
+                        <BarcodeListener enabled={scanEnabled} onCode={scanIntoProductForm} durationMs={10000} />
                       </DialogContent>
                     </Dialog>
                   </>
@@ -721,6 +744,9 @@ export default function ProductsPage() {
 }
 
 type ProductFormProps = {
+  scannerEnabled?: boolean;
+  scanActive?: boolean;
+  onToggleScan?: () => void;
   value: typeof emptyProduct;
   onChange: (next: typeof emptyProduct) => void;
   categories: Category[];
@@ -729,7 +755,7 @@ type ProductFormProps = {
   submitText: string;
 };
 
-function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText }: ProductFormProps) {
+function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onToggleScan }: ProductFormProps) {
   const marginMode = value.pricingMode === "MARGIN";
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
@@ -798,7 +824,15 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>SKU</Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label>SKU</Label>
+            {scannerEnabled && (
+              <Button type="button" variant="outline" size="sm" onClick={onToggleScan}>
+                <ScanLine className="h-4 w-4 mr-1" />
+                {scanActive ? "Escuchando..." : "Escanear"}
+              </Button>
+            )}
+          </div>
           <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
         </div>
       </div>

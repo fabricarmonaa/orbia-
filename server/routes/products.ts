@@ -12,7 +12,7 @@ import {
 import { queryProductsByFilters, productFiltersSchema } from "../services/product-filters";
 import { generatePriceListPdf } from "../services/pdf/price-list";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
-import { validateBody } from "../middleware/validate";
+import { validateBody, validateQuery } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
 import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
@@ -69,6 +69,11 @@ const productUpdateSchema = productBaseSchema.partial().superRefine((value, ctx)
   }
 });
 
+
+
+const lookupQuerySchema = z.object({
+  code: z.string().transform((value) => sanitizeShortText(value, 120)).refine((value) => value.length > 0, "Código requerido"),
+});
 
 function toNumber(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
@@ -162,6 +167,21 @@ export function registerProductRoutes(app: Express) {
     }
   });
 
+
+
+  app.get("/api/products/lookup", tenantAuth, requireFeature("products"), validateQuery(lookupQuerySchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const query = req.query as z.infer<typeof lookupQuerySchema>;
+      const product = await storage.getProductByCode(tenantId, query.code);
+      if (!product) return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND" });
+      const stockTotal = Number((product as any).stock ?? 0);
+      const estimatedSalePrice = await resolveProductUnitPrice(product as any, tenantId, "ARS").catch(() => Number(product.price));
+      return res.json({ data: { ...product, stockTotal, estimatedSalePrice } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "No se pudo buscar el producto" });
+    }
+  });
   app.post(
     "/api/products",
     tenantAuth,
