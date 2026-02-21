@@ -7,7 +7,7 @@ export interface UnifiedPrintData {
   tenant: { name: string; logoUrl?: string | null; slogan?: string | null };
   branch?: { name?: string | null } | null;
   cashier?: { name?: string | null } | null;
-  sale?: { number: string; createdAt: string; paymentMethod?: string; notes?: string | null };
+  sale?: { number: string; createdAt: string; paymentMethod?: string; notes?: string | null; customerName?: string | null; customerDni?: string | null; customerPhone?: string | null };
   order?: { number: string | number; createdAt: string; status?: string; customerName?: string | null; description?: string | null; totalAmount?: string | null };
   totals?: { subtotal?: string; discount?: string; surcharge?: string; total?: string; currency?: string };
   items?: Array<{ qty: number; name: string; code?: string | null; unitPrice?: string; subtotal?: string }>;
@@ -39,6 +39,9 @@ export function TicketLayout({ mode, data, variant }: { mode: PrintMode; data: U
       {data.branch?.name ? <div><b>Sucursal:</b> {data.branch.name}</div> : null}
       {data.cashier?.name ? <div><b>Cajero:</b> {data.cashier.name}</div> : null}
       {data.sale?.paymentMethod ? <div><b>Pago:</b> {data.sale.paymentMethod}</div> : null}
+      {variant === "SALE" ? <div><b>NOMBRE:</b> {data.sale?.customerName || "-"}</div> : null}
+      {variant === "SALE" ? <div><b>DNI:</b> {data.sale?.customerDni || "-"}</div> : null}
+      {variant === "SALE" ? <div><b>TEL:</b> {data.sale?.customerPhone || "-"}</div> : null}
       {data.order?.status ? <div><b>Estado:</b> {data.order.status}</div> : null}
       <div style={{ borderTop: "1px dashed #999", margin: "6px 0" }} />
 

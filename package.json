@@ -17,7 +17,13 @@
     "docker:down": "docker compose down",
     "docker:down:volumes": "docker compose down -v",
     "dev:docker": "tsx script/dev-docker.ts",
-    "verify:local": "tsx script/verify-local.ts"
+    "verify:local": "tsx script/verify-local.ts",
+    "check:dashboard-summary": "tsx script/dashboard-summary-check.ts",
+    "check:customers-e2e": "tsx script/customers-e2e-check.ts",
+    "check:purchases-e2e": "tsx script/purchases-e2e-check.ts",
+    "check:stock-purchase": "tsx script/stock-purchase-integration-check.ts",
+    "check:sales-history": "tsx script/sales-history-check.ts",
+    "check:addons": "tsx script/addons-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

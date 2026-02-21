@@ -208,8 +208,8 @@ export default function OrdersPage() {
 
 
   async function printOrder() {
-    if (!selectedOrder) return;
-    const printUrl = `${window.location.origin}/app/print/order/${selectedOrder.id}`;
+    if (!selectedOrder || !(selectedOrder as any).saleId) return;
+    const printUrl = `${window.location.origin}/app/print/sale/${(selectedOrder as any).saleId}`;
     const win = window.open(printUrl, "_blank", "noopener,noreferrer");
     if (!win) {
       window.location.href = printUrl;

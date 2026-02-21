@@ -12,6 +12,7 @@ import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 import { pool } from "../db";
 import { getStatuses } from "../services/statuses";
+import { getTenantAddons as getTenantAddonsFlags } from "../services/tenant-addons";
 
 
 const changePasswordSchema = z.object({
@@ -286,6 +287,73 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
+  app.get("/api/dashboard/summary", tenantAuth, enforceBranchScope, async (req, res) => {
+    const empty = {
+      orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
+      cash: { monthIncome: 0, monthExpense: 0, monthResult: 0 },
+      products: { count: 0 },
+    };
+
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
+      const monthlySummary = !branchId ? await getTenantMonthlyMetricsSummary(tenantId) : null;
+
+      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesRaw, statuses, allOrders] = await Promise.all([
+        storage.countOrders(tenantId, branchId),
+        storage.countProducts(tenantId),
+        storage.getMonthlyIncome(tenantId, branchId),
+        storage.getMonthlyExpenses(tenantId, branchId),
+        storage.getOrderStatuses(tenantId),
+        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+      ]);
+
+      const pendingStatusIds = new Set(
+        statuses
+          .filter((s) => {
+            const normalized = String(s.name || "").trim().toUpperCase();
+            return normalized === "PENDIENTE" || normalized === "PENDING";
+          })
+          .map((s) => s.id)
+      );
+      const inProgressStatusIds = new Set(
+        statuses
+          .filter((s) => {
+            const normalized = String(s.name || "").trim().toUpperCase().replace(/\s+/g, "_");
+            return normalized === "EN_PROCESO" || normalized === "IN_PROGRESS";
+          })
+          .map((s) => s.id)
+      );
+
+      const pendingCount = allOrders.filter((o: any) => o.statusId && pendingStatusIds.has(o.statusId)).length;
+      const inProgressCount = allOrders.filter((o: any) => o.statusId && inProgressStatusIds.has(o.statusId)).length;
+      const openCount = pendingCount + inProgressCount;
+
+      const monthIncome = Number(monthlySummary ? monthlySummary.cashInTotal : monthlyIncomeRaw) || 0;
+      const monthExpense = Number(monthlySummary ? monthlySummary.cashOutTotal : monthlyExpensesRaw) || 0;
+
+      return res.json({
+        orders: {
+          openCount,
+          totalCount: Number(totalOrders || 0),
+          pendingCount,
+          inProgressCount,
+        },
+        cash: {
+          monthIncome,
+          monthExpense,
+          monthResult: monthIncome - monthExpense,
+        },
+        products: {
+          count: Number(totalProducts || 0),
+        },
+      });
+    } catch (err) {
+      console.error("[dashboard] DASHBOARD_SUMMARY_ERROR", err);
+      return res.json(empty);
+    }
+  });
+
 
   app.get("/api/dashboard/highlight-settings", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
     try {
@@ -460,7 +528,7 @@ export function registerTenantRoutes(app: Express) {
       ]);
       const events = [
         ...orders.slice(0, limit).map((o:any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
-        ...salesRows.slice(0, limit).map((s:any) => ({ ts: s.saleDatetime || s.createdAt, type: "SALE", action: "created", reference: s.saleNumber || `#${s.id}`, entityId: s.id })),
+        ...salesRows.data.slice(0, limit).map((s:any) => ({ ts: s.createdAt, type: "SALE", action: "created", reference: s.number || `#${s.id}`, entityId: s.id })),
         ...cashRows.slice(0, limit).map((c:any) => ({ ts: c.createdAt, type: "CASH", action: c.type, reference: c.description || c.category || `#${c.id}`, entityId: c.id })),
       ].sort((a,b)=>+new Date(b.ts)-+new Date(a.ts)).slice(0, limit);
       return res.json({ items: events });
@@ -604,24 +672,25 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
+  app.get("/api/tenant/addons", tenantAuth, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const addons = await getTenantAddonsFlags(tenantId);
+      return res.json({ addons });
+    } catch (err: any) {
+      console.error("[tenant] TENANT_ADDONS_ERROR", err);
+      return res.status(500).json({ error: "No se pudo obtener addons", code: "TENANT_ADDONS_ERROR" });
+    }
+  });
+
   app.get("/api/addons/status", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const [addons, config] = await Promise.all([
-        storage.getTenantAddons(tenantId),
-        storage.getConfig(tenantId),
-      ]);
-      const result: Record<string, boolean> = {};
-      for (const a of addons) {
-        result[a.addonKey] = a.enabled;
-      }
-      const settingsAddons = ((config?.configJson as any)?.addons || {}) as Record<string, boolean>;
-      for (const [key, enabled] of Object.entries(settingsAddons)) {
-        if (typeof enabled === "boolean") result[key] = enabled;
-      }
-      res.json({ data: result });
+      const addons = await getTenantAddonsFlags(tenantId);
+      return res.json({ data: addons });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error("[tenant] ADDONS_STATUS_ERROR", err);
+      return res.status(500).json({ error: "No se pudo obtener addons", code: "ADDONS_STATUS_ERROR" });
     }
   });
 }

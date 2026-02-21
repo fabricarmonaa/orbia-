@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
+import { fetchAddons } from "@/lib/addons";
 import { usePlan } from "@/lib/plan";
 import { downloadPriceListPdf, type PriceListExportPayload } from "@/lib/pdfs";
 import { UpgradePrompt } from "@/components/upgrade-prompt";
@@ -115,7 +116,7 @@ export default function ProductsPage() {
   const [filters, setFilters] = useState<ProductFilters>(defaultFilters);
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 20, totalPages: 1, stockMode: "global" as StockMode });
+  const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 20, totalPages: 1, stockMode: "global" as StockMode, branchesCount: 0 });
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   const [productDialog, setProductDialog] = useState(false);
@@ -155,9 +156,8 @@ export default function ProductsPage() {
       return;
     }
     void fetchCategories();
-    apiRequest("GET", "/api/addons/status")
-      .then((r) => r.json())
-      .then((d) => setAddonStatus(d.data || {}))
+    fetchAddons()
+      .then((d) => setAddonStatus(d || {}))
       .catch(() => setAddonStatus({}));
   }, [canAccess]);
 
@@ -197,7 +197,7 @@ export default function ProductsPage() {
       const res = await apiRequest("GET", `/api/products?${buildQuery(current)}`);
       const data = await res.json();
       setRows(data.data || []);
-      setMeta(data.meta || { total: 0, page: current.page, pageSize: current.pageSize, totalPages: 1, stockMode: "global" });
+      setMeta(data.meta || { total: 0, page: current.page, pageSize: current.pageSize, totalPages: 1, stockMode: "global", branchesCount: 0 });
     } catch (err: any) {
       toast({ title: "No se pudieron cargar productos", description: err.message, variant: "destructive" });
     } finally {
@@ -711,9 +711,9 @@ export default function ProductsPage() {
         <DialogContent>
           <DialogHeader><DialogTitle>Renovar stock {renewProduct ? `- ${renewProduct.name}` : ""}</DialogTitle></DialogHeader>
           <div className="space-y-3">
-            {meta.stockMode === "by_branch" ? (
+            {meta.branchesCount > 0 ? (
               <div className="flex items-center justify-between border rounded-md p-2">
-                <Label>Por sucursal</Label>
+                <Label>Gestionar por sucursal</Label>
                 <Switch checked={renewStockMode === "by_branch"} onCheckedChange={(v) => setRenewStockMode(v ? "by_branch" : "global")} />
               </div>
             ) : null}

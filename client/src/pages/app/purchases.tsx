@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/auth";
+import { fetchAddons } from "@/lib/addons";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,12 +9,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 interface PurchaseRow {
   id: number;
-  providerName?: string | null;
-  totalAmount?: string | number | null;
-  purchaseDate?: string;
+  number: number | string;
+  supplierName?: string | null;
+  total?: string | number | null;
+  createdAt?: string;
+  currency?: string | null;
+  itemCount?: number;
 }
 
 interface ManualFormItem {
@@ -21,6 +26,11 @@ interface ManualFormItem {
   productCode: string;
   unitPrice: string;
   qty: string;
+}
+
+interface PurchaseDetail {
+  purchase: PurchaseRow;
+  items: Array<{ productName: string; productCode?: string | null; unitPrice: string; qty: string; lineTotal: string }>;
 }
 
 export default function PurchasesPage() {
@@ -33,31 +43,40 @@ export default function PurchasesPage() {
   const [items, setItems] = useState<ManualFormItem[]>([]);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
+  const [savingManual, setSavingManual] = useState(false);
+  const [lastCreatedId, setLastCreatedId] = useState<number | null>(null);
 
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
 
-  const total = useMemo(
-    () => items.reduce((acc, r) => acc + (Number(r.qty || 0) * Number(r.unitPrice || 0)), 0),
-    [items]
-  );
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detail, setDetail] = useState<PurchaseDetail | null>(null);
+
+  const total = useMemo(() => items.reduce((acc, r) => acc + (Number(r.qty || 0) * Number(r.unitPrice || 0)), 0), [items]);
 
   async function loadPurchases() {
-    const p2 = await apiRequest("GET", "/api/purchases?limit=30").then((r) => r.json()).catch(() => ({ data: [] }));
-    setPurchases(p2.data || []);
+    try {
+      const res = await apiRequest("GET", "/api/purchases?limit=30&offset=0");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo listar compras");
+      setPurchases(json.data || []);
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "No se pudo listar compras", variant: "destructive" });
+      setPurchases([]);
+    }
   }
 
   useEffect(() => {
-    loadPurchases();
-    apiRequest("GET", "/api/addons/status")
-      .then((r) => r.json())
-      .then((d) => setAddonStatus(d.data || {}))
+    loadPurchases().catch(() => undefined);
+    fetchAddons()
+      .then((d) => setAddonStatus(d || {}))
       .catch(() => setAddonStatus({}));
   }, []);
 
   function addItem() {
-    if (!draftItem.productName.trim() || !draftItem.productCode.trim() || Number(draftItem.unitPrice) <= 0 || Number(draftItem.qty) <= 0) {
+    if (!draftItem.productName.trim() || !draftItem.productCode.trim() || Number(draftItem.unitPrice) < 0 || Number(draftItem.qty) < 1) {
       toast({ title: "Datos incompletos", description: "Completá nombre, código, precio y cantidad válidos.", variant: "destructive" });
       return;
     }
@@ -65,16 +84,11 @@ export default function PurchasesPage() {
     setDraftItem({ productName: "", productCode: "", unitPrice: "", qty: "" });
   }
 
-
   function handleScanCode(rawCode: string) {
     setScanEnabled(false);
     const parsed = parseScannedCode(rawCode);
     if (!parsed.code) return;
-    setDraftItem((prev) => ({
-      ...prev,
-      productCode: parsed.code,
-      productName: prev.productName || parsed.name || prev.productName,
-    }));
+    setDraftItem((prev) => ({ ...prev, productCode: parsed.code, productName: prev.productName || parsed.name || prev.productName }));
     toast({ title: "Código capturado", description: `Código: ${parsed.code}` });
   }
 
@@ -82,27 +96,42 @@ export default function PurchasesPage() {
     try {
       if (!providerName.trim()) throw new Error("Ingresá proveedor");
       if (!items.length) throw new Error("Agregá al menos un ítem");
+      setSavingManual(true);
       const payload = {
         supplierName: providerName,
         currency,
         notes,
-        items: items.map((i) => ({
-          productName: i.productName,
-          productCode: i.productCode,
-          unitPrice: Number(i.unitPrice),
-          qty: Number(i.qty),
-        })),
+        items: items.map((i) => ({ productName: i.productName, productCode: i.productCode, unitPrice: Number(i.unitPrice), qty: Number(i.qty) })),
       };
       const res = await apiRequest("POST", "/api/purchases/manual", payload);
       const json = await res.json();
-      if (!res.ok) throw new Error(json?.error || "No se pudo guardar");
+      if (!res.ok) throw new Error(json?.error || json?.message || "No se pudo guardar");
       toast({ title: "Compra guardada", description: `ID #${json.purchaseId}` });
       setProviderName("");
       setNotes("");
       setItems([]);
+      setLastCreatedId(Number(json.purchaseId));
       await loadPurchases();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });
+    } finally {
+      setSavingManual(false);
+    }
+  }
+
+  async function openDetail(id: number) {
+    try {
+      setDetailOpen(true);
+      setDetailLoading(true);
+      const res = await apiRequest("GET", `/api/purchases/${id}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo cargar detalle");
+      setDetail(json as PurchaseDetail);
+    } catch (err: any) {
+      toast({ title: "Error", description: err?.message || "No se pudo cargar detalle", variant: "destructive" });
+      setDetail(null);
+    } finally {
+      setDetailLoading(false);
     }
   }
 
@@ -140,7 +169,7 @@ export default function PurchasesPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 max-w-7xl mx-auto">
       <Tabs defaultValue="manual">
         <TabsList>
           <TabsTrigger value="manual">Manual</TabsTrigger>
@@ -150,7 +179,7 @@ export default function PurchasesPage() {
         <TabsContent value="manual">
           <div className="grid lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
-              <CardHeader><CardTitle>Nueva compra manual</CardTitle></CardHeader>
+              <CardHeader><CardTitle>Carga manual</CardTitle></CardHeader>
               <CardContent className="space-y-3">
                 <div className="grid md:grid-cols-3 gap-2">
                   <div>
@@ -190,8 +219,8 @@ export default function PurchasesPage() {
                     <Input type="number" min={0} value={draftItem.unitPrice} onChange={(e) => setDraftItem((p) => ({ ...p, unitPrice: e.target.value }))} />
                   </div>
                   <div>
-                    <Label>Cantidad de unidades</Label>
-                    <Input type="number" min={0} value={draftItem.qty} onChange={(e) => setDraftItem((p) => ({ ...p, qty: e.target.value }))} />
+                    <Label>Cantidad</Label>
+                    <Input type="number" min={1} value={draftItem.qty} onChange={(e) => setDraftItem((p) => ({ ...p, qty: e.target.value }))} />
                   </div>
                   <div className="flex items-end">
                     <Button variant="outline" className="w-full" onClick={addItem}>Agregar ítem</Button>
@@ -229,19 +258,24 @@ export default function PurchasesPage() {
 
                 <div className="flex items-center justify-between">
                   <p className="font-semibold">Total: ${total.toLocaleString("es-AR")}</p>
-                  <Button onClick={saveManual}>Guardar compra</Button>
+                  <Button onClick={saveManual} disabled={savingManual}>{savingManual ? "Guardando..." : "Guardar compra"}</Button>
                 </div>
               </CardContent>
             </Card>
 
             <Card>
               <CardHeader><CardTitle>Últimas compras</CardTitle></CardHeader>
-              <CardContent className="space-y-2">
-                {purchases.map((p) => (
-                  <div key={p.id} className="border rounded p-2 text-sm flex justify-between">
-                    <span>#{p.id} · {p.providerName || "Sin proveedor"}</span>
-                    <span>${Number(p.totalAmount || 0).toLocaleString("es-AR")}</span>
-                  </div>
+              <CardContent className="space-y-2 max-h-[520px] overflow-auto">
+                {!purchases.length ? (
+                  <p className="text-sm text-muted-foreground">Todavía no registraste compras.</p>
+                ) : purchases.map((p) => (
+                  <button key={p.id} className={`w-full border rounded p-2 text-sm text-left ${lastCreatedId === p.id ? "bg-primary/5 border-primary/40" : ""}`} onClick={() => openDetail(p.id)}>
+                    <div className="flex justify-between gap-2">
+                      <span>#{p.number || p.id} · {p.supplierName || "Sin proveedor"}</span>
+                      <span>${Number(p.total || 0).toLocaleString("es-AR")}</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground">{p.createdAt ? new Date(p.createdAt).toLocaleDateString("es-AR") : "-"} · {p.itemCount || 0} ítems</div>
+                  </button>
                 ))}
               </CardContent>
             </Card>
@@ -264,6 +298,52 @@ export default function PurchasesPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Detalle de compra</DialogTitle>
+          </DialogHeader>
+          {detailLoading ? (
+            <p className="text-sm text-muted-foreground">Cargando detalle...</p>
+          ) : !detail ? (
+            <p className="text-sm text-muted-foreground">Sin datos.</p>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-sm">
+                <p><b>Compra:</b> #{detail.purchase.number || detail.purchase.id}</p>
+                <p><b>Proveedor:</b> {detail.purchase.supplierName || "Sin proveedor"}</p>
+                <p><b>Fecha:</b> {detail.purchase.createdAt ? new Date(detail.purchase.createdAt).toLocaleString("es-AR") : "-"}</p>
+              </div>
+              <div className="border rounded-md overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 text-left">Producto</th>
+                      <th className="p-2 text-left">Código</th>
+                      <th className="p-2 text-right">Unitario</th>
+                      <th className="p-2 text-right">Cant.</th>
+                      <th className="p-2 text-right">Subtotal</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {detail.items.map((it, idx) => (
+                      <tr key={`${it.productCode || "none"}-${idx}`} className="border-t">
+                        <td className="p-2">{it.productName}</td>
+                        <td className="p-2">{it.productCode || "-"}</td>
+                        <td className="p-2 text-right">${Number(it.unitPrice || 0).toLocaleString("es-AR")}</td>
+                        <td className="p-2 text-right">{Number(it.qty || 0).toLocaleString("es-AR")}</td>
+                        <td className="p-2 text-right">${Number(it.lineTotal || 0).toLocaleString("es-AR")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-right font-semibold">Total: ${Number(detail.purchase.total || 0).toLocaleString("es-AR")}</p>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

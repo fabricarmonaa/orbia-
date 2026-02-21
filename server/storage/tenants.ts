@@ -54,12 +54,12 @@ export const tenantStorage = {
     if (existing) {
       const [addon] = await db
         .update(tenantAddons)
-        .set({ enabled: data.enabled, enabledById: data.enabledById, enabledAt: data.enabledAt })
+        .set({ enabled: data.enabled, enabledById: data.enabledById, enabledAt: data.enabledAt, updatedAt: new Date() })
         .where(eq(tenantAddons.id, existing.id))
         .returning();
       return addon;
     }
-    const [addon] = await db.insert(tenantAddons).values(data).returning();
+    const [addon] = await db.insert(tenantAddons).values({ ...data, updatedAt: new Date() }).returning();
     return addon;
   },
 };

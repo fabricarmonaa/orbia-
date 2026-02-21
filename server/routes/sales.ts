@@ -7,7 +7,7 @@ import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
-import { sales } from "@shared/schema";
+import { customers, sales } from "@shared/schema";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -40,13 +40,15 @@ const createSaleSchema = z.object({
 });
 
 const saleQuerySchema = z.object({
-  branch_id: z.coerce.number().int().positive().optional(),
+  branch_id: z.string().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
-  q: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
-  customer: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
-  limit: z.coerce.number().int().min(1).max(100).optional().default(20),
-  offset: z.coerce.number().int().min(0).optional().default(0),
+  number: z.string().optional(),
+  customerId: z.string().optional(),
+  customerQuery: z.string().optional(),
+  limit: z.string().optional(),
+  offset: z.string().optional(),
+  sort: z.enum(["date_desc", "date_asc"]).optional(),
 });
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -149,6 +151,7 @@ export function registerSaleRoutes(app: Express) {
       if (err?.code === "BRANCH_REQUIRED") {
         return res.status(400).json({ error: "Sucursal requerida", code: "BRANCH_REQUIRED" });
       }
+      console.error("[sales] SALE_CREATE_ERROR", err);
       return res.status(500).json({ error: "No se pudo registrar la venta", code: "SALE_CREATE_ERROR" });
     }
   });
@@ -156,20 +159,45 @@ export function registerSaleRoutes(app: Express) {
   app.get("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateQuery(saleQuerySchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const query = req.query as unknown as z.infer<typeof saleQuerySchema>;
-      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : query.branch_id;
-      const data = await storage.listSales(tenantId, {
+      const raw = req.query as Record<string, string | undefined>;
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (raw.branch_id ? Number(raw.branch_id) : undefined);
+
+      const fromRaw = String(raw.from ?? "").trim();
+      const toRaw = String(raw.to ?? "").trim();
+      const from = fromRaw ? new Date(fromRaw) : undefined;
+      const to = toRaw ? new Date(toRaw) : undefined;
+      if (fromRaw && Number.isNaN(from?.getTime())) return res.status(400).json({ error: "Fecha desde inválida", code: "INVALID_DATE" });
+      if (toRaw && Number.isNaN(to?.getTime())) return res.status(400).json({ error: "Fecha hasta inválida", code: "INVALID_DATE" });
+
+      const limitParsed = Number(raw.limit ?? "50");
+      const offsetParsed = Number(raw.offset ?? "0");
+      const limit = Number.isFinite(limitParsed) ? Math.min(200, Math.max(1, Math.trunc(limitParsed))) : 50;
+      const offset = Number.isFinite(offsetParsed) ? Math.max(0, Math.trunc(offsetParsed)) : 0;
+
+      const customerIdParsed = Number(raw.customerId ?? "");
+      const customerId = Number.isFinite(customerIdParsed) && customerIdParsed > 0 ? customerIdParsed : undefined;
+
+      const result = await storage.listSales(tenantId, {
         branchId,
-        from: toDate(query.from),
-        to: toDate(query.to),
-        q: query.q,
-        customer: query.customer,
-        limit: query.limit,
-        offset: query.offset,
+        from,
+        to,
+        number: String(raw.number ?? "").trim() || undefined,
+        customerId,
+        customerQuery: String(raw.customerQuery ?? "").trim() || undefined,
+        limit,
+        offset,
+        sort: raw.sort === "date_asc" ? "date_asc" : "date_desc",
       });
-      res.json({ data });
-    } catch {
-      res.status(500).json({ error: "No se pudo obtener ventas", code: "SALE_LIST_ERROR" });
+
+      const payload: any = { data: result.data, meta: result.meta };
+      if (process.env.NODE_ENV !== "production") payload.debug = { usedMaterializedView: result.usedMaterializedView };
+      return res.json(payload);
+    } catch (err: any) {
+      console.error("[sales] SALES_LIST_ERROR", err);
+      if (err?.code === "MIGRATION_MISSING") {
+        return res.status(500).json({ error: "Faltan migraciones de ventas, ejecutar migrations/*.sql", code: "MIGRATION_MISSING" });
+      }
+      return res.status(500).json({ error: "No se pudo obtener historial de ventas", code: "SALES_LIST_ERROR" });
     }
   });
 
@@ -182,14 +210,20 @@ export function registerSaleRoutes(app: Express) {
       if (req.auth!.scope === "BRANCH" && sale.branchId !== req.auth!.branchId) {
         return res.status(403).json({ error: "Sin acceso a esta venta", code: "BRANCH_FORBIDDEN" });
       }
-      const items = await storage.getSaleItems(saleId, tenantId);
-      res.json({ data: { sale, items } });
-    } catch {
+      const [items, customer] = await Promise.all([
+        storage.getSaleItems(saleId, tenantId),
+        sale.customerId
+          ? db.select({ id: customers.id, name: customers.name, doc: customers.doc, phone: customers.phone }).from(customers).where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, tenantId))).limit(1)
+          : Promise.resolve([] as any[]),
+      ]);
+      res.json({ data: { sale, items, customer: customer[0] || null } });
+    } catch (err) {
+      console.error("[sales] SALE_DETAIL_ERROR", err);
       res.status(500).json({ error: "No se pudo obtener detalle", code: "SALE_DETAIL_ERROR" });
     }
   });
 
-  app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  const getSalePrintData = async (req: any, res: any) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const saleId = req.params.id as unknown as number;
@@ -199,37 +233,37 @@ export function registerSaleRoutes(app: Express) {
         return res.status(403).json({ error: "Sin acceso a esta venta", code: "BRANCH_FORBIDDEN" });
       }
 
-      const [items, branding, cashierUser, cashierProfile, allBranches, tenant] = await Promise.all([
+      const [items, branding, allBranches, tenant, customer] = await Promise.all([
         storage.getSaleItems(saleId, tenantId),
         storage.getTenantBranding(tenantId),
-        sale.cashierUserId ? storage.getUserById(sale.cashierUserId, tenantId) : Promise.resolve(undefined),
-        sale.cashierUserId ? storage.getCashierById(sale.cashierUserId, tenantId) : Promise.resolve(undefined),
         storage.getBranches(tenantId),
         storage.getTenantById(tenantId),
+        sale.customerId
+          ? db.select({ id: customers.id, name: customers.name, doc: customers.doc, phone: customers.phone }).from(customers).where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, tenantId))).limit(1)
+          : Promise.resolve([] as any[]),
       ]);
       const branch = sale.branchId ? allBranches.find((b) => b.id === sale.branchId) : null;
       const token = await ensureSalePublicToken(sale.id, tenantId);
-      const base = buildPublicBaseUrl((tenant as any)?.slug || null);
-      const publicUrl = `${base}/sale/${token}`;
+      const publicUrl = `${process.env.PUBLIC_APP_URL || process.env.APP_ORIGIN || ""}/tracking/${token}`;
+      const customerData = customer[0] || null;
 
-      res.json({
+      return res.json({
         data: {
-          tenant: {
+          business: {
             name: branding.displayName,
-            slug: (tenant as any)?.slug || null,
             logoUrl: branding.logoUrl,
-            slogan: String(branding.texts?.trackingFooter || ""),
+            address: null,
+            phone: null,
           },
-          branch: branch ? { name: branch.name } : null,
-          cashier: { name: cashierProfile?.name || cashierUser?.fullName || "Sistema" },
           sale: {
             id: sale.id,
             number: sale.saleNumber,
             createdAt: sale.saleDatetime,
+            customerName: customerData?.name || null,
+            customerDni: customerData?.doc || null,
+            customerPhone: customerData?.phone || null,
             paymentMethod: sale.paymentMethod,
             notes: sale.notes,
-          },
-          totals: {
             subtotal: sale.subtotalAmount,
             discount: sale.discountAmount,
             surcharge: sale.surchargeAmount,
@@ -237,17 +271,31 @@ export function registerSaleRoutes(app: Express) {
             currency: sale.currency,
           },
           items: items.map((item) => ({
-            qty: item.quantity,
             name: item.productNameSnapshot,
-            code: item.skuSnapshot,
+            qty: item.quantity,
             unitPrice: item.unitPrice,
-            subtotal: item.lineTotal,
+            total: item.lineTotal,
+            code: item.skuSnapshot,
           })),
           qr: { publicUrl },
+
           // backward compatibility
-          empresa: { nombre: branding.displayName, logo_url: branding.logoUrl, slogan: String(branding.texts?.trackingFooter || "") },
-          cajero: { nombre: cashierProfile?.name || cashierUser?.fullName || "Sistema" },
-          sucursal: branch ? { id: branch.id, nombre: branch.name } : { id: null, nombre: "CENTRAL" },
+          tenant: {
+            name: branding.displayName,
+            slug: (tenant as any)?.slug || null,
+            logoUrl: branding.logoUrl,
+            slogan: String(branding.texts?.trackingFooter || ""),
+          },
+          branch: branch ? { name: branch.name } : null,
+          cashier: { name: "Sistema" },
+          totals: {
+            subtotal: sale.subtotalAmount,
+            discount: sale.discountAmount,
+            surcharge: sale.surchargeAmount,
+            total: sale.totalAmount,
+            currency: sale.currency,
+          },
+          items_legacy: items.map((item) => ({ qty: item.quantity, name: item.productNameSnapshot, sku: item.skuSnapshot, unit_price: item.unitPrice, line_total: item.lineTotal })),
           venta: {
             id: sale.id,
             number: sale.saleNumber,
@@ -259,14 +307,20 @@ export function registerSaleRoutes(app: Express) {
             total: sale.totalAmount,
             notes: sale.notes,
             currency: sale.currency,
+            customerName: customerData?.name || null,
+            customerDni: customerData?.doc || null,
+            customerPhone: customerData?.phone || null,
           },
-          items_legacy: items.map((item) => ({ qty: item.quantity, name: item.productNameSnapshot, sku: item.skuSnapshot, unit_price: item.unitPrice, line_total: item.lineTotal })),
         },
       });
-    } catch {
-      res.status(500).json({ error: "No se pudo preparar ticket", code: "SALE_PRINT_ERROR" });
+    } catch (err) {
+      console.error("[sales] SALE_PRINT_ERROR", err);
+      return res.status(500).json({ error: "No se pudo preparar ticket", code: "SALE_PRINT_ERROR" });
     }
-  });
+  };
+
+  app.get("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
+  app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
 
   app.get("/api/public/sale/:token", validateParams(tokenParamSchema), async (req, res) => {
     try {
@@ -293,8 +347,9 @@ export function registerSaleRoutes(app: Express) {
           tenant: { name: branding.displayName, logoUrl: branding.logoUrl },
         },
       });
-    } catch {
-      return res.status(500).json({ error: "No se pudo obtener comprobante" });
+    } catch (err) {
+      console.error("[sales] SALE_PUBLIC_TICKET_ERROR", err);
+      return res.status(500).json({ error: "No se pudo obtener comprobante", code: "SALE_PUBLIC_TICKET_ERROR" });
     }
   });
 }

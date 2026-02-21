@@ -14,6 +14,7 @@ import { generatePriceListPdf } from "../services/pdf/price-list";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateQuery } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
+import { requireAddon } from "../middleware/require-addon";
 import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
 const sanitizeOptionalShort = (max: number) =>
@@ -80,6 +81,28 @@ function toNumber(value: string | number | null | undefined) {
   return Number(value);
 }
 
+
+async function resolveTenantStockMode(tenantId: number): Promise<{ stockMode: "global" | "by_branch"; branchesCount: number }> {
+  const branchesCount = Number(await storage.countBranchesByTenant(tenantId) || 0);
+  if (branchesCount <= 0) return { stockMode: "global", branchesCount: 0 };
+  const config = await storage.getConfig(tenantId);
+  const raw = (config?.configJson as any)?.inventory?.stockMode;
+  return { stockMode: raw === "by_branch" ? "by_branch" : "global", branchesCount };
+}
+
+async function persistTenantStockMode(tenantId: number, stockMode: "global" | "by_branch") {
+  const config = await storage.getConfig(tenantId);
+  const current = ((config?.configJson as Record<string, any>) || {});
+  const next = {
+    ...current,
+    inventory: {
+      ...(current.inventory || {}),
+      stockMode,
+    },
+  };
+  await storage.upsertConfig({ tenantId, configJson: next as any });
+}
+
 export function registerProductRoutes(app: Express) {
   app.get("/api/product-categories", tenantAuth, requireFeature("products"), async (req, res) => {
     try {
@@ -112,19 +135,19 @@ export function registerProductRoutes(app: Express) {
   app.get("/api/products", tenantAuth, requireFeature("products"), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const plan = await getTenantPlan(tenantId);
-      const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const { stockMode, branchesCount } = await resolveTenantStockMode(tenantId);
+      const byBranchMode = stockMode === "by_branch";
       const filters = productFiltersSchema.parse(req.query);
-      const { data, total } = await queryProductsByFilters(tenantId, hasBranches, filters);
+      const { data, total } = await queryProductsByFilters(tenantId, byBranchMode, filters);
 
       const productIds = data.map((p) => p.id);
+      const productIdSet = new Set(productIds);
       const branchStockMap = new Map<number, Array<{ branchId: number; branchName: string; stock: number }>>();
 
-      if (hasBranches && productIds.length) {
+      if (byBranchMode && productIds.length) {
         const allStockRows = await storage.getStockSummaryByTenant(tenantId);
         for (const row of allStockRows) {
-          if (!productIds.includes(row.productId)) continue;
+          if (!productIdSet.has(row.productId)) continue;
           const list = branchStockMap.get(row.productId) || [];
           list.push({ branchId: row.branchId, branchName: row.branchName, stock: row.stock });
           branchStockMap.set(row.productId, list);
@@ -140,14 +163,12 @@ export function registerProductRoutes(app: Express) {
           stockTotal: toNumber(p.stockTotal),
           status: statusMap.get(code) ? { code, label: statusMap.get(code)!.label, color: statusMap.get(code)!.color } : { code, label: code, color: "#6B7280" },
           estimatedSalePrice: await resolveProductUnitPrice(p as any, tenantId, "ARS").catch(() => Number(p.price)),
-          branchStock: hasBranches ? (branchStockMap.get(p.id) || []) : undefined,
+          branchStock: byBranchMode ? (branchStockMap.get(p.id) || []) : undefined,
         };
       }));
 
       const page = filters.page ?? 1;
       const pageSize = filters.pageSize ?? 20;
-      const stockMode = hasBranches ? "by_branch" : "global";
-
       res.json({
         data: normalized,
         meta: {
@@ -156,6 +177,7 @@ export function registerProductRoutes(app: Express) {
           total,
           totalPages: Math.max(1, Math.ceil(total / pageSize)),
           stockMode,
+          branchesCount,
         },
         stockMode,
       });
@@ -169,7 +191,7 @@ export function registerProductRoutes(app: Express) {
 
 
 
-  app.get("/api/products/lookup", tenantAuth, requireFeature("products"), validateQuery(lookupQuerySchema), async (req, res) => {
+  app.get("/api/products/lookup", tenantAuth, requireFeature("products"), requireAddon("barcode_scanner"), validateQuery(lookupQuerySchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const query = req.query as z.infer<typeof lookupQuerySchema>;
@@ -192,9 +214,8 @@ export function registerProductRoutes(app: Express) {
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const plan = await getTenantPlan(tenantId);
-      const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const { stockMode } = await resolveTenantStockMode(tenantId);
+      const byBranchMode = stockMode === "by_branch";
       const payload = req.body as z.infer<typeof productInputSchema>;
 
       const statusCode = payload.statusCode ? normalizeStatusCode(payload.statusCode) : (await getDefaultStatus(tenantId, "PRODUCT"))?.code || "ACTIVE";
@@ -211,7 +232,7 @@ export function registerProductRoutes(app: Express) {
         costAmount: payload.costAmount !== null && payload.costAmount !== undefined ? String(payload.costAmount) : null,
         costCurrency: payload.costCurrency || null,
         marginPct: payload.marginPct !== null && payload.marginPct !== undefined ? String(payload.marginPct) : null,
-        stock: hasBranches ? null : (payload.stock ?? 0),
+        stock: byBranchMode ? null : (payload.stock ?? 0),
         statusCode,
         isActive: statusCode !== "INACTIVE",
       });
@@ -230,11 +251,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
-      const plan = await getTenantPlan(tenantId);
-      const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const { stockMode, branchesCount } = await resolveTenantStockMode(tenantId);
 
-      if (!hasBranches) {
+      if (stockMode !== "by_branch" || branchesCount <= 0) {
         return res.json({
           data: {
             stockByBranch: [],
@@ -282,18 +301,17 @@ export function registerProductRoutes(app: Express) {
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
-      const plan = await getTenantPlan(tenantId);
-      const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const { branchesCount } = await resolveTenantStockMode(tenantId);
 
-      if (mode === "by_branch" && !hasBranches) {
-        return res.status(403).json({ error: "Tu plan no permite stock por sucursal", code: "FEATURE_BLOCKED" });
+      if (mode === "by_branch" && branchesCount <= 0) {
+        return res.status(403).json({ error: "Stock por sucursal no disponible para este tenant", code: "FEATURE_NOT_ENABLED" });
       }
 
       if (mode === "global") {
         if (stock === undefined) return res.status(400).json({ error: "stock es obligatorio en modo global", code: "STOCK_REQUIRED" });
         await storage.updateProduct(productId, tenantId, { stock });
-        return res.json({ data: { mode: "global", stockTotal: stock } });
+        await persistTenantStockMode(tenantId, "global");
+        return res.json({ ok: true, productId, stockMode: "global", stock: { total: stock } });
       }
 
       const branchPayload = branches || [];
@@ -329,7 +347,8 @@ export function registerProductRoutes(app: Express) {
       const updated = await storage.getProductStockByBranch(productId, tenantId);
       const stockTotal = updated.reduce((acc, row) => acc + Number(row.stock || 0), 0);
       await storage.updateProduct(productId, tenantId, { stock: stockTotal });
-      return res.json({ data: { mode: "by_branch", stockTotal, branches: updated } });
+      await persistTenantStockMode(tenantId, "by_branch");
+      return res.json({ ok: true, productId, stockMode: "by_branch", stock: { total: stockTotal, byBranch: updated } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -348,9 +367,8 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado" });
-      const plan = await getTenantPlan(tenantId);
-      const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const { stockMode } = await resolveTenantStockMode(tenantId);
+      const byBranchMode = stockMode === "by_branch";
 
       const payload = req.body as z.infer<typeof productUpdateSchema>;
 
@@ -363,7 +381,7 @@ export function registerProductRoutes(app: Express) {
       if (payload.costAmount !== undefined) updateData.costAmount = payload.costAmount !== null ? String(payload.costAmount) : null;
       if (payload.costCurrency !== undefined) updateData.costCurrency = payload.costCurrency || null;
       if (payload.marginPct !== undefined) updateData.marginPct = payload.marginPct !== null ? String(payload.marginPct) : null;
-      if (payload.stock !== undefined && !hasBranches) updateData.stock = payload.stock;
+      if (payload.stock !== undefined && !byBranchMode) updateData.stock = payload.stock;
       if (payload.sku !== undefined) updateData.sku = payload.sku;
       if (payload.categoryId !== undefined) updateData.categoryId = payload.categoryId;
       if (payload.statusCode !== undefined) {

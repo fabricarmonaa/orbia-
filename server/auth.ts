@@ -4,14 +4,14 @@ import type { Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
 import "dotenv/config";
 
-const JWT_SECRET_ENV = process.env.SESSION_SECRET;
-const ALLOW_SEED_SECRET_FALLBACK = process.env.NODE_ENV === "seed" || process.env.SEED_MODE === "1";
-
-if (!JWT_SECRET_ENV && !ALLOW_SEED_SECRET_FALLBACK) {
-  throw new Error("SESSION_SECRET is not defined");
+function getSessionSecret(): string {
+  const secret = process.env.SESSION_SECRET;
+  if (secret) return secret;
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("SESSION_SECRET is not defined");
+  }
+  return "dev-insecure-secret";
 }
-
-const JWT_SECRET: string = JWT_SECRET_ENV || "seed-mode-insecure-secret";
 
 function unauthorizedResponse(res: Response, type: "required" | "expired" | "invalid") {
   if (type == "required") {
@@ -102,11 +102,11 @@ export interface TenantPlanInfo {
 }
 
 export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, JWT_SECRET, { expiresIn: "24h", algorithm: "HS256" });
+  return jwt.sign(payload, getSessionSecret(), { expiresIn: "24h", algorithm: "HS256" });
 }
 
 export function verifyToken(token: string): JWTPayload {
-  return jwt.verify(token, JWT_SECRET, { algorithms: ["HS256"] }) as JWTPayload;
+  return jwt.verify(token, getSessionSecret(), { algorithms: ["HS256"] }) as JWTPayload;
 }
 
 export async function hashPassword(password: string): Promise<string> {
