@@ -6,7 +6,7 @@ import { storage } from "../storage";
 import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
 import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
-import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
 const itemSchema = z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive(), unitPrice: z.coerce.number().min(0) });
 const createPurchaseSchema = z.object({
@@ -239,6 +239,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
             total: updatedPurchase.totalAmount,
             itemCount: Number(itemCountRow?.c || 0),
           },
+          totalAmount: Number(updatedPurchase.totalAmount || 0),
           updatedStock,
         };
       });
@@ -252,21 +253,28 @@ export function registerPurchaseCrudRoutes(app: Express) {
   });
 
   app.get("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateQuery(listQuery), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
-      const q = req.query as any;
-      const filters = [eq(purchases.tenantId, tenantId)] as any[];
+      tenantId = req.auth!.tenantId!;
+      const query = listQuery.parse(req.query || {});
+      const limit = Math.min(100, Math.max(1, Number(query.limit || 30)));
+      const offset = Math.max(0, Number(query.offset || 0));
 
-      const fromDate = q.from ? new Date(String(q.from)) : null;
+      const filters = [eq(purchases.tenantId, tenantId)] as any[];
+      if (req.auth?.scope === "BRANCH" && req.auth.branchId) {
+        filters.push(eq(purchases.branchId, req.auth.branchId));
+      }
+
+      const fromDate = query.from ? new Date(String(query.from)) : null;
       if (fromDate && Number.isNaN(fromDate.getTime())) return res.status(400).json({ error: "Fecha desde inválida", code: "INVALID_DATE" });
-      const toDate = q.to ? new Date(String(q.to)) : null;
+      const toDate = query.to ? new Date(String(query.to)) : null;
       if (toDate && Number.isNaN(toDate.getTime())) return res.status(400).json({ error: "Fecha hasta inválida", code: "INVALID_DATE" });
       if (fromDate) filters.push(gte(purchases.purchaseDate, fromDate));
       if (toDate) filters.push(lte(purchases.purchaseDate, toDate));
 
-      const qText = sanitizeShortText(String(q.q ?? q.provider ?? ""), 120).trim();
+      const qText = sanitizeShortText(String(query.q ?? query.provider ?? ""), 120).trim();
       if (qText) {
-        const like = `%${qText}%`;
+        const like = `%${escapeLikePattern(qText)}%`;
         filters.push(
           or(
             ilike(purchases.providerName, like),
@@ -274,20 +282,11 @@ export function registerPurchaseCrudRoutes(app: Express) {
               SELECT 1 FROM purchase_items pi
               WHERE pi.purchase_id = ${purchases.id}
                 AND pi.tenant_id = ${tenantId}
-                AND (pi.product_name_snapshot ILIKE ${like} OR COALESCE(pi.product_code_snapshot, '') ILIKE ${like})
+                AND (COALESCE(pi.product_name_snapshot, '') ILIKE ${like} OR COALESCE(pi.product_code_snapshot, '') ILIKE ${like})
             )`
           )!
         );
       }
-
-      if (req.auth?.scope === "BRANCH" && req.auth.branchId) filters.push(eq(purchases.branchId, req.auth.branchId));
-
-      const limitNum = Number(q.limit ?? 30);
-      const offsetNum = Number(q.offset ?? 0);
-      if (!Number.isFinite(limitNum) || !Number.isFinite(offsetNum)) return res.status(400).json({ error: "Parámetros de paginado inválidos", code: "INVALID_PAGINATION" });
-
-      const limit = Math.min(200, Math.max(1, Math.trunc(limitNum)));
-      const offset = Math.max(0, Math.trunc(offsetNum));
 
       const where = and(...filters);
 
@@ -295,13 +294,12 @@ export function registerPurchaseCrudRoutes(app: Express) {
         db
           .select({
             id: purchases.id,
-            number: purchases.id,
-            createdAt: purchases.purchaseDate,
             supplierName: purchases.providerName,
             currency: purchases.currency,
-            total: purchases.totalAmount,
-            itemCount: sql<number>`(
-              SELECT COUNT(*)::int FROM purchase_items pi
+            totalAmount: sql<number>`COALESCE(${purchases.totalAmount}::numeric, 0)::float`,
+            createdAt: purchases.purchaseDate,
+            itemsCount: sql<number>`(
+              SELECT COUNT(pi.id)::int FROM purchase_items pi
               WHERE pi.purchase_id = ${purchases.id}
                 AND pi.tenant_id = ${tenantId}
             )`,
@@ -314,11 +312,32 @@ export function registerPurchaseCrudRoutes(app: Express) {
         db.select({ total: sql<number>`count(*)::int` }).from(purchases).where(where),
       ]);
 
-      return res.json({ data: rows, meta: { limit, offset, total: Number(totalRows[0]?.total || 0) } });
+      const items = (rows || []).map((r) => ({
+        id: Number(r.id),
+        supplierName: r.supplierName || null,
+        currency: r.currency,
+        totalAmount: Number(r.totalAmount || 0),
+        createdAt: r.createdAt,
+        itemsCount: Number(r.itemsCount || 0),
+      }));
+
+      return res.status(200).json({
+        items,
+        total: Number(totalRows[0]?.total || 0),
+      });
     } catch (err: any) {
-      console.error("[purchases] PURCHASE_LIST_ERROR", err);
+      console.error("[purchases] PURCHASE_LIST_ERROR", {
+        tenantId,
+        limit: req.query?.limit,
+        offset: req.query?.offset,
+        query: req.query,
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        stack: err?.stack,
+      });
       if (migrationMissingError(err)) return res.status(500).json({ error: "Faltan migraciones de compras, ejecutar migrations/*.sql", code: "MIGRATION_MISSING" });
-      return res.status(500).json({ error: "No se pudo listar compras", code: "PURCHASE_LIST_ERROR" });
+      return res.status(500).json({ error: "PURCHASES_LIST_FAILED", code: "PURCHASES_LIST_FAILED" });
     }
   });
 

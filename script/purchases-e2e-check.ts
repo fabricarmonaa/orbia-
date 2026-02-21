@@ -26,7 +26,7 @@ async function main() {
 
   const list = await req("GET", "/api/purchases?limit=30&offset=0", token);
   if (list.res.status !== 200) throw new Error(`list expected 200 got ${list.res.status}`);
-  const ids = (list.json?.data || []).map((r: any) => Number(r.id));
+  const ids = (list.json?.items || list.json?.data || []).map((r: any) => Number(r.id));
   if (!ids.includes(purchaseId)) throw new Error(`created purchase ${purchaseId} not found in list`);
 
   const detail = await req("GET", `/api/purchases/${purchaseId}`, token);

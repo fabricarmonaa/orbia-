@@ -15,12 +15,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 
 interface PurchaseRow {
   id: number;
-  number: number | string;
+  number?: number | string;
   supplierName?: string | null;
   total?: string | number | null;
+  totalAmount?: string | number | null;
   createdAt?: string;
   currency?: string | null;
   itemCount?: number;
+  itemsCount?: number;
 }
 
 interface ManualFormItem {
@@ -64,7 +66,8 @@ export default function PurchasesPage() {
       const res = await apiRequest("GET", "/api/purchases?limit=30&offset=0");
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "No se pudo listar compras");
-      setPurchases(json.data || []);
+      const rows = (json.items || json.data || []) as PurchaseRow[];
+      setPurchases(rows);
     } catch (err: any) {
       toast({ title: "Error", description: err?.message || "No se pudo listar compras", variant: "destructive" });
       setPurchases([]);
@@ -299,9 +302,9 @@ export default function PurchasesPage() {
                   <button key={p.id} className={`w-full border rounded p-2 text-sm text-left ${lastCreatedId === p.id ? "bg-primary/5 border-primary/40" : ""}`} onClick={() => openDetail(p.id)}>
                     <div className="flex justify-between gap-2">
                       <span>#{p.number || p.id} · {p.supplierName || "Sin proveedor"}</span>
-                      <span>${Number(p.total || 0).toLocaleString("es-AR")}</span>
+                      <span>${Number(p.totalAmount ?? p.total ?? 0).toLocaleString("es-AR")}</span>
                     </div>
-                    <div className="text-xs text-muted-foreground">{p.createdAt ? new Date(p.createdAt).toLocaleDateString("es-AR") : "-"} · {p.itemCount || 0} ítems</div>
+                    <div className="text-xs text-muted-foreground">{p.createdAt ? new Date(p.createdAt).toLocaleDateString("es-AR") : "-"} · {p.itemsCount ?? p.itemCount ?? 0} ítems</div>
                   </button>
                 ))}
               </CardContent>
