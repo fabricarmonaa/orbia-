@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
 import { usePlan } from "@/lib/plan";
@@ -63,6 +64,7 @@ type MessageTemplate = {
 
 export default function OrdersPage() {
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const { hasFeature } = usePlan();
   const [orders, setOrders] = useState<(Order & { statusName?: string; statusColor?: string })[]>([]);
   const [statuses, setStatuses] = useState<OrderStatus[]>([]);
@@ -212,6 +214,21 @@ export default function OrdersPage() {
     if (!win) {
       window.location.href = printUrl;
     }
+  }
+
+
+  function startSaleFromOrder(order: Order) {
+    const payload = {
+      orderId: order.id,
+      customerId: null,
+      customerDni: null,
+      customerName: order.customerName || "",
+      customerPhone: order.customerPhone || "",
+      requiresDelivery: Boolean(order.requiresDelivery),
+      branchId: order.branchId || null,
+    };
+    sessionStorage.setItem("pendingSaleFromOrder", JSON.stringify(payload));
+    setLocation("/app/pos");
   }
 
   async function generateTrackingLink(orderId: number) {
@@ -694,10 +711,16 @@ export default function OrdersPage() {
                       Copiar Link
                     </Button>
                   )}
-                  <Button variant="outline" size="sm" onClick={() => printOrder()}>
-                    <Printer className="w-4 h-4 mr-1" />
-                    Ticket cliente
-                  </Button>
+                  {(selectedOrder as any).saleId ? (
+                    <Button variant="outline" size="sm" onClick={() => printOrder()}>
+                      <Printer className="w-4 h-4 mr-1" />
+                      Ticket cliente
+                    </Button>
+                  ) : (
+                    <Button size="sm" onClick={() => startSaleFromOrder(selectedOrder)}>
+                      VENTA
+                    </Button>
+                  )}
                   {addonStatus.messaging_whatsapp && !!selectedOrder.customerPhone && messageTemplates.length > 0 && (
                     <Dialog open={whatsDialogOpen} onOpenChange={setWhatsDialogOpen}>
                       <DialogTrigger asChild>

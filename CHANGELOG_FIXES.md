@@ -1,6 +1,7 @@
 # CHANGELOG_FIXES
 
 ## Arreglos principales
+- Pedidos/POS: nuevo flujo “VENTA” desde pedido con pre-carga en POS (`pendingSaleFromOrder`) y vinculación de venta al pedido (`PATCH /api/orders/:id/link-sale`).
 - Productos: “Renovar stock” ahora se gestiona desde menú de acciones con modal claro (global o por sucursal), sin input de branch id manual.
 - Compras manual: formulario reh hecho sin dropdown de producto falso, con ítems por nombre/código/precio/cantidad y guardado por `POST /api/purchases/manual` actualizando stock por código cuando existe.
 - Dashboard: actividad destacada ahora usa estados configurables por tenant (Configuración → Estados), con listado compacto (máx. 5 por estado) y indicador "+N".

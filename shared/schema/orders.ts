@@ -14,6 +14,7 @@ import { z } from "zod";
 import { tenants } from "./tenants";
 import { branches } from "./branches";
 import { users } from "./users";
+import { sales } from "./sales";
 
 export const orderStatuses = pgTable(
   "order_statuses",
@@ -57,6 +58,8 @@ export const orders = pgTable(
     publicTrackingId: varchar("public_tracking_id", { length: 100 }).unique(),
     trackingExpiresAt: timestamp("tracking_expires_at"),
     trackingRevoked: boolean("tracking_revoked").default(false),
+    saleId: integer("sale_id").references(() => sales.id),
+    salePublicToken: varchar("sale_public_token", { length: 120 }),
     requiresDelivery: boolean("requires_delivery").notNull().default(false),
     deliveryAddress: text("delivery_address"),
     deliveryCity: varchar("delivery_city", { length: 200 }),

@@ -83,6 +83,7 @@ export class DatabaseStorage implements IStorage {
   createOrder = orderStorage.createOrder;
   updateOrderStatus = orderStorage.updateOrderStatus;
   updateOrderTracking = orderStorage.updateOrderTracking;
+  linkOrderSale = orderStorage.linkOrderSale;
   getNextOrderNumber = orderStorage.getNextOrderNumber;
   countOrders = orderStorage.countOrders;
   getOrderHistory = orderStorage.getOrderHistory;

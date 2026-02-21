@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,16 @@ interface CartItem {
   quantity: number;
 }
 
+interface PendingSaleFromOrder {
+  orderId: number;
+  customerId?: number | null;
+  customerDni?: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  requiresDelivery?: boolean;
+  branchId?: number | null;
+}
+
 export default function PosPage() {
   const { user } = useAuth();
   const { toast } = useToast();
@@ -40,8 +50,27 @@ export default function PosPage() {
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
   const [ticketData, setTicketData] = useState<TicketData | null>(null);
+  const [pendingSale, setPendingSale] = useState<PendingSaleFromOrder | null>(null);
+  const [pendingCustomerName, setPendingCustomerName] = useState("");
+  const [pendingCustomerDni, setPendingCustomerDni] = useState("");
+  const [pendingCustomerPhone, setPendingCustomerPhone] = useState("");
   const ticketSizeKey = "orbia_ticket_size_pref";
   const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
+
+
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("pendingSaleFromOrder");
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PendingSaleFromOrder;
+      setPendingSale(parsed);
+      setPendingCustomerName(parsed.customerName || "");
+      setPendingCustomerDni(parsed.customerDni || "");
+      setPendingCustomerPhone(parsed.customerPhone || "");
+    } catch {
+      setPendingSale(null);
+    }
+  }, []);
 
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.product.estimatedSalePrice ?? item.product.price) * item.quantity, 0), [cart]);
   const discountAmount = useMemo(() => {
@@ -83,16 +112,34 @@ export default function PosPage() {
 
   async function submitSale() {
     if (!cart.length) return;
+    const orderCustomerSummary = pendingSale
+      ? [pendingCustomerName, pendingCustomerDni ? `DNI:${pendingCustomerDni}` : "", pendingCustomerPhone ? `TEL:${pendingCustomerPhone}` : ""]
+          .filter(Boolean)
+          .join(" | ")
+      : "";
     const res = await apiRequest("POST", "/api/sales", {
-      branch_id: user?.branchId ?? null,
+      branch_id: pendingSale?.branchId ?? user?.branchId ?? null,
       items: cart.map((item) => ({ product_id: item.product.id, quantity: item.quantity })),
       discount: discountType === "NONE" ? null : { type: discountType, value: discountValue },
       surcharge: surchargeType === "NONE" ? null : { type: surchargeType, value: surchargeValue },
       payment_method: payment,
-      notes,
+      notes: [notes, pendingSale ? `PEDIDO_ORIGEN:${pendingSale.orderId}` : "", orderCustomerSummary].filter(Boolean).join(" | "),
     });
     const sale = await res.json();
     setLatestSale({ id: sale.sale_id, number: sale.sale_number, total: sale.total_amount });
+    if (pendingSale?.orderId) {
+      try {
+        await apiRequest("PATCH", `/api/orders/${pendingSale.orderId}/link-sale`, { saleId: sale.sale_id });
+        sessionStorage.removeItem("pendingSaleFromOrder");
+        setPendingSale(null);
+      } catch (err: any) {
+        toast({
+          title: "Venta registrada",
+          description: `No se pudo vincular con el pedido #${pendingSale.orderId}: ${err?.message || "error"}`,
+          variant: "destructive",
+        });
+      }
+    }
     toast({ title: "Venta registrada", description: sale.sale_number });
     const printRes = await apiRequest("POST", `/api/sales/${sale.sale_id}/print-data`);
     const printJson = await printRes.json();
@@ -106,6 +153,20 @@ export default function PosPage() {
       <Card>
         <CardHeader><CardTitle>Punto de Venta</CardTitle></CardHeader>
         <CardContent className="space-y-3">
+          {pendingSale && (
+            <Card className="border-primary/30 bg-primary/5">
+              <CardHeader><CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  <div><Label>Cliente</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
+                  <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
+                  <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
+                </div>
+                <div className="flex justify-end"><Button variant="outline" size="sm" onClick={() => setPendingSale({ ...pendingSale, customerName: pendingCustomerName, customerDni: pendingCustomerDni, customerPhone: pendingCustomerPhone })}>Confirmar cliente</Button></div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex gap-2">
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" />
             <Button onClick={searchProducts}>Buscar</Button>

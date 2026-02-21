@@ -53,6 +53,10 @@ const orderCommentSchema = z.object({
   isPublic: z.boolean().optional(),
 });
 
+const linkSaleSchema = z.object({
+  saleId: z.coerce.number().int().positive(),
+});
+
 export function registerOrderRoutes(app: Express) {
   app.get("/api/orders", tenantAuth, enforceBranchScope, async (req, res) => {
     try {
@@ -188,6 +192,29 @@ export function registerOrderRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+    }
+  });
+
+
+  app.patch("/api/orders/:id/link-sale", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(linkSaleSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = req.params.id as unknown as number;
+      const { saleId } = req.body as z.infer<typeof linkSaleSchema>;
+      const order = await storage.getOrderById(orderId, tenantId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a este pedido" });
+      }
+      const sale = await storage.getSaleById(saleId, tenantId);
+      if (!sale) return res.status(404).json({ error: "Venta no encontrada" });
+      if (req.auth!.scope === "BRANCH" && sale.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a esta venta" });
+      }
+      await storage.linkOrderSale(orderId, tenantId, saleId, (sale as any).publicToken || null);
+      return res.json({ ok: true, data: { orderId, saleId, salePublicToken: (sale as any).publicToken || null } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo vincular venta", code: "ORDER_LINK_SALE_ERROR" });
     }
   });
 
