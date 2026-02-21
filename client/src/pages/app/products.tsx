@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
@@ -119,14 +120,12 @@ export default function ProductsPage() {
   const [productDialog, setProductDialog] = useState(false);
   const [editDialog, setEditDialog] = useState(false);
   const [catDialog, setCatDialog] = useState(false);
-  const [stockDialog, setStockDialog] = useState(false);
-  const [stockByBranch, setStockByBranch] = useState<Array<{ branchId: number; branchName: string; stock: number }>>([]);
-  const [stockProduct, setStockProduct] = useState<ProductRow | null>(null);
-  const [adjustOpen, setAdjustOpen] = useState(false);
-  const [adjustBranchId, setAdjustBranchId] = useState("");
-  const [adjustQty, setAdjustQty] = useState("1");
-  const [adjustReason, setAdjustReason] = useState("");
-  const [adjustDirection, setAdjustDirection] = useState<"IN"|"OUT">("IN");
+  const [renewOpen, setRenewOpen] = useState(false);
+  const [renewProduct, setRenewProduct] = useState<ProductRow | null>(null);
+  const [renewStockMode, setRenewStockMode] = useState<StockMode>("global");
+  const [renewGlobalStock, setRenewGlobalStock] = useState("0");
+  const [renewByBranch, setRenewByBranch] = useState<Array<{ branchId: number; branchName: string; stock: string }>>([]);
+  const [tenantBranches, setTenantBranches] = useState<Array<{ id: number; name: string }>>([]);
   const [newCat, setNewCat] = useState("");
   const [newProduct, setNewProduct] = useState(emptyProduct);
   const [editProduct, setEditProduct] = useState<ProductRow | null>(null);
@@ -303,30 +302,50 @@ export default function ProductsPage() {
     }
   }
 
-  async function submitAdjustStock() {
-    if (!stockProduct) return;
-    await apiRequest("POST", "/api/stock/adjust", {
-      product_id: stockProduct.id,
-      branch_id: adjustBranchId ? Number(adjustBranchId) : null,
-      quantity: Number(adjustQty),
-      direction: adjustDirection,
-      reason: adjustReason || "Ajuste manual",
-    });
-    setAdjustOpen(false);
-    await openStockDialog(stockProduct);
-    await fetchProducts(filters);
+  async function openRenewStock(product: ProductRow) {
+    setRenewProduct(product);
+    setRenewGlobalStock(String(product.stockTotal ?? 0));
+    try {
+      const [stockRes, branchRes] = await Promise.all([
+        apiRequest("GET", `/api/products/${product.id}/stock`),
+        apiRequest("GET", "/api/branches").then((r) => r).catch(() => null),
+      ]);
+      const stockJson = await stockRes.json();
+      const stockMode = stockJson?.data?.stockMode === "by_branch" ? "by_branch" : "global";
+      setRenewStockMode(stockMode);
+      const byBranch = stockJson?.data?.stockByBranch || [];
+      setRenewByBranch(byBranch.map((x: any) => ({ branchId: x.branchId, branchName: x.branchName, stock: String(x.stock ?? 0) })));
+      if (branchRes) {
+        const branchJson = await branchRes.json();
+        const list = branchJson.data || [];
+        setTenantBranches(list);
+        if (!byBranch.length && list.length) {
+          setRenewByBranch(list.map((b: any) => ({ branchId: b.id, branchName: b.name, stock: "0" })));
+        }
+      } else {
+        setTenantBranches([]);
+      }
+    } catch {
+      setRenewStockMode(meta.stockMode);
+      setRenewByBranch([]);
+      setTenantBranches([]);
+    }
+    setRenewOpen(true);
   }
 
-  async function openStockDialog(product: ProductRow) {
-    setStockDialog(true);
-    setStockProduct(product);
-    try {
-      const res = await apiRequest("GET", `/api/products/${product.id}/stock`);
-      const data = await res.json();
-      setStockByBranch(data.data?.stockByBranch || []);
-    } catch {
-      setStockByBranch([]);
+  async function submitRenewStock() {
+    if (!renewProduct) return;
+    if (renewStockMode === "global") {
+      await apiRequest("PATCH", `/api/products/${renewProduct.id}/stock`, { mode: "global", stock: Number(renewGlobalStock || 0) });
+    } else {
+      await apiRequest("PATCH", `/api/products/${renewProduct.id}/stock`, {
+        mode: "by_branch",
+        branches: renewByBranch.map((b) => ({ branchId: b.branchId, stock: Number(b.stock || 0) })),
+      });
     }
+    setRenewOpen(false);
+    await fetchProducts(filters);
+    toast({ title: "Stock renovado" });
   }
 
   async function selectAllFiltered() {
@@ -617,9 +636,7 @@ export default function ProductsPage() {
                             {row.stockTotal <= Number(filters.lowStockThreshold || 5) && <Badge variant="outline">Bajo</Badge>}
                           </div>
                         ) : (
-                          <button className="text-left hover:underline" onClick={() => openStockDialog(row)}>
-                            <span className="inline-flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" /> {row.stockTotal}</span>
-                          </button>
+                          <span className="inline-flex items-center gap-1"><Warehouse className="h-3.5 w-3.5" /> {row.stockTotal}</span>
                         )}
                       </td>
                       <td className="p-2"><Badge variant={row.isActive ? "default" : "secondary"}>{row.isActive ? "Activo" : "Inactivo"}</Badge></td>
@@ -630,6 +647,7 @@ export default function ProductsPage() {
                             <DropdownMenuContent align="end">
                               <DropdownMenuItem onClick={() => openEdit(row)}><Pencil className="h-4 w-4 mr-2" />Editar</DropdownMenuItem>
                               <DropdownMenuItem onClick={() => toggleActive(row)}><Power className="h-4 w-4 mr-2" />{row.isActive ? "Desactivar" : "Activar"}</DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openRenewStock(row)}><Warehouse className="h-4 w-4 mr-2" />Renovar stock</DropdownMenuItem>
                               <DropdownMenuItem className="text-destructive" onClick={() => deleteProduct(row)}><Trash2 className="h-4 w-4 mr-2" />Eliminar</DropdownMenuItem>
                             </DropdownMenuContent>
                           </DropdownMenu>
@@ -666,43 +684,37 @@ export default function ProductsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={stockDialog} onOpenChange={setStockDialog}>
+      <Dialog open={renewOpen} onOpenChange={setRenewOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Stock por sucursal {stockProduct ? `- ${stockProduct.name}` : ""}</DialogTitle></DialogHeader>
-          <div className="flex justify-end">
-            <Button size="sm" onClick={() => setAdjustOpen(true)}>Ajustar stock</Button>
-          </div>
-          <div className="space-y-2">
-            {stockByBranch.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Sin detalle disponible.</p>
-            ) : stockByBranch.map((entry) => (
-              <div key={entry.branchId} className="flex items-center justify-between border rounded-md p-2">
-                <span>{entry.branchName}</span>
-                <Badge variant="outline">{entry.stock}</Badge>
+          <DialogHeader><DialogTitle>Renovar stock {renewProduct ? `- ${renewProduct.name}` : ""}</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            {meta.stockMode === "by_branch" ? (
+              <div className="flex items-center justify-between border rounded-md p-2">
+                <Label>Por sucursal</Label>
+                <Switch checked={renewStockMode === "by_branch"} onCheckedChange={(v) => setRenewStockMode(v ? "by_branch" : "global")} />
               </div>
-            ))}
+            ) : null}
+
+            {renewStockMode === "global" ? (
+              <div className="space-y-2">
+                <Label>Stock actual</Label>
+                <Input type="number" min={0} value={renewGlobalStock} onChange={(e) => setRenewGlobalStock(e.target.value)} />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {(renewByBranch.length ? renewByBranch : tenantBranches.map((b) => ({ branchId: b.id, branchName: b.name, stock: "0" }))).map((b) => (
+                  <div key={b.branchId} className="grid grid-cols-2 gap-2 items-center">
+                    <Label>{b.branchName}</Label>
+                    <Input type="number" min={0} value={b.stock} onChange={(e) => setRenewByBranch((prev) => prev.map((x) => x.branchId === b.branchId ? { ...x, stock: e.target.value } : x))} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <Button onClick={submitRenewStock}>Confirmar</Button>
           </div>
         </DialogContent>
       </Dialog>
-      <Dialog open={adjustOpen} onOpenChange={setAdjustOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Ajustar stock {stockProduct ? `- ${stockProduct.name}` : ""}</DialogTitle></DialogHeader>
-          <div className="space-y-2">
-            <Label>Sucursal (id o vacío central)</Label>
-            <Input value={adjustBranchId} onChange={(e) => setAdjustBranchId(e.target.value)} placeholder="Central si vacío" />
-            <Label>Dirección</Label>
-            <Select value={adjustDirection} onValueChange={(v: any) => setAdjustDirection(v)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent><SelectItem value="IN">IN</SelectItem><SelectItem value="OUT">OUT</SelectItem></SelectContent>
-            </Select>
-            <Label>Cantidad</Label>
-            <Input type="number" min={0.001} step={0.001} value={adjustQty} onChange={(e) => setAdjustQty(e.target.value)} />
-            <Label>Motivo</Label>
-            <Input value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="Motivo" />
-            <Button onClick={submitAdjustStock}>Confirmar ajuste</Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+
 
     </div>
   );

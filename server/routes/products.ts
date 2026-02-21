@@ -249,58 +249,67 @@ export function registerProductRoutes(app: Express) {
     requireFeature("products"),
     enforceBranchScope,
     validateBody(z.object({
-      branchId: z.coerce.number().int().positive().optional().nullable(),
-      stock: z.coerce.number().int().min(0),
+      mode: z.enum(["global", "by_branch"]),
+      stock: z.coerce.number().int().min(0).optional(),
+      branches: z.array(z.object({ branchId: z.coerce.number().int().positive(), stock: z.coerce.number().int().min(0) })).optional(),
       reason: sanitizeOptionalLong(200).nullable(),
     })),
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const productId = parseInt(req.params.id as string);
-      const { branchId, stock, reason } = req.body as { branchId?: number | null; stock: number; reason?: string | null };
-      if (stock === undefined) {
-        return res.status(400).json({ error: "stock es obligatorio" });
-      }
-      const stockNum = stock;
+      const { mode, stock, branches, reason } = req.body as { mode: "global" | "by_branch"; stock?: number; branches?: Array<{ branchId: number; stock: number }>; reason?: string | null };
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
       const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
       const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
-      const targetBranchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (branchId ?? null);
-      if (!hasBranches) {
-        await storage.updateProduct(productId, tenantId, { stock: stockNum });
-        return res.json({ data: { stockTotal: stockNum, stockMode: "global" } });
+
+      if (mode === "by_branch" && !hasBranches) {
+        return res.status(403).json({ error: "Tu plan no permite stock por sucursal", code: "FEATURE_BLOCKED" });
       }
-      if (!targetBranchId) {
-        return res.status(400).json({ error: "branchId es obligatorio", code: "BRANCH_REQUIRED" });
+
+      if (mode === "global") {
+        if (stock === undefined) return res.status(400).json({ error: "stock es obligatorio en modo global", code: "STOCK_REQUIRED" });
+        await storage.updateProduct(productId, tenantId, { stock });
+        return res.json({ data: { mode: "global", stockTotal: stock } });
       }
+
+      const branchPayload = branches || [];
+      if (!branchPayload.length) return res.status(400).json({ error: "branches es obligatorio en modo by_branch", code: "BRANCHES_REQUIRED" });
+      const tenantBranches = await storage.getBranches(tenantId);
+      const allowedIds = new Set(tenantBranches.map((b) => b.id));
+      for (const item of branchPayload) {
+        if (!allowedIds.has(item.branchId)) {
+          return res.status(400).json({ error: `Sucursal inválida: ${item.branchId}`, code: "BRANCH_INVALID" });
+        }
+      }
+
       const existing = await storage.getProductStockByBranch(productId, tenantId);
-      const prev = existing.find(s => s.branchId === targetBranchId);
-      const prevStock = prev?.stock || 0;
-      const delta = stockNum - prevStock;
+      const existingMap = new Map(existing.map((x) => [x.branchId, Number(x.stock || 0)]));
 
-      await storage.upsertProductStockByBranch({
-        tenantId,
-        productId,
-        branchId: targetBranchId,
-        stock: stockNum,
-      });
-
-      if (delta !== 0) {
-        await storage.createStockMovement({
-          tenantId,
-          productId,
-          branchId: targetBranchId,
-          quantity: String(Math.abs(delta)),
-          reason: reason || null,
-          userId: req.auth!.userId,
-        });
+      for (const item of branchPayload) {
+        const before = existingMap.get(item.branchId) || 0;
+        const after = Number(item.stock);
+        await storage.upsertProductStockByBranch({ tenantId, productId, branchId: item.branchId, stock: after });
+        const delta = after - before;
+        if (delta !== 0) {
+          await storage.createStockMovement({
+            tenantId,
+            productId,
+            branchId: item.branchId,
+            quantity: String(Math.abs(delta)),
+            reason: reason || "Renovación stock",
+            userId: req.auth!.userId,
+          });
+        }
       }
 
-      const updatedStock = await storage.getProductStockByBranch(productId, tenantId);
-      res.json({ data: updatedStock });
+      const updated = await storage.getProductStockByBranch(productId, tenantId);
+      const stockTotal = updated.reduce((acc, row) => acc + Number(row.stock || 0), 0);
+      await storage.updateProduct(productId, tenantId, { stock: stockTotal });
+      return res.json({ data: { mode: "by_branch", stockTotal, branches: updated } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
