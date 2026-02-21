@@ -296,8 +296,9 @@ export function registerPurchaseCrudRoutes(app: Express) {
             id: purchases.id,
             supplierName: purchases.providerName,
             currency: purchases.currency,
-            totalAmount: sql<number>`COALESCE(${purchases.totalAmount}::numeric, 0)::float`,
+            totalAmount: purchases.totalAmount,
             createdAt: purchases.purchaseDate,
+            createdByUserId: purchases.importedByUserId,
             itemsCount: sql<number>`(
               SELECT COUNT(pi.id)::int FROM purchase_items pi
               WHERE pi.purchase_id = ${purchases.id}
@@ -318,6 +319,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
         currency: r.currency,
         totalAmount: Number(r.totalAmount || 0),
         createdAt: r.createdAt,
+        createdByUserId: r.createdByUserId ? Number(r.createdByUserId) : null,
         itemsCount: Number(r.itemsCount || 0),
       }));
 
@@ -328,9 +330,14 @@ export function registerPurchaseCrudRoutes(app: Express) {
     } catch (err: any) {
       console.error("[purchases] PURCHASE_LIST_ERROR", {
         tenantId,
-        limit: req.query?.limit,
-        offset: req.query?.offset,
-        query: req.query,
+        parsed: {
+          limit: req.query?.limit,
+          offset: req.query?.offset,
+          q: req.query?.q,
+          provider: req.query?.provider,
+          from: req.query?.from,
+          to: req.query?.to,
+        },
         message: err?.message,
         code: err?.code,
         detail: err?.detail,
