@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { z } from "zod";
 import { and, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
 import { db } from "../db";
-import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
+import { tenantAuth, requireRoleAny, enforceBranchScope, getTenantPlan } from "../auth";
 import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
@@ -16,6 +16,21 @@ const createPurchaseSchema = z.object({
   notes: z.string().max(1000).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 1000) : null)),
   items: z.array(itemSchema).min(1),
 });
+
+const manualItemSchema = z.object({
+  productName: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200)),
+  productCode: z.string().min(1).max(120).transform((v) => sanitizeShortText(v, 120)),
+  unitPrice: z.coerce.number().positive(),
+  qty: z.coerce.number().positive(),
+});
+
+const manualPurchaseSchema = z.object({
+  supplierName: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200)),
+  currency: z.string().max(10).optional().default("ARS").transform((v) => sanitizeShortText(v, 10).toUpperCase()),
+  items: z.array(manualItemSchema).min(1),
+  notes: z.string().max(1000).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 1000) : null)),
+});
+
 const listQuery = z.object({ from: z.string().optional(), to: z.string().optional(), provider: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(30), offset: z.coerce.number().int().min(0).default(0) });
 
 export function registerPurchaseCrudRoutes(app: Express) {
@@ -92,6 +107,103 @@ export function registerPurchaseCrudRoutes(app: Express) {
     } catch (err: any) {
       if (err?.code === "PRODUCT_NOT_FOUND") return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND", productId: err.productId });
       return res.status(500).json({ error: "No se pudo crear la compra", code: "PURCHASE_CREATE_ERROR" });
+    }
+  });
+
+  app.post("/api/purchases/manual", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateBody(manualPurchaseSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const userId = req.auth!.userId;
+      const payload = req.body as z.infer<typeof manualPurchaseSchema>;
+      const plan = await getTenantPlan(tenantId);
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES);
+      const branchId = req.auth?.scope === "BRANCH" ? req.auth.branchId : null; // regla actual: central implícita para tenant scope
+      const updateGlobalStock = !hasBranches || branchId === null;
+
+      const created = await db.transaction(async (tx) => {
+        const [purchase] = await tx.insert(purchases).values({
+          tenantId,
+          branchId,
+          providerName: payload.supplierName,
+          purchaseDate: new Date(),
+          currency: payload.currency,
+          notes: payload.notes || null,
+          importedByUserId: userId,
+          totalAmount: "0",
+        }).returning();
+
+        let total = 0;
+        const updatedStock: Array<{ productId: number; code: string; before: number; after: number }> = [];
+
+        for (const item of payload.items) {
+          const qty = Number(item.qty);
+          const unitPrice = Number(item.unitPrice);
+          const lineTotal = qty * unitPrice;
+          total += lineTotal;
+
+          const [matchedProduct] = await tx
+            .select({ id: products.id, name: products.name, sku: products.sku, stock: products.stock })
+            .from(products)
+            .where(and(eq(products.tenantId, tenantId), ilike(products.sku, item.productCode)))
+            .limit(1);
+
+          await tx.insert(purchaseItems).values({
+            purchaseId: purchase.id,
+            tenantId,
+            branchId,
+            productId: matchedProduct?.id ?? null,
+            productCodeSnapshot: item.productCode,
+            productNameSnapshot: item.productName,
+            quantity: String(qty),
+            unitPrice: String(unitPrice),
+            lineTotal: String(lineTotal),
+            currency: payload.currency,
+          });
+
+          if (!matchedProduct) continue;
+
+          const [level] = await tx.select().from(stockLevels).where(and(eq(stockLevels.tenantId, tenantId), eq(stockLevels.productId, matchedProduct.id), branchId ? eq(stockLevels.branchId, branchId) : sql`${stockLevels.branchId} IS NULL`)).limit(1);
+          const before = Number(level?.quantity || 0);
+          const avgBefore = Number(level?.averageCost || 0);
+          const after = before + qty;
+          const avgAfter = after > 0 ? (((before * avgBefore) + (qty * unitPrice)) / after) : avgBefore;
+
+          if (level) {
+            await tx.update(stockLevels).set({ quantity: String(after), averageCost: String(avgAfter), updatedAt: new Date() }).where(eq(stockLevels.id, level.id));
+          } else {
+            await tx.insert(stockLevels).values({ tenantId, productId: matchedProduct.id, branchId, quantity: String(after), averageCost: String(avgAfter) });
+          }
+
+          if (updateGlobalStock) {
+            const currentGlobalStock = Number(matchedProduct.stock || 0);
+            await tx.update(products).set({ stock: currentGlobalStock + qty }).where(eq(products.id, matchedProduct.id));
+          }
+
+          await tx.insert(stockMovements).values({
+            tenantId,
+            productId: matchedProduct.id,
+            branchId,
+            movementType: "PURCHASE",
+            referenceId: purchase.id,
+            quantity: String(qty),
+            unitCost: String(unitPrice),
+            totalCost: String(lineTotal),
+            note: `Compra manual #${purchase.id}`,
+            reason: `Compra manual #${purchase.id}`,
+            createdByUserId: userId,
+            userId,
+          });
+
+          updatedStock.push({ productId: matchedProduct.id, code: item.productCode, before, after });
+        }
+
+        await tx.update(purchases).set({ totalAmount: String(total.toFixed(2)), updatedAt: new Date() }).where(eq(purchases.id, purchase.id));
+        return { purchaseId: purchase.id, updatedStock };
+      });
+
+      return res.status(201).json(created);
+    } catch (err: any) {
+      return res.status(500).json({ error: "No se pudo guardar compra manual", code: "PURCHASE_MANUAL_ERROR", details: err?.message });
     }
   });
 

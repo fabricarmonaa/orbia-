@@ -32,7 +32,7 @@ export const purchaseItems = pgTable(
     purchaseId: integer("purchase_id").references(() => purchases.id).notNull(),
     tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
     branchId: integer("branch_id").references(() => branches.id),
-    productId: integer("product_id").references(() => products.id).notNull(),
+    productId: integer("product_id").references(() => products.id),
     productCodeSnapshot: varchar("product_code_snapshot", { length: 120 }),
     productNameSnapshot: varchar("product_name_snapshot", { length: 200 }).notNull(),
     quantity: numeric("quantity", { precision: 12, scale: 3 }).notNull(),

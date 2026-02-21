@@ -1,6 +1,7 @@
 # CHANGELOG_FIXES
 
 ## Arreglos principales
+- Compras manual: formulario reh hecho sin dropdown de producto falso, con ítems por nombre/código/precio/cantidad y guardado por `POST /api/purchases/manual` actualizando stock por código cuando existe.
 - Dashboard: actividad destacada ahora usa estados configurables por tenant (Configuración → Estados), con listado compacto (máx. 5 por estado) y indicador "+N".
 - Pedidos: Ticket cliente migra a ruta imprimible real `/app/print/order/:id` para evitar `about:blank` y falsos bloqueos de popup.
 - Dashboard: se agregaron endpoints y UI para pedidos recientes (pendientes/en proceso) y actividad reciente.
@@ -22,6 +23,7 @@
 - `GET /api/customers`
 - `GET /api/customers/:id/history`
 - `GET /api/purchases`
+- `POST /api/purchases/manual`
 - `GET /api/sales`
 - `POST /api/sales`
 - `GET /api/products`
