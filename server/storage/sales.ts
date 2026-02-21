@@ -240,12 +240,31 @@ export const salesStorage = {
     });
   },
 
-  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; number?: string; customerId?: number; customerQuery?: string; limit: number; offset: number; sort?: "date_desc" | "date_asc" }) {
+  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; number?: string; customerId?: number; customerQuery?: string; limit: number; offset: number; sort?: "date_desc" | "date_asc" | "number_desc" | "number_asc" }) {
     const normalizedLimit = Math.min(200, Math.max(1, Number(filters.limit || 50)));
     const normalizedOffset = Math.max(0, Number(filters.offset || 0));
-    const sortDir = filters.sort === "date_asc" ? "ASC" : "DESC";
+    const sort = filters.sort || "date_desc";
 
-    const tryFromMV = async () => {
+    const orderByMV = {
+      date_desc: 'h.sale_datetime DESC, h.id DESC',
+      date_asc: 'h.sale_datetime ASC, h.id ASC',
+      number_desc: 'h.sale_number DESC, h.id DESC',
+      number_asc: 'h.sale_number ASC, h.id ASC',
+    }[sort];
+
+    const orderByTables = {
+      date_desc: sql`${sales.saleDatetime} DESC, ${sales.id} DESC`,
+      date_asc: sql`${sales.saleDatetime} ASC, ${sales.id} ASC`,
+      number_desc: sql`${sales.saleNumber} DESC, ${sales.id} DESC`,
+      number_asc: sql`${sales.saleNumber} ASC, ${sales.id} ASC`,
+    }[sort] ?? sql`${sales.saleDatetime} DESC, ${sales.id} DESC`;
+
+    const doesRelationExist = async (relationName: string) => {
+      const result = await pool.query(`SELECT to_regclass($1) AS reg`, [relationName]);
+      return Boolean(result.rows?.[0]?.reg);
+    };
+
+    const parseQueryForMV = () => {
       const whereSql: string[] = ["h.tenant_id = $1"];
       const params: any[] = [tenantId];
 
@@ -275,10 +294,27 @@ export const salesStorage = {
 
       const customerQuery = String(filters.customerQuery || "").trim();
       if (customerQuery.length > 0) {
-        params.push(`%${customerQuery}%`);
-        whereSql.push(`(COALESCE(h.customer_name, '') ILIKE $${params.length})`);
+        const numericQuery = Number(customerQuery);
+        if (Number.isFinite(numericQuery) && /^\d+$/.test(customerQuery)) {
+          params.push(customerQuery);
+          whereSql.push(`(COALESCE(h.sale_number, '') ILIKE '%' || $${params.length} || '%' OR CAST(h.id AS TEXT) = $${params.length})`);
+        } else {
+          params.push(`%${customerQuery}%`);
+          whereSql.push(`(
+            COALESCE(h.customer_name, '') ILIKE $${params.length}
+            OR COALESCE(h.sale_number, '') ILIKE $${params.length}
+          )`);
+        }
       }
 
+      return { whereSql, params };
+    };
+
+    const tryFromMV = async () => {
+      const exists = await doesRelationExist("public.mv_sales_history");
+      if (!exists) throw Object.assign(new Error("mv_sales_history_missing"), { code: "42P01" });
+
+      const { whereSql, params } = parseQueryForMV();
       const countQuery = `SELECT COUNT(*)::int AS total FROM mv_sales_history h WHERE ${whereSql.join(" AND ")}`;
       const countRows = await pool.query(countQuery, params);
 
@@ -290,6 +326,7 @@ export const salesStorage = {
           h.sale_datetime AS "createdAt",
           h.payment_method AS "paymentMethod",
           h.total_amount AS total,
+          h.currency,
           h.customer_id AS "customerId",
           h.customer_name AS "customerName",
           h.branch_id AS "branchId",
@@ -297,7 +334,7 @@ export const salesStorage = {
           h.public_token AS "publicToken"
         FROM mv_sales_history h
         WHERE ${whereSql.join(" AND ")}
-        ORDER BY h.sale_datetime ${sortDir}, h.id ${sortDir}
+        ORDER BY ${orderByMV}
         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
       `;
       const rows = await pool.query(listQuery, listParams);
@@ -309,6 +346,7 @@ export const salesStorage = {
           createdAt: row.createdAt,
           customer: row.customerId ? { id: Number(row.customerId), name: row.customerName ?? null, dni: null, phone: null } : (row.customerName ? { name: row.customerName, dni: null, phone: null } : null),
           paymentMethod: row.paymentMethod,
+          currency: row.currency || "ARS",
           subtotal: String(row.total ?? "0"),
           discount: "0",
           surcharge: "0",
@@ -335,11 +373,23 @@ export const salesStorage = {
       const customerQuery = String(filters.customerQuery || "").trim();
       if (customerQuery.length > 0) {
         const like = `%${customerQuery}%`;
-        conditions.push(or(
-          ilike(customers.name, like),
-          ilike(customers.doc, like),
-          ilike(customers.phone, like),
-        )!);
+        if (/^\d+$/.test(customerQuery)) {
+          conditions.push(or(
+            ilike(sales.saleNumber, like),
+            sql`CAST(${sales.id} AS TEXT) = ${customerQuery}`,
+            ilike(customers.doc, like),
+            ilike(customers.phone, like),
+            ilike(customers.name, like),
+            ilike(sales.notes, like),
+          )!);
+        } else {
+          conditions.push(or(
+            ilike(customers.name, like),
+            ilike(customers.doc, like),
+            ilike(customers.phone, like),
+            ilike(sales.notes, like),
+          )!);
+        }
       }
 
       const where = and(...conditions);
@@ -350,6 +400,7 @@ export const salesStorage = {
             number: sales.saleNumber,
             createdAt: sales.saleDatetime,
             paymentMethod: sales.paymentMethod,
+            currency: sales.currency,
             total: sales.totalAmount,
             customerId: customers.id,
             customerName: customers.name,
@@ -363,7 +414,7 @@ export const salesStorage = {
           .leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId)))
           .leftJoin(branches, and(eq(branches.id, sales.branchId), eq(branches.tenantId, sales.tenantId)))
           .where(where)
-          .orderBy(filters.sort === "date_asc" ? sql`${sales.saleDatetime} ASC` : sql`${sales.saleDatetime} DESC`)
+          .orderBy(orderByTables)
           .limit(normalizedLimit)
           .offset(normalizedOffset),
         db.select({ total: sql<number>`count(*)::int` }).from(sales).leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId))).where(where),
@@ -378,6 +429,7 @@ export const salesStorage = {
             ? { id: Number(row.customerId), name: row.customerName ?? null, dni: row.customerDni ?? null, phone: row.customerPhone ?? null }
             : null,
           paymentMethod: row.paymentMethod,
+          currency: row.currency || "ARS",
           subtotal: String(row.total ?? "0"),
           discount: "0",
           surcharge: "0",

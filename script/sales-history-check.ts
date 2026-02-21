@@ -24,6 +24,7 @@ async function main() {
   const checks = [
     `/api/sales?limit=5&offset=0&sort=date_desc`,
     `/api/sales?from=2026-02-20&to=2026-02-21&limit=50&offset=0&sort=date_desc`,
+    `/api/sales?q=1&limit=5&offset=0&sort=number_desc`,
   ];
 
   for (const path of checks) {

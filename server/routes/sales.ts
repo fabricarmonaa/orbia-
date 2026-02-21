@@ -48,7 +48,7 @@ const saleQuerySchema = z.object({
   customerQuery: z.string().optional(),
   limit: z.string().optional(),
   offset: z.string().optional(),
-  sort: z.enum(["date_desc", "date_asc"]).optional(),
+  sort: z.enum(["date_desc", "date_asc", "number_desc", "number_asc"]).optional(),
 });
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
@@ -185,7 +185,9 @@ export function registerSaleRoutes(app: Express) {
 
       const customerIdParsed = Number(raw.customerId ?? "");
       const customerId = Number.isFinite(customerIdParsed) && customerIdParsed > 0 ? customerIdParsed : undefined;
-      const sort = raw.sort === "date_asc" ? "date_asc" : "date_desc";
+      const sort = ["date_desc", "date_asc", "number_desc", "number_asc"].includes(String(raw.sort || ""))
+        ? (raw.sort as "date_desc" | "date_asc" | "number_desc" | "number_asc")
+        : "date_desc";
 
       const result = await storage.listSales(tenantId, {
         branchId,
@@ -202,8 +204,11 @@ export function registerSaleRoutes(app: Express) {
       const items = (result.data || []).map((row: any) => ({
         id: Number(row.id),
         number: row.number,
+        date: row.createdAt,
         createdAt: row.createdAt,
+        total: Number(row.total || 0),
         totalAmount: Number(row.total || 0),
+        currency: row.currency || "ARS",
         paymentMethod: row.paymentMethod,
         customerName: row.customer?.name || null,
         branchName: row.branch?.name || null,
@@ -226,6 +231,9 @@ export function registerSaleRoutes(app: Express) {
         limit: req.query?.limit,
         offset: req.query?.offset,
         sort: req.query?.sort,
+        q: req.query?.q,
+        number: req.query?.number,
+        customerQuery: req.query?.customerQuery,
         message: err?.message,
         code: err?.code,
         stack: err?.stack,
