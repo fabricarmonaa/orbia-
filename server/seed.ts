@@ -109,6 +109,7 @@ export async function seedDatabase() {
         tracking_retention_max_hours: 168,
       },
       priceMonthly: "9999",
+      allowCashiers: true,
       isActive: true,
     });
 
@@ -136,6 +137,7 @@ export async function seedDatabase() {
         tracking_retention_max_hours: 720,
       },
       priceMonthly: "19999",
+      allowCashiers: true,
       isActive: true,
     });
 

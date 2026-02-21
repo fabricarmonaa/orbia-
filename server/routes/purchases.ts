@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, lte, sql } from "drizzle-orm";
 import { db } from "../db";
 import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
 import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
@@ -96,15 +96,21 @@ export function registerPurchaseCrudRoutes(app: Express) {
   });
 
   app.get("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateQuery(listQuery), async (req, res) => {
-    const tenantId = req.auth!.tenantId!;
-    const q = req.query as any;
-    const filters = [eq(purchases.tenantId, tenantId)] as any[];
-    if (q.from) filters.push(gte(purchases.purchaseDate, new Date(q.from)));
-    if (q.to) filters.push(lte(purchases.purchaseDate, new Date(q.to)));
-    if (q.provider) filters.push(sql`${purchases.providerName} ILIKE ${`%${q.provider}%`}`);
-    if (req.auth?.scope === "BRANCH" && req.auth.branchId) filters.push(eq(purchases.branchId, req.auth.branchId));
-    const rows = await db.select().from(purchases).where(and(...filters)).orderBy(desc(purchases.purchaseDate)).limit(q.limit).offset(q.offset);
-    res.json({ data: rows });
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const q = req.query as any;
+      const filters = [eq(purchases.tenantId, tenantId)] as any[];
+      if (q.from) filters.push(gte(purchases.purchaseDate, new Date(q.from)));
+      if (q.to) filters.push(lte(purchases.purchaseDate, new Date(q.to)));
+      if (q.provider) filters.push(ilike(purchases.providerName, `%${sanitizeShortText(String(q.provider), 120)}%`));
+      if (req.auth?.scope === "BRANCH" && req.auth.branchId) filters.push(eq(purchases.branchId, req.auth.branchId));
+      const limit = Math.min(100, Math.max(1, Number(q.limit || 30)));
+      const offset = Math.max(0, Number(q.offset || 0));
+      const rows = await db.select().from(purchases).where(and(...filters)).orderBy(desc(purchases.purchaseDate)).limit(limit).offset(offset);
+      res.json({ data: rows });
+    } catch {
+      res.status(500).json({ error: "No se pudo listar compras", code: "PURCHASE_LIST_ERROR" });
+    }
   });
 
   app.get("/api/purchases/:id", tenantAuth, requireRoleAny(["admin", "staff"]), validateParams(z.object({ id: z.coerce.number().int().positive() })), async (req, res) => {

@@ -124,7 +124,8 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   const baseFeatures = (plan.featuresJson || {}) as PlanFeatures;
   const computedFeatures: PlanFeatures = {
     ...baseFeatures,
-    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS),
+    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
+    cashiers: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.cashiers) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
     MARGIN_PRICING: Boolean((plan as any).allowMarginPricing) || Boolean(baseFeatures.MARGIN_PRICING),
     EXCEL_IMPORT: Boolean((plan as any).allowExcelImport) || Boolean(baseFeatures.EXCEL_IMPORT),
     CUSTOM_TOS: Boolean((plan as any).allowCustomTos) || Boolean(baseFeatures.CUSTOM_TOS),

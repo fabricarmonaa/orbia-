@@ -70,7 +70,8 @@ export default function PurchasesPage() {
     <Tabs defaultValue="manual">
       <TabsList><TabsTrigger value="manual">Manual</TabsTrigger><TabsTrigger value="excel">Importar Excel</TabsTrigger></TabsList>
       <TabsContent value="manual">
-        <Card><CardHeader><CardTitle>Nueva compra manual</CardTitle></CardHeader><CardContent className="space-y-3">
+        <div className="grid lg:grid-cols-3 gap-4">
+        <Card className="lg:col-span-2"><CardHeader><CardTitle>Nueva compra manual</CardTitle></CardHeader><CardContent className="space-y-3">
           <div className="grid md:grid-cols-3 gap-2">
             <div><Label>Proveedor</Label><Input value={providerName} onChange={(e)=>setProviderName(e.target.value)} /></div>
             <div><Label>Moneda</Label><Input value={currency} onChange={(e)=>setCurrency(e.target.value.toUpperCase())} /></div>
@@ -87,6 +88,8 @@ export default function PurchasesPage() {
           <div className="flex justify-between"><Button variant="outline" onClick={()=>setRows((p)=>[...p,{productId:0,quantity:1,unitPrice:0}])}>Agregar ítem</Button><p className="font-semibold">Total: ${total.toLocaleString("es-AR")}</p></div>
           <Button onClick={saveManual}>Guardar compra</Button>
         </CardContent></Card>
+        <Card><CardHeader><CardTitle>Últimas compras</CardTitle></CardHeader><CardContent>{purchases.map((p)=> <div key={p.id} className="border rounded p-2 text-sm flex justify-between"><span>#{p.id} · {p.providerName || "Sin proveedor"}</span><span>${Number(p.totalAmount||0).toLocaleString("es-AR")}</span></div>)}</CardContent></Card>
+        </div>
       </TabsContent>
       <TabsContent value="excel">
         <Card><CardHeader><CardTitle>Importar Excel</CardTitle></CardHeader><CardContent className="space-y-2">
@@ -96,7 +99,5 @@ export default function PurchasesPage() {
         </CardContent></Card>
       </TabsContent>
     </Tabs>
-
-    <Card><CardHeader><CardTitle>Últimas compras</CardTitle></CardHeader><CardContent>{purchases.map((p)=><div key={p.id} className="border rounded p-2 text-sm flex justify-between"><span>#{p.id} · {p.providerName || "Sin proveedor"}</span><span>${Number(p.totalAmount||0).toLocaleString("es-AR")}</span></div>)}</CardContent></Card>
   </div>;
 }

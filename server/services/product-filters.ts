@@ -38,7 +38,7 @@ export const productFiltersSchema = z.object({
     z.enum(["asc", "desc"]).optional().default("desc")
   ),
   page: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).optional().default(1)),
-  pageSize: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(100).optional().default(20)),
+  pageSize: z.preprocess(emptyToUndefined, z.coerce.number().int().min(1).max(200).optional().default(20)),
 });
 
 export type ProductFilters = Omit<z.infer<typeof productFiltersSchema>, "state"> & { state?: "active" | "inactive" | "all" };

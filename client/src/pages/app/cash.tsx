@@ -13,9 +13,6 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ReportsDashboardPage from "./reports-dashboard";
-import ReportsSalesPage from "./reports-sales";
-import ReportsProductsPage from "./reports-products";
-import ReportsCustomersPage from "./reports-customers";
 import {
   Dialog,
   DialogContent,
@@ -213,12 +210,9 @@ export default function CashPage() {
 
   return (
     <Tabs defaultValue={activeTab} className="space-y-4">
-      <TabsList className="grid grid-cols-5 lg:w-[760px]">
+      <TabsList className="grid grid-cols-2 lg:w-[360px]">
         <TabsTrigger value="movements">Movimientos</TabsTrigger>
-        <TabsTrigger value="kpis">KPIs</TabsTrigger>
-        <TabsTrigger value="sales">Ventas</TabsTrigger>
-        <TabsTrigger value="products">Productos</TabsTrigger>
-        <TabsTrigger value="customers">Clientes</TabsTrigger>
+        <TabsTrigger value="kpis">Indicadores</TabsTrigger>
       </TabsList>
       <TabsContent value="movements">
     <div className="space-y-6">
@@ -656,10 +650,7 @@ export default function CashPage() {
       </div>
     </div>
       </TabsContent>
-      <TabsContent value="kpis"><ReportsDashboardPage /></TabsContent>
-      <TabsContent value="sales"><ReportsSalesPage /></TabsContent>
-      <TabsContent value="products"><ReportsProductsPage /></TabsContent>
-      <TabsContent value="customers"><ReportsCustomersPage /></TabsContent>
+      <TabsContent value="kpis"><div className="space-y-3"><h2 className="text-xl font-semibold">Indicador Clave Desempeño</h2><ReportsDashboardPage /></div></TabsContent>
     </Tabs>
   );
 }

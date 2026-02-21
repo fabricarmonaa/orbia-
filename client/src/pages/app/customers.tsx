@@ -15,6 +15,8 @@ export default function CustomersPage() {
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<any>(null);
   const [mapping, setMapping] = useState<Record<string, string>>({});
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [historyByCustomer, setHistoryByCustomer] = useState<Record<number, any[]>>({});
 
   async function load() {
     const res = await apiRequest("GET", `/api/customers?${new URLSearchParams({ q })}`);
@@ -23,6 +25,17 @@ export default function CustomersPage() {
   }
   useEffect(() => { load().catch(()=>{}); }, []);
 
+
+
+  async function toggleCustomer(id: number) {
+    if (expandedId === id) { setExpandedId(null); return; }
+    setExpandedId(id);
+    if (!historyByCustomer[id]) {
+      const res = await apiRequest("GET", `/api/customers/${id}/history?limit=10`);
+      const json = await res.json();
+      setHistoryByCustomer((prev) => ({ ...prev, [id]: json.items || [] }));
+    }
+  }
   async function createManual() {
     try {
       const res = await apiRequest("POST", "/api/customers", form);
@@ -79,6 +92,12 @@ export default function CustomersPage() {
       </TabsContent>
     </Tabs>
 
-    <Card><CardHeader><CardTitle>Listado</CardTitle></CardHeader><CardContent className="space-y-2"><div className="flex gap-2"><Input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Buscar"/><Button onClick={load}>Buscar</Button></div>{list.map((c)=><div key={c.id} className="border rounded p-2 text-sm"><div className="font-medium">{c.name}</div><div className="text-muted-foreground">{c.doc || '-'} · {c.phone || c.email || '-'}</div><div className="text-xs">Antigüedad: {new Date(c.createdAt).toLocaleDateString()}</div></div>)}</CardContent></Card>
+    <Card><CardHeader><CardTitle>Listado</CardTitle></CardHeader><CardContent className="space-y-2"><div className="flex gap-2"><Input value={q} onChange={(e)=>setQ(e.target.value)} placeholder="Buscar"/><Button onClick={load}>Buscar</Button></div>{list.map((c)=><div key={c.id} className="border rounded p-2 text-sm">
+<div className="cursor-pointer" onClick={()=>toggleCustomer(c.id)}><div className="font-medium">{c.name}</div><div className="text-muted-foreground">{c.doc || '-'} · {c.phone || c.email || '-'}</div><div className="text-xs">Antigüedad: {new Date(c.createdAt).toLocaleDateString()}</div></div>
+{expandedId===c.id && <div className="mt-2 border-t pt-2 space-y-1">
+<p className="text-xs font-medium text-muted-foreground">Historial de ventas</p>
+{(historyByCustomer[c.id]||[]).length ? (historyByCustomer[c.id]||[]).map((h:any)=> <div key={h.id} className="text-xs flex justify-between"><span>{h.saleNumber}</span><span>${Number(h.totalAmount||0).toLocaleString('es-AR')}</span></div>) : <p className="text-xs text-muted-foreground">Sin historial</p>}
+</div>}
+</div>)}</CardContent></Card>
   </div>;
 }

@@ -64,9 +64,19 @@ export default function PosPage() {
   }
 
   function addToCart(product: ProductRow) {
+    const available = Number(product.stockTotal ?? 0);
     setCart((prev) => {
       const existing = prev.find((row) => row.product.id === product.id);
-      if (existing) return prev.map((row) => (row.product.id === product.id ? { ...row, quantity: row.quantity + 1 } : row));
+      const nextQty = (existing?.quantity || 0) + 1;
+      if (available <= 0) {
+        toast({ title: "Sin stock", description: `${product.name} no tiene stock disponible`, variant: "destructive" });
+        return prev;
+      }
+      if (nextQty > available) {
+        toast({ title: "Stock insuficiente", description: `${product.name}: máximo ${available}`, variant: "destructive" });
+        return prev;
+      }
+      if (existing) return prev.map((row) => (row.product.id === product.id ? { ...row, quantity: nextQty } : row));
       return [...prev, { product, quantity: 1 }];
     });
   }
@@ -105,7 +115,7 @@ export default function PosPage() {
               <div key={product.id} className="border rounded p-2 flex justify-between items-center">
                 <div>
                   <p className="font-medium">{product.name}</p>
-                  <p className="text-xs text-muted-foreground">{product.sku || "Sin código"} · ${Number(product.estimatedSalePrice ?? product.price).toFixed(2)} {product.pricingMode === "MARGIN" ? "(auto)" : ""}</p>
+                  <p className="text-xs text-muted-foreground">{product.sku || "Sin código"} · Stock: {Number(product.stockTotal ?? 0)} · ${Number(product.estimatedSalePrice ?? product.price).toFixed(2)} {product.pricingMode === "MARGIN" ? "(auto)" : ""}</p>
                 </div>
                 <Button size="sm" onClick={() => addToCart(product)}>Agregar</Button>
               </div>
@@ -121,7 +131,7 @@ export default function PosPage() {
             <div key={row.product.id} className="flex items-center justify-between border rounded px-2 py-1">
               <div>
                 <p className="text-sm font-medium">{row.product.name}</p>
-                <p className="text-xs text-muted-foreground">${Number(row.product.estimatedSalePrice ?? row.product.price).toFixed(2)}</p>
+                <p className="text-xs text-muted-foreground">${Number(row.product.estimatedSalePrice ?? row.product.price).toFixed(2)} · Stock actual: {Number(row.product.stockTotal ?? 0)} · Stock post-venta: {Math.max(0, Number(row.product.stockTotal ?? 0) - row.quantity)}</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => setCart((prev) => prev.map((i) => i.product.id === row.product.id ? { ...i, quantity: Math.max(1, i.quantity - 1) } : i))}>-</Button>

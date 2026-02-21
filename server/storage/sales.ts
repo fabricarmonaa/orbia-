@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { db, pool } from "../db";
 import { and, count, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { calculateSaleTotals, round2, validateStock } from "../services/sales-calculation";
 import { resolveProductUnitPrice } from "../services/pricing";
@@ -12,6 +12,7 @@ import {
   products,
   saleItems,
   sales,
+  customers,
   tenantCounters,
   type InsertCashMovement,
 } from "@shared/schema";
@@ -239,7 +240,7 @@ export const salesStorage = {
     });
   },
 
-  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }) {
+  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }) {
     try {
       const where: string[] = ["tenant_id = $1"];
       const params: any[] = [tenantId];
@@ -247,15 +248,41 @@ export const salesStorage = {
       if (filters.from) { params.push(filters.from); where.push(`sale_datetime >= $${params.length}`); }
       if (filters.to) { params.push(filters.to); where.push(`sale_datetime <= $${params.length}`); }
       if (filters.q) { params.push(`%${filters.q}%`); where.push(`sale_number ILIKE $${params.length}`); }
-      const rows = await db.execute(sql.raw(`SELECT id, sale_number as "saleNumber", sale_datetime as "saleDatetime", total_amount as "totalAmount", payment_method as "paymentMethod", branch_id as "branchId" FROM mv_sales_history WHERE ${where.join(" AND ")} ORDER BY sale_datetime DESC LIMIT ${Number(filters.limit)} OFFSET ${Number(filters.offset)}`));
-      return (rows as any).rows || [];
+      if (filters.customer) {
+        const c = String(filters.customer).trim();
+        if (/^\d+$/.test(c)) { params.push(Number(c)); where.push(`customer_id = $${params.length}`); }
+        else { params.push(`%${c}%`); where.push(`COALESCE(customer_name,'') ILIKE $${params.length}`); }
+      }
+      params.push(Number(filters.limit));
+      params.push(Number(filters.offset));
+      const q = `SELECT id, sale_number as "saleNumber", sale_datetime as "saleDatetime", total_amount as "totalAmount", payment_method as "paymentMethod", branch_id as "branchId", customer_name as "customerName" FROM mv_sales_history WHERE ${where.join(" AND ")} ORDER BY sale_datetime DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
+      const rows = await pool.query(q, params);
+      return rows.rows || [];
     } catch {
-      const conditions = [eq(sales.tenantId, tenantId)];
+      const conditions = [eq(sales.tenantId, tenantId)] as any[];
       if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
       if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
       if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
       if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
-      return db.select().from(sales).where(and(...conditions)).orderBy(desc(sales.saleDatetime)).limit(filters.limit).offset(filters.offset);
+      const customerFilter = String(filters.customer || "").trim();
+      if (customerFilter && /^\d+$/.test(customerFilter)) conditions.push(eq(sales.customerId, Number(customerFilter)));
+      if (customerFilter && !/^\d+$/.test(customerFilter)) conditions.push(ilike(customers.name, `%${customerFilter}%`));
+      return db
+        .select({
+          id: sales.id,
+          saleNumber: sales.saleNumber,
+          saleDatetime: sales.saleDatetime,
+          totalAmount: sales.totalAmount,
+          paymentMethod: sales.paymentMethod,
+          branchId: sales.branchId,
+          customerName: customers.name,
+        })
+        .from(sales)
+        .leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId)))
+        .where(and(...conditions))
+        .orderBy(desc(sales.saleDatetime))
+        .limit(filters.limit)
+        .offset(filters.offset);
     }
   },
 

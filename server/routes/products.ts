@@ -107,8 +107,9 @@ export function registerProductRoutes(app: Express) {
   app.get("/api/products", tenantAuth, requireFeature("products"), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
       const filters = productFiltersSchema.parse(req.query);
       const { data, total } = await queryProductsByFilters(tenantId, hasBranches, filters);
 
@@ -171,8 +172,9 @@ export function registerProductRoutes(app: Express) {
     async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
       const payload = req.body as z.infer<typeof productInputSchema>;
 
       const statusCode = payload.statusCode ? normalizeStatusCode(payload.statusCode) : (await getDefaultStatus(tenantId, "PRODUCT"))?.code || "ACTIVE";
@@ -208,8 +210,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
 
       if (!hasBranches) {
         return res.json({
@@ -255,16 +258,23 @@ export function registerProductRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const productId = parseInt(req.params.id as string);
       const { branchId, stock, reason } = req.body as { branchId?: number | null; stock: number; reason?: string | null };
-      if (branchId === undefined || stock === undefined) {
-        return res.status(400).json({ error: "branchId y stock son obligatorios" });
+      if (stock === undefined) {
+        return res.status(400).json({ error: "stock es obligatorio" });
       }
       const stockNum = stock;
       const product = await storage.getProductById(productId, tenantId);
       if (!product) return res.status(404).json({ error: "Producto no encontrado" });
 
-      const targetBranchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : branchId;
+      const plan = await getTenantPlan(tenantId);
+      const branchCount = await storage.countBranchesByTenant(tenantId);
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
+      const targetBranchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : (branchId ?? null);
+      if (!hasBranches) {
+        await storage.updateProduct(productId, tenantId, { stock: stockNum });
+        return res.json({ data: { stockTotal: stockNum, stockMode: "global" } });
+      }
       if (!targetBranchId) {
-        return res.status(400).json({ error: "branchId es obligatorio" });
+        return res.status(400).json({ error: "branchId es obligatorio", code: "BRANCH_REQUIRED" });
       }
       const existing = await storage.getProductStockByBranch(productId, tenantId);
       const prev = existing.find(s => s.branchId === targetBranchId);
@@ -309,8 +319,9 @@ export function registerProductRoutes(app: Express) {
       const productId = parseInt(req.params.id as string);
       const existing = await storage.getProductById(productId, tenantId);
       if (!existing) return res.status(404).json({ error: "Producto no encontrado" });
+      const plan = await getTenantPlan(tenantId);
       const branchCount = await storage.countBranchesByTenant(tenantId);
-      const hasBranches = branchCount > 0;
+      const hasBranches = Boolean((plan?.features as any)?.branches || (plan?.features as any)?.BRANCHES) && branchCount > 0;
 
       const payload = req.body as z.infer<typeof productUpdateSchema>;
 

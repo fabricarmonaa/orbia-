@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { tenantAuth, requireRoleAny } from "../auth";
-import { customers } from "@shared/schema";
+import { customers, sales } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
@@ -48,10 +48,10 @@ export function registerCustomerRoutes(app: Express) {
       if (queryText) {
         const like = `%${escapeLikePattern(queryText)}%`;
         where.push(or(
-          sql`${customers.name} ILIKE ${like} ESCAPE '\'`,
-          sql`${customers.email} ILIKE ${like} ESCAPE '\'`,
-          sql`${customers.doc} ILIKE ${like} ESCAPE '\'`,
-          sql`${customers.phone} ILIKE ${like} ESCAPE '\'`
+          ilike(customers.name, like),
+          ilike(customers.email, like),
+          ilike(customers.doc, like),
+          ilike(customers.phone, like)
         )!);
       }
       const [items, totalRows] = await Promise.all([
@@ -83,4 +83,18 @@ export function registerCustomerRoutes(app: Express) {
     const [updated] = await db.update(customers).set({ ...payload, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
     return res.json({ data: updated });
   });
+
+
+  app.get("/api/customers/:id/history", tenantAuth, requireRoleAny(["admin", "staff"]), validateParams(z.object({ id: z.coerce.number().int().positive() })), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
+      const rows = await db.select({ id: sales.id, saleNumber: sales.saleNumber, saleDatetime: sales.saleDatetime, totalAmount: sales.totalAmount, paymentMethod: sales.paymentMethod }).from(sales).where(and(eq(sales.tenantId, tenantId), eq(sales.customerId, id))).orderBy(desc(sales.saleDatetime)).limit(limit);
+      return res.json({ items: rows });
+    } catch {
+      return res.status(500).json({ error: "No se pudo obtener historial", code: "CUSTOMER_HISTORY_ERROR" });
+    }
+  });
+
 }

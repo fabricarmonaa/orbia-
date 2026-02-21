@@ -1,6 +1,7 @@
 import { db } from "../db";
 import { eq, and, desc } from "drizzle-orm";
 import { auditLogs, type InsertAuditLog } from "@shared/schema";
+import { appendTenantEvent } from "../services/tenant-logger";
 
 export const auditStorage = {
     async createAuditLog(data: {
@@ -13,6 +14,7 @@ export const auditStorage = {
         metadata?: any;
     }) {
         const [log] = await db.insert(auditLogs).values(data).returning();
+        appendTenantEvent({ tenantId: data.tenantId, userId: data.userId, action: data.action, entityType: data.entityType, entityId: data.entityId, metadata: data.metadata, ts: log.createdAt?.toISOString?.() });
         return log;
     },
 

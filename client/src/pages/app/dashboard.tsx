@@ -12,6 +12,9 @@ import {
   ArrowDownRight,
 } from "lucide-react";
 
+interface DashboardRecentOrder { id:number; orderNumber?:number; customerName?:string; createdAt?:string; }
+interface DashboardActivity { ts:string; type:string; action:string; reference:string; }
+
 interface DashboardStats {
   totalOrders: number;
   openOrders: number;
@@ -27,6 +30,9 @@ export default function Dashboard() {
   const { plan } = usePlan();
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [pendingOrders, setPendingOrders] = useState<DashboardRecentOrder[]>([]);
+  const [inProgressOrders, setInProgressOrders] = useState<DashboardRecentOrder[]>([]);
+  const [activities, setActivities] = useState<DashboardActivity[]>([]);
 
   useEffect(() => {
     fetchStats();
@@ -34,9 +40,18 @@ export default function Dashboard() {
 
   async function fetchStats() {
     try {
-      const res = await apiRequest("GET", "/api/dashboard/stats");
+      const [res, recentRes, activityRes] = await Promise.all([
+        apiRequest("GET", "/api/dashboard/stats"),
+        apiRequest("GET", "/api/dashboard/recent-orders?limit=8"),
+        apiRequest("GET", "/api/dashboard/activity?limit=12"),
+      ]);
       const data = await res.json();
+      const recentData = await recentRes.json();
+      const activityData = await activityRes.json();
       setStats(data.data);
+      setPendingOrders(recentData.pending || []);
+      setInProgressOrders(recentData.inProgress || []);
+      setActivities(activityData.items || []);
     } catch {
       setStats({
         totalOrders: 0,
@@ -221,9 +236,22 @@ export default function Dashboard() {
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                Los pedidos recientes aparecerán aquí
-              </p>
+              <div className="space-y-3">
+                <div>
+                  <p className="text-xs uppercase text-muted-foreground">Pendientes</p>
+                  {(pendingOrders.length ? pendingOrders : []).map((o)=> <p key={`p-${o.id}`} className="text-sm">#{o.orderNumber || o.id} · {o.customerName || "Sin cliente"}</p>)}
+                  {!pendingOrders.length && <p className="text-sm text-muted-foreground">Sin pendientes</p>}
+                </div>
+                <div>
+                  <p className="text-xs uppercase text-muted-foreground">En proceso</p>
+                  {(inProgressOrders.length ? inProgressOrders : []).map((o)=> <p key={`i-${o.id}`} className="text-sm">#{o.orderNumber || o.id} · {o.customerName || "Sin cliente"}</p>)}
+                  {!inProgressOrders.length && <p className="text-sm text-muted-foreground">Sin pedidos en proceso</p>}
+                </div>
+                <div className="border-t pt-2">
+                  <p className="text-xs uppercase text-muted-foreground">Actividad reciente</p>
+                  {(activities.slice(0,5) || []).map((a,idx)=> <p key={idx} className="text-sm">{new Date(a.ts).toLocaleString()} · {a.type} · {a.reference}</p>)}
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>

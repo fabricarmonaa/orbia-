@@ -744,15 +744,9 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </Select>
       </div>
       {!marginMode ? (
-        <div className="grid grid-cols-2 gap-2">
-          <div className="space-y-2">
-            <Label>Precio</Label>
-            <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
-          </div>
-          <div className="space-y-2">
-            <Label>SKU</Label>
-            <Input value={value.sku} onChange={(e) => onChange({ ...value, sku: e.target.value })} placeholder="COD-123" />
-          </div>
+        <div className="space-y-2">
+          <Label>Precio</Label>
+          <Input type="number" min={0} step="0.01" required value={value.price} onChange={(e) => onChange({ ...value, price: e.target.value })} placeholder="0.00" />
         </div>
       ) : (
         <div className="space-y-2 border rounded-md p-3 bg-muted/30">
@@ -802,7 +796,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
           <Input type="number" min={0} value={value.stock} onChange={(e) => onChange({ ...value, stock: e.target.value })} placeholder="0" />
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal.</p>
+        <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal. Usá “Stock” del producto para ajustar por cada sucursal.</p>
       )}
       <Button type="submit" className="w-full">{submitText}</Button>
     </form>

@@ -138,13 +138,15 @@ export interface IStorage {
     currency: string;
     paymentMethod: string;
     notes: string | null;
+    customerId?: number | null;
+    hasBranchesFeature?: boolean;
     discountType: "NONE" | "PERCENT" | "FIXED";
     discountValue: number;
     surchargeType: "NONE" | "PERCENT" | "FIXED";
     surchargeValue: number;
     items: Array<{ productId: number; quantity: number; unitPrice?: number | null }>;
   }): Promise<{ sale: Sale }>;
-  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; limit: number; offset: number }): Promise<Sale[]>;
+  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }): Promise<Sale[]>;
   getSaleById(id: number, tenantId: number): Promise<Sale | undefined>;
   getSaleItems(id: number, tenantId: number): Promise<SaleItem[]>;
 

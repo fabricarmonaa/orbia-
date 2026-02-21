@@ -44,6 +44,7 @@ const saleQuerySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   q: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
+  customer: z.string().transform((value) => sanitizeShortText(value, 80)).optional(),
   limit: z.coerce.number().int().min(1).max(100).optional().default(20),
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
@@ -162,6 +163,7 @@ export function registerSaleRoutes(app: Express) {
         from: toDate(query.from),
         to: toDate(query.to),
         q: query.q,
+        customer: query.customer,
         limit: query.limit,
         offset: query.offset,
       });

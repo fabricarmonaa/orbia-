@@ -264,6 +264,47 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
+
+
+  app.get("/api/dashboard/recent-orders", tenantAuth, enforceBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
+      const [orders, statuses] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+        storage.getOrderStatuses(tenantId),
+      ]);
+      const byId = new Map(statuses.map((s:any) => [s.id, String(s.name || "").toUpperCase()]));
+      const pending = orders.filter((o:any) => ["PENDIENTE","PENDING"].includes(byId.get(o.statusId) || "")).slice(0, limit);
+      const inProgress = orders.filter((o:any) => ["EN PROCESO","EN_PROCESO","IN_PROGRESS"].includes(byId.get(o.statusId) || "")).slice(0, limit);
+      const recent = [...orders].sort((a:any,b:any)=>+new Date(b.createdAt)-+new Date(a.createdAt)).slice(0, limit);
+      return res.json({ pending, inProgress, recent });
+    } catch {
+      return res.status(500).json({ error: "No se pudo cargar pedidos recientes", code: "DASHBOARD_RECENT_ORDERS_ERROR" });
+    }
+  });
+
+  app.get("/api/dashboard/activity", tenantAuth, enforceBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
+      const [orders, salesRows, cashRows] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+        storage.listSales(tenantId, { branchId, limit, offset: 0 }),
+        storage.getCashMovements(tenantId),
+      ]);
+      const events = [
+        ...orders.slice(0, limit).map((o:any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
+        ...salesRows.slice(0, limit).map((s:any) => ({ ts: s.saleDatetime || s.createdAt, type: "SALE", action: "created", reference: s.saleNumber || `#${s.id}`, entityId: s.id })),
+        ...cashRows.slice(0, limit).map((c:any) => ({ ts: c.createdAt, type: "CASH", action: c.type, reference: c.description || c.category || `#${c.id}`, entityId: c.id })),
+      ].sort((a,b)=>+new Date(b.ts)-+new Date(a.ts)).slice(0, limit);
+      return res.json({ items: events });
+    } catch {
+      return res.status(500).json({ error: "No se pudo cargar actividad", code: "DASHBOARD_ACTIVITY_ERROR" });
+    }
+  });
   app.post(
     "/api/config/logo",
     tenantAuth,
