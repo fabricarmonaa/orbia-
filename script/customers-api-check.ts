@@ -23,8 +23,8 @@ async function main() {
   const uniqueDoc = `99${Date.now().toString().slice(-8)}`;
 
   let r = await req("GET", "/api/customers?q=&limit=100&offset=0&includeInactive=false", token);
-  if (r.res.status !== 200 || !Array.isArray(r.json?.data)) {
-    throw new Error(`list expected 200 + data[] got ${r.res.status}: ${JSON.stringify(r.json)}`);
+  if (r.res.status !== 200 || !Array.isArray(r.json?.items) || typeof r.json?.total !== "number") {
+    throw new Error(`list expected 200 + {items,total} got ${r.res.status}: ${JSON.stringify(r.json)}`);
   }
 
   r = await req("POST", "/api/customers", token, { name: `Cliente ${uniqueDoc}`, doc: uniqueDoc, phone: "223111222" });
@@ -34,7 +34,7 @@ async function main() {
 
   r = await req("GET", `/api/customers?q=${encodeURIComponent(uniqueDoc)}&limit=100&offset=0&includeInactive=false`, token);
   if (r.res.status !== 200) throw new Error(`list by doc expected 200 got ${r.res.status}`);
-  if (!Array.isArray(r.json?.data) || !r.json.data.some((c: any) => Number(c.id) === id)) {
+  if (!Array.isArray(r.json?.items) || !r.json.items.some((c: any) => Number(c.id) === id)) {
     throw new Error(`created customer not found in list: ${JSON.stringify(r.json)}`);
   }
 
@@ -48,7 +48,7 @@ async function main() {
   if (r.res.status !== 200) throw new Error(`reactivation expected 200 got ${r.res.status}: ${JSON.stringify(r.json)}`);
   if (r.json?.reactivated !== true) throw new Error(`reactivation flag missing: ${JSON.stringify(r.json)}`);
 
-  console.log("customers-api-check OK", { tenantId, customerId: id, uniqueDoc });
+  console.log("customers-api-check: OK", { tenantId, customerId: id, uniqueDoc });
 }
 
 main().catch((err) => {

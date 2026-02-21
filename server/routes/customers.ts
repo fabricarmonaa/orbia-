@@ -1,11 +1,12 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { and, count, desc, eq, ilike, or, sql } from "drizzle-orm";
-import { db } from "../db";
+import { and, count, desc, eq, or, sql } from "drizzle-orm";
+import { db, pool } from "../db";
 import { tenantAuth, requireRoleAny } from "../auth";
 import { customers, orderStatuses, orders, sales } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { getCustomersSchemaInfo } from "../services/schema-introspection";
 
 const customerSchema = z.object({
   name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200).trim()),
@@ -18,8 +19,8 @@ const customerSchema = z.object({
 
 const listQuery = z.object({
   q: z.string().optional().default(""),
-  includeInactive: z.coerce.boolean().optional().default(false),
-  limit: z.coerce.number().int().min(1).max(200).default(50),
+  includeInactive: z.union([z.string(), z.number(), z.boolean()]).optional().default(false),
+  limit: z.coerce.number().int().min(1).max(200).default(100),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
@@ -30,7 +31,7 @@ const activeSchema = z.object({ active: z.boolean() });
 function normalizeDoc(raw: string | null | undefined) {
   const value = sanitizeShortText(raw || "", 50).trim();
   if (!value) return null;
-  const normalized = value.replace(/[\s.-]+/g, "");
+  const normalized = value.replace(/[^\d]/g, "");
   return normalized || null;
 }
 
@@ -39,14 +40,30 @@ function normalizePhone(raw: string | null | undefined) {
   return value || null;
 }
 
-async function findByDoc(tenantId: number, doc: string | null) {
-  if (!doc) return null;
-  const [row] = await db
-    .select()
-    .from(customers)
-    .where(and(eq(customers.tenantId, tenantId), eq(customers.doc, doc)))
-    .limit(1);
-  return row || null;
+function parseIncludeInactive(raw: unknown) {
+  const value = String(raw ?? "false").trim().toLowerCase();
+  return ["true", "1", "yes", "si"].includes(value);
+}
+
+function mapCustomerRow(row: any) {
+  const computedActive = row?.is_active !== undefined
+    ? Boolean(row.is_active)
+    : row?.deleted_at !== undefined
+      ? row.deleted_at === null
+      : true;
+
+  return {
+    id: Number(row.id),
+    name: row.name || "",
+    dni: row.doc || null,
+    doc: row.doc || null,
+    phone: row.phone || null,
+    email: row.email || null,
+    address: row.address || null,
+    notes: row.notes || null,
+    createdAt: row.created_at || row.createdAt,
+    isActive: computedActive,
+  };
 }
 
 export function registerCustomerRoutes(app: Express) {
@@ -54,12 +71,15 @@ export function registerCustomerRoutes(app: Express) {
     let tenantId = 0;
     try {
       tenantId = req.auth!.tenantId!;
+      const info = await getCustomersSchemaInfo();
       const body = req.body as z.infer<typeof customerSchema>;
       const payload = {
-        ...body,
         name: sanitizeShortText(body.name, 200).trim(),
         doc: normalizeDoc(body.doc),
+        email: body.email ? sanitizeShortText(body.email.toLowerCase(), 255).trim() : null,
         phone: normalizePhone(body.phone),
+        address: body.address ? sanitizeLongText(body.address, 500).trim() : null,
+        notes: body.notes ? sanitizeLongText(body.notes, 1000).trim() : null,
       };
 
       if (!payload.name) {
@@ -69,34 +89,54 @@ export function registerCustomerRoutes(app: Express) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
       }
 
-      const existingByDoc = await findByDoc(tenantId, payload.doc);
-      if (existingByDoc?.isActive) {
-        return res.status(409).json({
-          error: "CUSTOMER_ALREADY_EXISTS",
-          message: "Ya existe un cliente con ese DNI.",
-          code: "CUSTOMER_ALREADY_EXISTS",
-        });
+      let existing: any = null;
+      let duplicateField: "dni" | "email" | null = null;
+
+      if (payload.doc) {
+        const r = await pool.query(`SELECT * FROM customers WHERE tenant_id = $1 AND doc = $2 LIMIT 1`, [tenantId, payload.doc]);
+        existing = r.rows?.[0] || null;
+        duplicateField = existing ? "dni" : null;
+      } else if (payload.email) {
+        const r = await pool.query(`SELECT * FROM customers WHERE tenant_id = $1 AND lower(email) = lower($2) LIMIT 1`, [tenantId, payload.email]);
+        existing = r.rows?.[0] || null;
+        duplicateField = existing ? "email" : null;
       }
 
-      if (existingByDoc && !existingByDoc.isActive) {
-        const [reactivated] = await db
-          .update(customers)
-          .set({
-            name: payload.name,
-            phone: payload.phone,
-            email: payload.email || null,
-            address: payload.address || null,
-            notes: payload.notes || null,
-            isActive: true,
-            updatedAt: new Date(),
-          })
-          .where(and(eq(customers.id, existingByDoc.id), eq(customers.tenantId, tenantId)))
-          .returning();
-        return res.status(200).json({ data: reactivated, reactivated: true });
+      const isExistingActive = existing
+        ? (info.hasIsActive ? Boolean(existing.is_active) : info.hasDeletedAt ? existing.deleted_at === null : true)
+        : false;
+
+      if (existing && isExistingActive) {
+        return res.status(409).json({ error: "CUSTOMER_ALREADY_EXISTS", field: duplicateField || "dni", code: "CUSTOMER_ALREADY_EXISTS" });
       }
 
-      const [created] = await db.insert(customers).values({ tenantId, ...payload, isActive: true }).returning();
-      return res.status(201).json({ data: created, reactivated: false });
+      if (existing && !isExistingActive) {
+        const setParts = ["name = $1", "phone = $2", "email = $3", "address = $4", "notes = $5", "updated_at = NOW()"];
+        const params: any[] = [payload.name, payload.phone, payload.email, payload.address, payload.notes];
+        if (info.hasIsActive) setParts.push(`is_active = true`);
+        if (info.hasDeletedAt) setParts.push(`deleted_at = NULL`);
+        params.push(existing.id, tenantId);
+
+        const q = `
+          UPDATE customers
+          SET ${setParts.join(", ")}
+          WHERE id = $${params.length - 1} AND tenant_id = $${params.length}
+          RETURNING *
+        `;
+        const upd = await pool.query(q, params);
+        return res.status(200).json({ data: mapCustomerRow(upd.rows[0]), reactivated: true });
+      }
+
+      const cols = ["tenant_id", "name", "doc", "email", "phone", "address", "notes"];
+      const vals: any[] = [tenantId, payload.name, payload.doc, payload.email, payload.phone, payload.address, payload.notes];
+      if (info.hasIsActive) {
+        cols.push("is_active");
+        vals.push(true);
+      }
+      const placeholders = cols.map((_, i) => `$${i + 1}`).join(", ");
+      const insertQ = `INSERT INTO customers (${cols.join(", ")}) VALUES (${placeholders}) RETURNING *`;
+      const created = await pool.query(insertQ, vals);
+      return res.status(201).json({ data: mapCustomerRow(created.rows[0]), reactivated: false });
     } catch (err: any) {
       console.error("[customers] CUSTOMER_CREATE_ERROR", {
         tenantId,
@@ -106,7 +146,7 @@ export function registerCustomerRoutes(app: Express) {
         detail: err?.detail,
         stack: err?.stack,
       });
-      return res.status(500).json({ error: "No se pudo crear cliente", code: "CUSTOMER_CREATE_ERROR" });
+      return res.status(500).json({ error: "CUSTOMER_CREATE_FAILED", code: "CUSTOMER_CREATE_FAILED" });
     }
   });
 
@@ -114,45 +154,88 @@ export function registerCustomerRoutes(app: Express) {
     let tenantId = 0;
     try {
       tenantId = req.auth!.tenantId!;
+      const info = await getCustomersSchemaInfo();
       const query = listQuery.parse(req.query || {});
-      const limit = Math.min(200, Math.max(1, Number(query.limit || 50)));
+      const limit = Math.min(200, Math.max(1, Number(query.limit || 100)));
       const offset = Math.max(0, Number(query.offset || 0));
-      const includeInactive = Boolean(query.includeInactive);
+      const includeInactive = parseIncludeInactive(query.includeInactive);
       const queryText = sanitizeShortText(String(query.q || ""), 80).trim();
 
-      let whereClause: any = and(eq(customers.tenantId, tenantId), includeInactive ? sql`true` : eq(customers.isActive, true));
-      if (queryText) {
-        const like = `%${escapeLikePattern(queryText)}%`;
-        whereClause = and(
-          whereClause,
-          or(
-            ilike(customers.name, like),
-            ilike(customers.doc, like),
-            ilike(customers.phone, like),
-            ilike(customers.email, like)
-          )
-        );
+      const whereParts = ["c.tenant_id = $1"];
+      const params: any[] = [tenantId];
+
+      if (!includeInactive) {
+        if (info.hasIsActive) whereParts.push("c.is_active = true");
+        else if (info.hasDeletedAt) whereParts.push("c.deleted_at IS NULL");
       }
 
-      const [items, totalRows] = await Promise.all([
-        db.select().from(customers).where(whereClause).orderBy(desc(customers.createdAt)).limit(limit).offset(offset),
-        db.select({ total: sql<number>`count(*)::int` }).from(customers).where(whereClause),
+      if (queryText.length > 0) {
+        const like = `%${escapeLikePattern(queryText)}%`;
+        params.push(like);
+        whereParts.push(`(
+          COALESCE(c.name, '') ILIKE $${params.length}
+          OR COALESCE(c.doc, '') ILIKE $${params.length}
+          OR COALESCE(c.phone, '') ILIKE $${params.length}
+          OR COALESCE(c.email, '') ILIKE $${params.length}
+        )`);
+      }
+
+      const baseWhere = whereParts.join(" AND ");
+
+      const listParams = [...params, limit, offset];
+      const activeExpr = info.hasIsActive
+        ? "c.is_active"
+        : info.hasDeletedAt
+          ? "(c.deleted_at IS NULL)"
+          : "true";
+
+      const listQ = `
+        SELECT
+          c.id,
+          c.name,
+          c.doc,
+          c.phone,
+          c.email,
+          c.address,
+          c.notes,
+          c.created_at,
+          ${activeExpr} AS is_active
+        FROM customers c
+        WHERE ${baseWhere}
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT $${listParams.length - 1}
+        OFFSET $${listParams.length}
+      `;
+      const totalQ = `SELECT COUNT(*)::int AS total FROM customers c WHERE ${baseWhere}`;
+
+      const [listRows, totalRows] = await Promise.all([
+        pool.query(listQ, listParams),
+        pool.query(totalQ, params),
       ]);
 
+      const items = (listRows.rows || []).map(mapCustomerRow);
+      const total = Number(totalRows.rows?.[0]?.total || 0);
       return res.status(200).json({
-        data: items || [],
-        meta: { limit, offset, total: Number(totalRows[0]?.total || 0) },
+        items,
+        total,
+        data: items,
+        meta: { limit, offset, total },
       });
     } catch (err: any) {
       console.error("[customers] CUSTOMER_LIST_ERROR", {
         tenantId,
-        query: req.query,
+        parsed: {
+          q: req.query?.q,
+          limit: req.query?.limit,
+          offset: req.query?.offset,
+          includeInactive: req.query?.includeInactive,
+        },
         message: err?.message,
         code: err?.code,
         detail: err?.detail,
         stack: err?.stack,
       });
-      return res.status(500).json({ error: "No se pudo listar clientes", code: "CUSTOMER_LIST_ERROR" });
+      return res.status(500).json({ error: "CUSTOMERS_LIST_FAILED", code: "CUSTOMERS_LIST_FAILED" });
     }
   });
 
@@ -174,7 +257,7 @@ export function registerCustomerRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const [row] = await db.select().from(customers).where(and(eq(customers.id, Number(req.params.id)), eq(customers.tenantId, tenantId))).limit(1);
       if (!row) return res.status(404).json({ error: "Cliente no encontrado", code: "CUSTOMER_NOT_FOUND" });
-      return res.json({ data: row });
+      return res.json({ data: mapCustomerRow(row) });
     } catch (err) {
       console.error("[customers] CUSTOMER_DETAIL_ERROR", err);
       return res.status(500).json({ error: "No se pudo obtener cliente", code: "CUSTOMER_DETAIL_ERROR" });
@@ -211,7 +294,7 @@ export function registerCustomerRoutes(app: Express) {
         if (dup) {
           return res.status(409).json({
             error: "CUSTOMER_ALREADY_EXISTS",
-            message: "Ya existe un cliente con ese DNI.",
+            field: "dni",
             code: "CUSTOMER_ALREADY_EXISTS",
           });
         }
@@ -222,7 +305,7 @@ export function registerCustomerRoutes(app: Express) {
         .set({ ...payload, updatedAt: new Date() })
         .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
         .returning();
-      return res.json({ data: updated });
+      return res.json({ data: mapCustomerRow(updated) });
     } catch (err: any) {
       console.error("[customers] CUSTOMER_UPDATE_ERROR", {
         tenantId,
@@ -242,10 +325,25 @@ export function registerCustomerRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
       const { active } = req.body as z.infer<typeof activeSchema>;
+      const info = await getCustomersSchemaInfo();
       const [existing] = await db.select().from(customers).where(and(eq(customers.id, id), eq(customers.tenantId, tenantId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Cliente no encontrado", code: "CUSTOMER_NOT_FOUND" });
-      const [updated] = await db.update(customers).set({ isActive: active, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
-      return res.json({ data: updated });
+
+      const setParts = ["updated_at = NOW()"];
+      if (info.hasIsActive) setParts.push(`is_active = ${active ? "true" : "false"}`);
+      if (info.hasDeletedAt) setParts.push(`deleted_at = ${active ? "NULL" : "NOW()"}`);
+      if (!info.hasIsActive && !info.hasDeletedAt) {
+        return res.status(400).json({ error: "No hay columna de estado activo en customers", code: "CUSTOMER_ACTIVE_COLUMN_MISSING" });
+      }
+
+      const q = `
+        UPDATE customers
+        SET ${setParts.join(", ")}
+        WHERE id = $1 AND tenant_id = $2
+        RETURNING *
+      `;
+      const result = await pool.query(q, [id, tenantId]);
+      return res.json({ data: mapCustomerRow(result.rows[0]) });
     } catch (err) {
       console.error("[customers] CUSTOMER_TOGGLE_ACTIVE_ERROR", err);
       return res.status(500).json({ error: "No se pudo actualizar estado", code: "CUSTOMER_TOGGLE_ACTIVE_ERROR" });
@@ -310,7 +408,7 @@ export function registerCustomerRoutes(app: Express) {
       }
 
       return res.json({
-        customer,
+        customer: mapCustomerRow(customer),
         sales: salesRows,
         orders: ordersRows,
       });
