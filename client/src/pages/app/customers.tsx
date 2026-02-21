@@ -139,22 +139,25 @@ export default function CustomersPage() {
         ? await apiRequest("PATCH", `/api/customers/${editingId}`, payload)
         : await apiRequest("POST", "/api/customers", payload);
       const json = await res.json();
-      if (!res.ok) {
-        if (json?.code === "CUSTOMER_DUPLICATE") {
-          throw new Error("Ya existe un cliente con ese DNI/email/teléfono");
-        }
-        throw new Error(json?.error || "No se pudo guardar");
-      }
 
       const createdOrUpdated = json.data as Customer;
-      toast({ title: editingId ? "Cliente actualizado" : "Cliente creado" });
+      if (!editingId && json?.reactivated) {
+        toast({ title: "Cliente reactivado" });
+      } else {
+        toast({ title: editingId ? "Cliente actualizado" : "Cliente creado" });
+      }
       setForm(emptyForm);
       setEditingId(null);
       await load();
       setSelectedId(createdOrUpdated.id);
       await loadHistory(createdOrUpdated.id);
     } catch (err: any) {
-      toast({ title: "Error", description: err?.message || "No se pudo guardar cliente", variant: "destructive" });
+      const message = String(err?.message || "");
+      if (message.toUpperCase().includes("CUSTOMER_ALREADY_EXISTS") || message.includes("Ya existe un cliente con ese DNI")) {
+        toast({ title: "Cliente duplicado", description: "Ya existe un cliente con ese DNI.", variant: "destructive" });
+      } else {
+        toast({ title: "Error", description: message || "No se pudo guardar cliente", variant: "destructive" });
+      }
     } finally {
       setSaving(false);
     }

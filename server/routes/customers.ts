@@ -8,18 +8,18 @@ import { validateBody, validateQuery, validateParams } from "../middleware/valid
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
 const customerSchema = z.object({
-  name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200)),
-  doc: z.string().max(50).optional().nullable().transform((v) => (v ? sanitizeShortText(v, 50) : null)),
-  email: z.string().email().max(255).optional().nullable().transform((v) => (v ? sanitizeShortText(v.toLowerCase(), 255) : null)),
-  phone: z.string().max(50).optional().nullable().transform((v) => (v ? sanitizeShortText(v, 50) : null)),
-  address: z.string().max(500).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 500) : null)),
-  notes: z.string().max(1000).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 1000) : null)),
+  name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200).trim()),
+  doc: z.string().max(50).optional().nullable(),
+  email: z.string().email().max(255).optional().nullable().transform((v) => (v ? sanitizeShortText(v.toLowerCase(), 255).trim() : null)),
+  phone: z.string().max(50).optional().nullable(),
+  address: z.string().max(500).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 500).trim() : null)),
+  notes: z.string().max(1000).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 1000).trim() : null)),
 });
 
 const listQuery = z.object({
-  q: z.string().optional(),
-  includeInactive: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  q: z.string().optional().default(""),
+  includeInactive: z.coerce.boolean().optional().default(false),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
   offset: z.coerce.number().int().min(0).default(0),
 });
 
@@ -27,61 +27,131 @@ const byDniQuery = z.object({ dni: z.string().min(1).max(50) });
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 const activeSchema = z.object({ active: z.boolean() });
 
-async function checkDuplicate(tenantId: number, data: z.infer<typeof customerSchema>, exceptId?: number) {
-  const ors = [] as any[];
-  if (data.doc) ors.push(eq(customers.doc, data.doc));
-  if (data.email) ors.push(eq(customers.email, data.email));
-  if (data.phone) ors.push(eq(customers.phone, data.phone));
-  if (!ors.length) return null;
-  const rows = await db.select().from(customers).where(and(eq(customers.tenantId, tenantId), or(...ors)!)).limit(20);
-  return rows.find((r) => r.id !== exceptId) || null;
+function normalizeDoc(raw: string | null | undefined) {
+  const value = sanitizeShortText(raw || "", 50).trim();
+  if (!value) return null;
+  const normalized = value.replace(/[\s.-]+/g, "");
+  return normalized || null;
+}
+
+function normalizePhone(raw: string | null | undefined) {
+  const value = sanitizeShortText(raw || "", 50).trim();
+  return value || null;
+}
+
+async function findByDoc(tenantId: number, doc: string | null) {
+  if (!doc) return null;
+  const [row] = await db
+    .select()
+    .from(customers)
+    .where(and(eq(customers.tenantId, tenantId), eq(customers.doc, doc)))
+    .limit(1);
+  return row || null;
 }
 
 export function registerCustomerRoutes(app: Express) {
   app.post("/api/customers", tenantAuth, requireRoleAny(["admin", "staff"]), validateBody(customerSchema), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
-      const payload = req.body as z.infer<typeof customerSchema>;
+      tenantId = req.auth!.tenantId!;
+      const body = req.body as z.infer<typeof customerSchema>;
+      const payload = {
+        ...body,
+        name: sanitizeShortText(body.name, 200).trim(),
+        doc: normalizeDoc(body.doc),
+        phone: normalizePhone(body.phone),
+      };
+
+      if (!payload.name) {
+        return res.status(400).json({ error: "Nombre requerido", code: "CUSTOMER_NAME_REQUIRED" });
+      }
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
       }
-      const dup = await checkDuplicate(tenantId, payload);
-      if (dup) return res.status(409).json({ error: "Cliente duplicado por doc/email/teléfono", code: "CUSTOMER_DUPLICATE" });
+
+      const existingByDoc = await findByDoc(tenantId, payload.doc);
+      if (existingByDoc?.isActive) {
+        return res.status(409).json({
+          error: "CUSTOMER_ALREADY_EXISTS",
+          message: "Ya existe un cliente con ese DNI.",
+          code: "CUSTOMER_ALREADY_EXISTS",
+        });
+      }
+
+      if (existingByDoc && !existingByDoc.isActive) {
+        const [reactivated] = await db
+          .update(customers)
+          .set({
+            name: payload.name,
+            phone: payload.phone,
+            email: payload.email || null,
+            address: payload.address || null,
+            notes: payload.notes || null,
+            isActive: true,
+            updatedAt: new Date(),
+          })
+          .where(and(eq(customers.id, existingByDoc.id), eq(customers.tenantId, tenantId)))
+          .returning();
+        return res.status(200).json({ data: reactivated, reactivated: true });
+      }
+
       const [created] = await db.insert(customers).values({ tenantId, ...payload, isActive: true }).returning();
-      return res.status(201).json({ data: created });
-    } catch (err) {
-      console.error("[customers] CUSTOMER_CREATE_ERROR", err);
+      return res.status(201).json({ data: created, reactivated: false });
+    } catch (err: any) {
+      console.error("[customers] CUSTOMER_CREATE_ERROR", {
+        tenantId,
+        body: { ...req.body, doc: String(req.body?.doc || "") },
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        stack: err?.stack,
+      });
       return res.status(500).json({ error: "No se pudo crear cliente", code: "CUSTOMER_CREATE_ERROR" });
     }
   });
 
   app.get("/api/customers", tenantAuth, requireRoleAny(["admin", "staff"]), validateQuery(listQuery), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
-      const q = req.query as any;
-      const rawLimit = Number(q.limit ?? 50);
-      const rawOffset = Number(q.offset ?? 0);
-      const limit = Number.isFinite(rawLimit) ? Math.min(100, Math.max(1, Math.trunc(rawLimit))) : 50;
-      const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : 0;
-      const includeInactive = String(req.query.includeInactive ?? "false") === "true";
-      const where = [eq(customers.tenantId, tenantId)] as any[];
-      if (!includeInactive) where.push(eq(customers.isActive, true));
+      tenantId = req.auth!.tenantId!;
+      const query = listQuery.parse(req.query || {});
+      const limit = Math.min(200, Math.max(1, Number(query.limit || 50)));
+      const offset = Math.max(0, Number(query.offset || 0));
+      const includeInactive = Boolean(query.includeInactive);
+      const queryText = sanitizeShortText(String(query.q || ""), 80).trim();
 
-      const qSearch = String(req.query.q ?? "").trim();
-      const queryText = sanitizeShortText(qSearch, 80).trim();
-      if (queryText.length > 0) {
+      let whereClause: any = and(eq(customers.tenantId, tenantId), includeInactive ? sql`true` : eq(customers.isActive, true));
+      if (queryText) {
         const like = `%${escapeLikePattern(queryText)}%`;
-        where.push(or(ilike(customers.name, like), ilike(customers.email, like), ilike(customers.doc, like), ilike(customers.phone, like))!);
+        whereClause = and(
+          whereClause,
+          or(
+            ilike(customers.name, like),
+            ilike(customers.doc, like),
+            ilike(customers.phone, like),
+            ilike(customers.email, like)
+          )
+        );
       }
 
       const [items, totalRows] = await Promise.all([
-        db.select().from(customers).where(and(...where)).orderBy(desc(customers.createdAt)).limit(limit).offset(offset),
-        db.select({ total: sql<number>`count(*)::int` }).from(customers).where(and(...where)),
+        db.select().from(customers).where(whereClause).orderBy(desc(customers.createdAt)).limit(limit).offset(offset),
+        db.select({ total: sql<number>`count(*)::int` }).from(customers).where(whereClause),
       ]);
-      const total = Number(totalRows[0]?.total || 0);
-      return res.json({ data: items, meta: { limit, offset, total } });
-    } catch (err) {
-      console.error("[customers] CUSTOMER_LIST_ERROR", err);
+
+      return res.status(200).json({
+        data: items || [],
+        meta: { limit, offset, total: Number(totalRows[0]?.total || 0) },
+      });
+    } catch (err: any) {
+      console.error("[customers] CUSTOMER_LIST_ERROR", {
+        tenantId,
+        query: req.query,
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        stack: err?.stack,
+      });
       return res.status(500).json({ error: "No se pudo listar clientes", code: "CUSTOMER_LIST_ERROR" });
     }
   });
@@ -89,7 +159,8 @@ export function registerCustomerRoutes(app: Express) {
   app.get("/api/customers/by-dni", tenantAuth, requireRoleAny(["admin", "staff"]), validateQuery(byDniQuery), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      const dni = sanitizeShortText(String(req.query.dni || ""), 50).trim();
+      const dni = normalizeDoc(String(req.query.dni || ""));
+      if (!dni) return res.json({ data: null });
       const [row] = await db.select().from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.doc, dni))).limit(1);
       return res.json({ data: row || null });
     } catch (err) {
@@ -111,22 +182,57 @@ export function registerCustomerRoutes(app: Express) {
   });
 
   app.patch("/api/customers/:id", tenantAuth, requireRoleAny(["admin", "staff"]), validateParams(idParamSchema), validateBody(customerSchema.partial()), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
+      tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
-      const payload = req.body as Partial<z.infer<typeof customerSchema>>;
+      const body = req.body as Partial<z.infer<typeof customerSchema>>;
+      const payload = {
+        ...body,
+        ...(body.name !== undefined ? { name: sanitizeShortText(String(body.name || ""), 200).trim() } : {}),
+        ...(body.doc !== undefined ? { doc: normalizeDoc(body.doc) } : {}),
+        ...(body.phone !== undefined ? { phone: normalizePhone(body.phone) } : {}),
+      };
+
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
       }
+
       const [existing] = await db.select().from(customers).where(and(eq(customers.id, id), eq(customers.tenantId, tenantId))).limit(1);
       if (!existing) return res.status(404).json({ error: "Cliente no encontrado", code: "CUSTOMER_NOT_FOUND" });
-      const merged = { ...existing, ...payload } as any;
-      const dup = await checkDuplicate(tenantId, merged, id);
-      if (dup) return res.status(409).json({ error: "Cliente duplicado por doc/email/teléfono", code: "CUSTOMER_DUPLICATE" });
-      const [updated] = await db.update(customers).set({ ...payload, updatedAt: new Date() }).where(eq(customers.id, id)).returning();
+
+      const nextDoc = payload.doc !== undefined ? payload.doc : existing.doc;
+      if (nextDoc) {
+        const [dup] = await db
+          .select()
+          .from(customers)
+          .where(and(eq(customers.tenantId, tenantId), eq(customers.doc, nextDoc), sql`${customers.id} <> ${id}`))
+          .limit(1);
+        if (dup) {
+          return res.status(409).json({
+            error: "CUSTOMER_ALREADY_EXISTS",
+            message: "Ya existe un cliente con ese DNI.",
+            code: "CUSTOMER_ALREADY_EXISTS",
+          });
+        }
+      }
+
+      const [updated] = await db
+        .update(customers)
+        .set({ ...payload, updatedAt: new Date() })
+        .where(and(eq(customers.id, id), eq(customers.tenantId, tenantId)))
+        .returning();
       return res.json({ data: updated });
-    } catch (err) {
-      console.error("[customers] CUSTOMER_UPDATE_ERROR", err);
+    } catch (err: any) {
+      console.error("[customers] CUSTOMER_UPDATE_ERROR", {
+        tenantId,
+        customerId: req.params.id,
+        body: req.body,
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        stack: err?.stack,
+      });
       return res.status(500).json({ error: "No se pudo actualizar cliente", code: "CUSTOMER_UPDATE_ERROR" });
     }
   });
@@ -192,7 +298,7 @@ export function registerCustomerRoutes(app: Express) {
               or(
                 customer.phone ? eq(orders.customerPhone, customer.phone) : sql`false`,
                 eq(orders.customerName, customer.name)
-              )!
+              )
             )
           )
           .orderBy(desc(orders.createdAt))

@@ -24,7 +24,8 @@
     "check:stock-purchase": "tsx script/stock-purchase-integration-check.ts",
     "check:sales-history": "tsx script/sales-history-check.ts",
     "check:addons": "tsx script/addons-check.ts",
-    "check:barcode-scanner": "tsx script/barcode-scanner-check.ts"
+    "check:barcode-scanner": "tsx script/barcode-scanner-check.ts",
+    "check:customers-api": "tsx script/customers-api-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
