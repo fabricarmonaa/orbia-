@@ -22,6 +22,7 @@ import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
+import SalePrintPage from "./sale-print";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -94,6 +95,7 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
+              <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
                             {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/sales">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}

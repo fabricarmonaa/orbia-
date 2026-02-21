@@ -27,6 +27,7 @@ export const tenantAddons = pgTable(
     enabled: boolean("enabled").notNull().default(false),
     enabledById: integer("enabled_by_id").references(() => users.id),
     enabledAt: timestamp("enabled_at"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     index("idx_tenant_addons_tenant").on(table.tenantId),

@@ -54,7 +54,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBranding } from "@/context/BrandingContext";
 import { parseApiError } from "@/lib/api-errors";
-import type { Tenant, Plan, TenantAddon } from "@shared/schema";
+import type { Tenant, Plan } from "@shared/schema";
 
 function getSubscriptionStatus(tenant: Tenant): {
   label: string;
@@ -254,9 +254,8 @@ export default function OwnerDashboard() {
             const addonsRes = await apiRequest("GET", `/api/super/tenants/${t.id}/addons`);
             const addonsData = await addonsRes.json();
             const map: Record<string, boolean> = {};
-            (addonsData.data || []).forEach((a: TenantAddon) => {
-              map[a.addonKey] = a.enabled;
-            });
+            const addons = addonsData?.addons || {};
+            for (const [k, v] of Object.entries(addons)) map[k] = Boolean(v);
             addonMap[t.id] = map;
           } catch {
             addonMap[t.id] = {};
@@ -355,7 +354,7 @@ export default function OwnerDashboard() {
     const key = `${tenantId}-${addonKey}`;
     setTogglingAddon(key);
     try {
-      await apiRequest("POST", `/api/super/tenants/${tenantId}/addons`, { addonKey, enabled });
+      await apiRequest("PUT", `/api/super/tenants/${tenantId}/addons`, { addons: { [addonKey]: enabled } });
       setAddonStatus((prev) => ({
         ...prev,
         [tenantId]: { ...prev[tenantId], [addonKey]: enabled },
@@ -1110,6 +1109,15 @@ export default function OwnerDashboard() {
                                 disabled={togglingAddon === `${tenant.id}-messaging_whatsapp`}
                                 onCheckedChange={(checked) => toggleAddon(tenant.id, "messaging_whatsapp", checked)}
                                 data-testid={`switch-messaging-addon-${tenant.id}`}
+                              />
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs text-muted-foreground whitespace-nowrap">Lector códigos</Label>
+                              <Switch
+                                checked={!!addonStatus[tenant.id]?.barcode_scanner}
+                                disabled={togglingAddon === `${tenant.id}-barcode_scanner`}
+                                onCheckedChange={(checked) => toggleAddon(tenant.id, "barcode_scanner", checked)}
+                                data-testid={`switch-barcode-addon-${tenant.id}`}
                               />
                             </div>
                             <Select

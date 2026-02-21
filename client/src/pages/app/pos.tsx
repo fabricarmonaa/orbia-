@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { useLocation } from "wouter";
 import { apiRequest, useAuth } from "@/lib/auth";
+import { fetchAddons } from "@/lib/addons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { printTicket, type TicketData, type TicketSize } from "@/components/sales/ticket-print";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 
@@ -40,6 +42,7 @@ interface PendingSaleFromOrder {
 
 export default function PosPage() {
   const { user } = useAuth();
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [products, setProducts] = useState<ProductRow[]>([]);
@@ -51,21 +54,18 @@ export default function PosPage() {
   const [payment, setPayment] = useState("EFECTIVO");
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
-  const [ticketData, setTicketData] = useState<TicketData | null>(null);
   const [pendingSale, setPendingSale] = useState<PendingSaleFromOrder | null>(null);
   const [pendingCustomerName, setPendingCustomerName] = useState("");
   const [pendingCustomerDni, setPendingCustomerDni] = useState("");
   const [pendingCustomerPhone, setPendingCustomerPhone] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<{ id: number; name: string; doc?: string | null; phone?: string | null } | null>(null);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
+  const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
-  const ticketSizeKey = "orbia_ticket_size_pref";
-  const [ticketSize, setTicketSize] = useState<TicketSize>(() => (localStorage.getItem(ticketSizeKey) as TicketSize) || "80mm");
-
-
   useEffect(() => {
-    apiRequest("GET", "/api/addons/status")
-      .then((r) => r.json())
-      .then((d) => setAddonStatus(d.data || {}))
+    fetchAddons()
+      .then((d) => setAddonStatus(d || {}))
       .catch(() => setAddonStatus({}));
 
     try {
@@ -76,6 +76,9 @@ export default function PosPage() {
       setPendingCustomerName(parsed.customerName || "");
       setPendingCustomerDni(parsed.customerDni || "");
       setPendingCustomerPhone(parsed.customerPhone || "");
+      if (parsed.customerId) {
+        setSelectedCustomer({ id: parsed.customerId, name: parsed.customerName || "Cliente", doc: parsed.customerDni || null, phone: parsed.customerPhone || null });
+      }
     } catch {
       setPendingSale(null);
     }
@@ -140,6 +143,75 @@ export default function PosPage() {
     }
   }
 
+  async function confirmPendingCustomer() {
+    if (!pendingSale) return;
+    const dni = pendingCustomerDni.trim();
+    if (!dni) {
+      toast({ title: "Cliente sin DNI", description: "Podés continuar la venta sin cliente asociado." });
+      setSelectedCustomer(null);
+      setPendingSale({ ...pendingSale, customerName: pendingCustomerName, customerDni: "", customerPhone: pendingCustomerPhone, customerId: null });
+      return;
+    }
+
+    try {
+      const byDniRes = await apiRequest("GET", `/api/customers/by-dni?dni=${encodeURIComponent(dni)}`);
+      const byDniJson = await byDniRes.json();
+      const exact = byDniJson?.data || null;
+      if (exact) {
+        setSelectedCustomer({ id: exact.id, name: exact.name, doc: exact.doc || null, phone: exact.phone || null });
+        setPendingCustomerName(exact.name || pendingCustomerName);
+        setPendingCustomerPhone(exact.phone || pendingCustomerPhone);
+        setPendingSale({ ...pendingSale, customerId: exact.id, customerName: exact.name || pendingCustomerName, customerDni: exact.doc || dni, customerPhone: exact.phone || pendingCustomerPhone });
+        toast({ title: "Cliente confirmado", description: `${exact.name}` });
+        return;
+      }
+      setQuickCreateOpen(true);
+    } catch (err: any) {
+      toast({ title: "No se pudo validar cliente", description: err?.message || "Error de búsqueda", variant: "destructive" });
+    }
+  }
+
+  async function quickCreateCustomer() {
+    const name = pendingCustomerName.trim();
+    const dni = pendingCustomerDni.trim();
+    if (!name) {
+      toast({ title: "Nombre requerido", variant: "destructive" });
+      return;
+    }
+    if (!dni) {
+      toast({ title: "DNI requerido", variant: "destructive" });
+      return;
+    }
+
+    setCreatingCustomer(true);
+    try {
+      const res = await apiRequest("POST", "/api/customers", {
+        name,
+        doc: dni,
+        phone: pendingCustomerPhone.trim() || null,
+      });
+      const json = await res.json();
+      if (!res.ok || !json?.data) {
+        throw new Error(json?.error || "No se pudo crear cliente");
+      }
+      const created = json.data;
+      setSelectedCustomer({ id: created.id, name: created.name, doc: created.doc || dni, phone: created.phone || pendingCustomerPhone || null });
+      setPendingSale((prev) => prev ? ({ ...prev, customerId: created.id, customerName: created.name, customerDni: created.doc || dni, customerPhone: created.phone || pendingCustomerPhone || null }) : prev);
+      setQuickCreateOpen(false);
+      toast({ title: "Cliente creado y confirmado", description: created.name });
+    } catch (err: any) {
+      toast({ title: "No se pudo crear cliente", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setCreatingCustomer(false);
+    }
+  }
+
+  function openSalePrint(saleId: number) {
+    const url = `/app/print/sale/${saleId}?autoprint=1`;
+    const win = window.open(url, "_blank", "noopener,noreferrer");
+    if (!win) setLocation(url);
+  }
+
   async function submitSale() {
     if (!cart.length) return;
     const orderCustomerSummary = pendingSale
@@ -154,6 +226,7 @@ export default function PosPage() {
       surcharge: surchargeType === "NONE" ? null : { type: surchargeType, value: surchargeValue },
       payment_method: payment,
       notes: [notes, pendingSale ? `PEDIDO_ORIGEN:${pendingSale.orderId}` : "", orderCustomerSummary].filter(Boolean).join(" | "),
+      customer_id: selectedCustomer?.id ?? pendingSale?.customerId ?? null,
     });
     const sale = await res.json();
     setLatestSale({ id: sale.sale_id, number: sale.sale_number, total: sale.total_amount });
@@ -171,14 +244,12 @@ export default function PosPage() {
       }
     }
     toast({ title: "Venta registrada", description: sale.sale_number });
-    const printRes = await apiRequest("POST", `/api/sales/${sale.sale_id}/print-data`);
-    const printJson = await printRes.json();
-    setTicketData(printJson.data);
     setCart([]);
     setNotes("");
   }
 
   return (
+    <>
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
       <Card>
         <CardHeader><CardTitle>Punto de Venta</CardTitle></CardHeader>
@@ -192,7 +263,10 @@ export default function PosPage() {
                   <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
                   <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
                 </div>
-                <div className="flex justify-end"><Button variant="outline" size="sm" onClick={() => setPendingSale({ ...pendingSale, customerName: pendingCustomerName, customerDni: pendingCustomerDni, customerPhone: pendingCustomerPhone })}>Confirmar cliente</Button></div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-xs text-muted-foreground">{selectedCustomer ? `Cliente asociado: ${selectedCustomer.name}` : "Sin cliente asociado"}</div>
+                  <Button variant="outline" size="sm" onClick={confirmPendingCustomer}>Confirmar cliente</Button>
+                </div>
               </CardContent>
             </Card>
           )}
@@ -300,20 +374,12 @@ export default function PosPage() {
 
           <Button onClick={submitSale} disabled={!cart.length}>Registrar venta</Button>
 
-          {latestSale && ticketData && (
+          {latestSale && (
             <div className="border rounded p-3 space-y-2">
               <p className="font-medium">Detalle de venta {latestSale.number}</p>
               <p>Total: {latestSale.total}</p>
               <div className="flex gap-2">
-                <Select value={ticketSize} onValueChange={(v: TicketSize) => { setTicketSize(v); localStorage.setItem(ticketSizeKey, v); }}>
-                  <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="58mm">58mm</SelectItem>
-                    <SelectItem value="80mm">80mm</SelectItem>
-                    <SelectItem value="A4">A4</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Button variant="outline" onClick={() => printTicket(ticketData, ticketSize)}>Imprimir</Button>
+                <Button variant="outline" onClick={() => openSalePrint(latestSale.id)}>Imprimir</Button>
                 <Button variant="secondary" onClick={() => setLatestSale(null)}>Nueva venta</Button>
               </div>
             </div>
@@ -321,5 +387,23 @@ export default function PosPage() {
         </CardContent>
       </Card>
     </div>
+      <Dialog open={quickCreateOpen} onOpenChange={setQuickCreateOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Crear cliente rápido</DialogTitle>
+            <DialogDescription>No encontramos un cliente con ese DNI. Podés crearlo y asociarlo a esta venta.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <div><Label>Nombre</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
+            <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
+            <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setQuickCreateOpen(false)} disabled={creatingCustomer}>Cancelar</Button>
+            <Button onClick={quickCreateCustomer} disabled={creatingCustomer}>{creatingCustomer ? "Guardando..." : "Crear y asociar"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

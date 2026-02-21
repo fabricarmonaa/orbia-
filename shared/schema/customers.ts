@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, timestamp, index, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tenants } from "./tenants";
@@ -14,6 +14,7 @@ export const customers = pgTable(
     doc: varchar("doc", { length: 50 }),
     address: text("address"),
     notes: text("notes"),
+    isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

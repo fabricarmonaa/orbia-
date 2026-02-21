@@ -1,253 +1,174 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
-import { usePlan } from "@/lib/plan";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  ClipboardList,
-  Wallet,
-  Package,
-  TrendingUp,
-  ArrowUpRight,
-  ArrowDownRight,
-} from "lucide-react";
+import { ClipboardList, Wallet, Package, TrendingUp } from "lucide-react";
 
-interface HighlightOrderItem { id:number; number:number; customerName?:string; createdAt:string; }
-interface HighlightStatusBlock { statusCode:string; label:string; color?:string; total:number; items: HighlightOrderItem[]; }
+type DashboardSummary = {
+  orders: {
+    openCount: number;
+    totalCount: number;
+    pendingCount: number;
+    inProgressCount: number;
+  };
+  cash: {
+    monthIncome: number;
+    monthExpense: number;
+    monthResult: number;
+  };
+  products: {
+    count: number;
+  };
+};
 
-interface DashboardStats {
-  totalOrders: number;
-  openOrders: number;
-  todayIncome: number;
-  todayExpenses: number;
-  totalProducts: number;
-  monthlyIncome: number;
-  monthlyExpenses: number;
-}
+const ZERO_SUMMARY: DashboardSummary = {
+  orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
+  cash: { monthIncome: 0, monthExpense: 0, monthResult: 0 },
+  products: { count: 0 },
+};
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { plan } = usePlan();
-  const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
-  const [highlightStatuses, setHighlightStatuses] = useState<HighlightStatusBlock[]>([]);
+  const [summary, setSummary] = useState<DashboardSummary>(ZERO_SUMMARY);
 
   useEffect(() => {
-    fetchStats();
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/dashboard/summary");
+        const json = await res.json();
+        if (res.ok && json) {
+          setSummary({
+            orders: {
+              openCount: Number(json.orders?.openCount || 0),
+              totalCount: Number(json.orders?.totalCount || 0),
+              pendingCount: Number(json.orders?.pendingCount || 0),
+              inProgressCount: Number(json.orders?.inProgressCount || 0),
+            },
+            cash: {
+              monthIncome: Number(json.cash?.monthIncome || 0),
+              monthExpense: Number(json.cash?.monthExpense || 0),
+              monthResult: Number(json.cash?.monthResult || 0),
+            },
+            products: { count: Number(json.products?.count || 0) },
+          });
+        } else {
+          setSummary(ZERO_SUMMARY);
+        }
+      } catch {
+        setSummary(ZERO_SUMMARY);
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
 
-  async function fetchStats() {
-    try {
-      const [res, highlightRes] = await Promise.all([
-        apiRequest("GET", "/api/dashboard/stats"),
-        apiRequest("GET", "/api/dashboard/highlight-orders?limit=5"),
-      ]);
-      const data = await res.json();
-      const highlightData = await highlightRes.json();
-      setStats(data.data);
-      setHighlightStatuses(highlightData.highlightStatuses || []);
-    } catch {
-      setStats({
-        totalOrders: 0,
-        openOrders: 0,
-        todayIncome: 0,
-        todayExpenses: 0,
-        totalProducts: 0,
-        monthlyIncome: 0,
-        monthlyExpenses: 0,
-      });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const profit = (stats?.monthlyIncome || 0) - (stats?.monthlyExpenses || 0);
-  const isEconomic = (plan?.planCode || "").toUpperCase() === "ECONOMICO";
+  const cards = useMemo(
+    () => [
+      {
+        title: "Pedidos Abiertos",
+        value: summary.orders.openCount.toLocaleString("es-AR"),
+        subtitle: `de ${summary.orders.totalCount.toLocaleString("es-AR")} totales`,
+        icon: ClipboardList,
+      },
+      {
+        title: "Ingresos del Mes",
+        value: `$${summary.cash.monthIncome.toLocaleString("es-AR")}`,
+        subtitle: "Mes actual",
+        icon: Wallet,
+      },
+      {
+        title: "Egresos del Mes",
+        value: `$${summary.cash.monthExpense.toLocaleString("es-AR")}`,
+        subtitle: "Mes actual",
+        icon: Wallet,
+      },
+      {
+        title: "Productos",
+        value: summary.products.count.toLocaleString("es-AR"),
+        subtitle: "Catálogo activo",
+        icon: Package,
+      },
+    ],
+    [summary]
+  );
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight" data-testid="text-dashboard-title">
-          Dashboard
-        </h1>
-        <p className="text-muted-foreground">
-          Bienvenido, {user?.fullName}
-        </p>
+        <h1 className="text-2xl font-bold tracking-tight" data-testid="text-dashboard-title">Dashboard</h1>
+        <p className="text-muted-foreground">Bienvenido, {user?.fullName}</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {loading ? (
-          [1, 2, 3, 4].map((i) => (
-            <Card key={i}>
-              <CardContent className="pt-6">
-                <Skeleton className="h-16 w-full" />
-              </CardContent>
-            </Card>
-          ))
-        ) : (
-          <>
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Pedidos Abiertos</p>
-                    <p className="text-2xl font-bold" data-testid="text-open-orders">
-                      {stats?.openOrders || 0}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      de {stats?.totalOrders || 0} totales
-                    </p>
-                  </div>
-                  <div className="p-3 rounded-md bg-primary/10">
-                    <ClipboardList className="w-5 h-5 text-primary" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {!isEconomic && (
-              <>
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Ingresos del Mes</p>
-                        <p className="text-2xl font-bold" data-testid="text-monthly-income">
-                          ${(stats?.monthlyIncome || 0).toLocaleString("es-AR")}
-                        </p>
-                        <div className="flex items-center gap-1 mt-1">
-                          <ArrowUpRight className="w-3 h-3 text-chart-2" />
-                          <p className="text-xs text-chart-2">Hoy: ${(stats?.todayIncome || 0).toLocaleString("es-AR")}</p>
-                        </div>
-                      </div>
-                      <div className="p-3 rounded-md bg-chart-2/10">
-                        <Wallet className="w-5 h-5 text-chart-2" />
-                      </div>
+        {loading
+          ? [1, 2, 3, 4].map((i) => (
+              <Card key={i}>
+                <CardContent className="pt-6"><Skeleton className="h-16 w-full" /></CardContent>
+              </Card>
+            ))
+          : cards.map((card) => (
+              <Card key={card.title}>
+                <CardContent className="pt-6">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">{card.title}</p>
+                      <p className="text-2xl font-bold">{card.value}</p>
+                      <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
                     </div>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Egresos del Mes</p>
-                        <p className="text-2xl font-bold" data-testid="text-monthly-expenses">
-                          ${(stats?.monthlyExpenses || 0).toLocaleString("es-AR")}
-                        </p>
-                        <div className="flex items-center gap-1 mt-1">
-                          <ArrowDownRight className="w-3 h-3 text-destructive" />
-                          <p className="text-xs text-destructive">Hoy: ${(stats?.todayExpenses || 0).toLocaleString("es-AR")}</p>
-                        </div>
-                      </div>
-                      <div className="p-3 rounded-md bg-destructive/10">
-                        <Wallet className="w-5 h-5 text-destructive" />
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              </>
-            )}
-
-            <Card>
-              <CardContent className="pt-6">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Productos</p>
-                    <p className="text-2xl font-bold" data-testid="text-total-products">
-                      {stats?.totalProducts || 0}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Resultado: ${profit.toLocaleString("es-AR")}
-                    </p>
+                    <div className="p-3 rounded-md bg-primary/10"><card.icon className="w-5 h-5 text-primary" /></div>
                   </div>
-                  <div className="p-3 rounded-md bg-chart-4/10">
-                    <Package className="w-5 h-5 text-chart-4" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </>
-        )}
+                </CardContent>
+              </Card>
+            ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {!isEconomic ? (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-4 pb-2">
-              <div>
-                <h3 className="font-semibold">Resumen Mensual</h3>
-                <p className="text-sm text-muted-foreground">Balance del mes actual</p>
-              </div>
-              <TrendingUp className="w-5 h-5 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Ingresos</span>
-                  <span className="text-sm font-medium text-chart-2">
-                    +${(stats?.monthlyIncome || 0).toLocaleString("es-AR")}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Egresos</span>
-                  <span className="text-sm font-medium text-destructive">
-                    -${(stats?.monthlyExpenses || 0).toLocaleString("es-AR")}
-                  </span>
-                </div>
-                <div className="border-t pt-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-semibold">Resultado</span>
-                    <span className={`text-sm font-bold ${profit >= 0 ? "text-chart-2" : "text-destructive"}`}>
-                      ${profit.toLocaleString("es-AR")}
-                    </span>
+        <Card>
+          <CardHeader><CardTitle>Pedidos Abiertos</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            {loading ? (
+              <Skeleton className="h-24 w-full" />
+            ) : (
+              <>
+                <div className="text-4xl font-bold">{summary.orders.openCount.toLocaleString("es-AR")}</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">Pendientes</p>
+                    <p className="text-xl font-semibold">{summary.orders.pendingCount.toLocaleString("es-AR")}</p>
+                  </div>
+                  <div className="rounded-md border p-3">
+                    <p className="text-xs text-muted-foreground">En proceso</p>
+                    <p className="text-xl font-semibold">{summary.orders.inProgressCount.toLocaleString("es-AR")}</p>
                   </div>
                 </div>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <Card>
-            <CardContent className="py-10 text-center text-sm text-muted-foreground">
-              El resumen mensual está disponible a partir del plan Profesional.
-            </CardContent>
-          </Card>
-        )}
+              </>
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between gap-4 pb-2">
-            <div>
-              <h3 className="font-semibold">Actividad Reciente</h3>
-              <p className="text-sm text-muted-foreground">Últimos pedidos</p>
-            </div>
-            <ClipboardList className="w-5 h-5 text-muted-foreground" />
-          </CardHeader>
+          <CardHeader><CardTitle>Resumen Mensual</CardTitle></CardHeader>
           <CardContent>
             {loading ? (
-              <div className="space-y-3">
-                {[1, 2, 3].map((i) => (
-                  <Skeleton key={i} className="h-10 w-full" />
-                ))}
-              </div>
+              <Skeleton className="h-24 w-full" />
             ) : (
-              <div className="space-y-3">
-                {highlightStatuses.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Sin pedidos para estados destacados.</p>
-                ) : highlightStatuses.map((group) => {
-                  const hiddenCount = Math.max(0, Number(group.total || 0) - Number(group.items?.length || 0));
-                  return (
-                    <div key={group.statusCode} className="space-y-1.5">
-                      <p className="text-xs uppercase text-muted-foreground">{group.label}</p>
-                      {(group.items || []).map((item) => (
-                        <div key={item.id} className="flex items-center justify-between text-sm border rounded px-2 py-1">
-                          <span className="truncate">#{item.number || item.id} · {item.customerName || "Sin cliente"}</span>
-                          <span className="text-xs text-muted-foreground whitespace-nowrap">{new Date(item.createdAt).toLocaleDateString("es-AR")}</span>
-                        </div>
-                      ))}
-                      {hiddenCount > 0 ? <p className="text-xs text-muted-foreground">+{hiddenCount} pedidos {group.label.toUpperCase()}</p> : null}
-                    </div>
-                  );
-                })}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <span className="text-sm text-muted-foreground">Ingresos</span>
+                  <span className="font-semibold">${summary.cash.monthIncome.toLocaleString("es-AR")}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md border p-3">
+                  <span className="text-sm text-muted-foreground">Egresos</span>
+                  <span className="font-semibold">${summary.cash.monthExpense.toLocaleString("es-AR")}</span>
+                </div>
+                <div className="flex items-center justify-between rounded-md border p-3 bg-primary/5">
+                  <span className="text-sm font-medium">Resultado</span>
+                  <span className="font-bold inline-flex items-center gap-1">
+                    <TrendingUp className="w-4 h-4" />
+                    ${summary.cash.monthResult.toLocaleString("es-AR")}
+                  </span>
+                </div>
               </div>
             )}
           </CardContent>

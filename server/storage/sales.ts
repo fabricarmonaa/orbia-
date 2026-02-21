@@ -240,51 +240,183 @@ export const salesStorage = {
     });
   },
 
-  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }) {
+  async listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; number?: string; customerId?: number; customerQuery?: string; limit: number; offset: number; sort?: "date_desc" | "date_asc" }) {
+    const normalizedLimit = Math.min(200, Math.max(1, Number(filters.limit || 50)));
+    const normalizedOffset = Math.max(0, Number(filters.offset || 0));
+    const sortDir = filters.sort === "date_asc" ? "ASC" : "DESC";
+    const whereSql: string[] = ["s.tenant_id = $1"];
+    const mvWhereSql: string[] = ["h.tenant_id = $1"];
+    const params: any[] = [tenantId];
+
+    if (filters.branchId !== undefined && filters.branchId !== null) {
+      params.push(filters.branchId);
+      whereSql.push(`s.branch_id = $${params.length}`);
+      mvWhereSql.push(`h.branch_id = $${params.length}`);
+    }
+    if (filters.from) {
+      params.push(filters.from);
+      whereSql.push(`s.sale_datetime >= $${params.length}`);
+      mvWhereSql.push(`h.sale_datetime >= $${params.length}`);
+    }
+    if (filters.to) {
+      params.push(filters.to);
+      whereSql.push(`s.sale_datetime <= $${params.length}`);
+      mvWhereSql.push(`h.sale_datetime <= $${params.length}`);
+    }
+
+    const numberFilter = String(filters.number || "").trim();
+    if (numberFilter) {
+      params.push(`%${numberFilter}%`);
+      whereSql.push(`s.sale_number ILIKE $${params.length}`);
+      mvWhereSql.push(`h.sale_number ILIKE $${params.length}`);
+    }
+
+    if (filters.customerId && Number.isFinite(Number(filters.customerId))) {
+      params.push(Number(filters.customerId));
+      whereSql.push(`s.customer_id = $${params.length}`);
+      mvWhereSql.push(`h.customer_id = $${params.length}`);
+    }
+
+    const customerQuery = String(filters.customerQuery || "").trim();
+    if (customerQuery.length > 0) {
+      params.push(`%${customerQuery}%`);
+      const idx = params.length;
+      whereSql.push(`(COALESCE(c.name, '') ILIKE $${idx} OR COALESCE(c.doc, '') ILIKE $${idx} OR COALESCE(c.phone, '') ILIKE $${idx})`);
+      mvWhereSql.push(`(COALESCE(h.customer_name, '') ILIKE $${idx} OR EXISTS (SELECT 1 FROM customers c2 WHERE c2.id = h.customer_id AND c2.tenant_id = h.tenant_id AND (COALESCE(c2.name, '') ILIKE $${idx} OR COALESCE(c2.doc, '') ILIKE $${idx} OR COALESCE(c2.phone, '') ILIKE $${idx})))`);
+    }
+
     try {
-      const where: string[] = ["tenant_id = $1"];
-      const params: any[] = [tenantId];
-      if (filters.branchId !== undefined && filters.branchId !== null) { params.push(filters.branchId); where.push(`branch_id = $${params.length}`); }
-      if (filters.from) { params.push(filters.from); where.push(`sale_datetime >= $${params.length}`); }
-      if (filters.to) { params.push(filters.to); where.push(`sale_datetime <= $${params.length}`); }
-      if (filters.q) { params.push(`%${filters.q}%`); where.push(`sale_number ILIKE $${params.length}`); }
-      if (filters.customer) {
-        const c = String(filters.customer).trim();
-        if (/^\d+$/.test(c)) { params.push(Number(c)); where.push(`customer_id = $${params.length}`); }
-        else { params.push(`%${c}%`); where.push(`COALESCE(customer_name,'') ILIKE $${params.length}`); }
-      }
-      params.push(Number(filters.limit));
-      params.push(Number(filters.offset));
-      const q = `SELECT id, sale_number as "saleNumber", sale_datetime as "saleDatetime", total_amount as "totalAmount", payment_method as "paymentMethod", branch_id as "branchId", customer_name as "customerName" FROM mv_sales_history WHERE ${where.join(" AND ")} ORDER BY sale_datetime DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
-      const rows = await pool.query(q, params);
-      return rows.rows || [];
-    } catch {
+      const countQuery = `
+        SELECT COUNT(*)::int AS total
+        FROM mv_sales_history h
+        LEFT JOIN sales s ON s.id = h.id AND s.tenant_id = h.tenant_id
+        LEFT JOIN customers c ON c.id = s.customer_id AND c.tenant_id = s.tenant_id
+        WHERE ${mvWhereSql.join(" AND ")}
+      `;
+      const countRows = await pool.query(countQuery, params);
+
+      const listParams = [...params, normalizedLimit, normalizedOffset];
+      const listQuery = `
+        SELECT
+          s.id,
+          s.sale_number AS number,
+          s.sale_datetime AS "createdAt",
+          s.payment_method AS "paymentMethod",
+          s.subtotal_amount AS subtotal,
+          s.discount_amount AS discount,
+          s.surcharge_amount AS surcharge,
+          s.total_amount AS total,
+          c.id AS "customerId",
+          c.name AS "customerName",
+          c.doc AS "customerDni",
+          c.phone AS "customerPhone",
+          b.id AS "branchId",
+          b.name AS "branchName"
+        FROM mv_sales_history h
+        JOIN sales s ON s.id = h.id AND s.tenant_id = h.tenant_id
+        LEFT JOIN customers c ON c.id = s.customer_id AND c.tenant_id = s.tenant_id
+        LEFT JOIN branches b ON b.id = s.branch_id AND b.tenant_id = s.tenant_id
+        WHERE ${mvWhereSql.join(" AND ")}
+        ORDER BY s.sale_datetime ${sortDir}, s.id ${sortDir}
+        LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
+      `;
+      const rows = await pool.query(listQuery, listParams);
+
+      return {
+        data: (rows.rows || []).map((row: any) => ({
+          id: Number(row.id),
+          number: String(row.number || row.id),
+          createdAt: row.createdAt,
+          customer: row.customerId ? {
+            id: Number(row.customerId),
+            name: row.customerName ?? null,
+            dni: row.customerDni ?? null,
+            phone: row.customerPhone ?? null,
+          } : null,
+          paymentMethod: row.paymentMethod,
+          subtotal: String(row.subtotal ?? "0"),
+          discount: String(row.discount ?? "0"),
+          surcharge: String(row.surcharge ?? "0"),
+          total: String(row.total ?? "0"),
+          branch: row.branchId ? { id: Number(row.branchId), name: row.branchName ?? null } : null,
+        })),
+        meta: { limit: normalizedLimit, offset: normalizedOffset, total: Number(countRows.rows?.[0]?.total || 0) },
+        usedMaterializedView: true,
+      };
+    } catch (err: any) {
+      console.warn("[sales] MV fallback", err?.message || err);
       const conditions = [eq(sales.tenantId, tenantId)] as any[];
-      if (filters.branchId) conditions.push(eq(sales.branchId, filters.branchId));
+      if (filters.branchId !== undefined && filters.branchId !== null) conditions.push(eq(sales.branchId, filters.branchId));
       if (filters.from) conditions.push(gte(sales.saleDatetime, filters.from));
       if (filters.to) conditions.push(lte(sales.saleDatetime, filters.to));
-      if (filters.q) conditions.push(or(ilike(sales.saleNumber, `%${filters.q}%`))!);
-      const customerFilter = String(filters.customer || "").trim();
-      if (customerFilter && /^\d+$/.test(customerFilter)) conditions.push(eq(sales.customerId, Number(customerFilter)));
-      if (customerFilter && !/^\d+$/.test(customerFilter)) conditions.push(ilike(customers.name, `%${customerFilter}%`));
-      return db
-        .select({
-          id: sales.id,
-          saleNumber: sales.saleNumber,
-          saleDatetime: sales.saleDatetime,
-          totalAmount: sales.totalAmount,
-          paymentMethod: sales.paymentMethod,
-          branchId: sales.branchId,
-          customerName: customers.name,
-        })
-        .from(sales)
-        .leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId)))
-        .where(and(...conditions))
-        .orderBy(desc(sales.saleDatetime))
-        .limit(filters.limit)
-        .offset(filters.offset);
+      if (numberFilter) conditions.push(ilike(sales.saleNumber, `%${numberFilter}%`));
+      if (filters.customerId && Number.isFinite(Number(filters.customerId))) conditions.push(eq(sales.customerId, Number(filters.customerId)));
+      if (customerQuery.length > 0) {
+        conditions.push(or(
+          ilike(customers.name, `%${customerQuery}%`),
+          ilike(customers.doc, `%${customerQuery}%`),
+          ilike(customers.phone, `%${customerQuery}%`),
+        )!);
+      }
+
+      try {
+        const where = and(...conditions);
+        const [rows, totalRows] = await Promise.all([
+          db
+            .select({
+              id: sales.id,
+              number: sales.saleNumber,
+              createdAt: sales.saleDatetime,
+              paymentMethod: sales.paymentMethod,
+              subtotal: sales.subtotalAmount,
+              discount: sales.discountAmount,
+              surcharge: sales.surchargeAmount,
+              total: sales.totalAmount,
+              customerId: customers.id,
+              customerName: customers.name,
+              customerDni: customers.doc,
+              customerPhone: customers.phone,
+              branchId: branches.id,
+              branchName: branches.name,
+            })
+            .from(sales)
+            .leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId)))
+            .leftJoin(branches, and(eq(branches.id, sales.branchId), eq(branches.tenantId, sales.tenantId)))
+            .where(where)
+            .orderBy(filters.sort === "date_asc" ? sql`${sales.saleDatetime} ASC` : sql`${sales.saleDatetime} DESC`)
+            .limit(normalizedLimit)
+            .offset(normalizedOffset),
+          db.select({ total: sql<number>`count(*)::int` }).from(sales).leftJoin(customers, and(eq(customers.id, sales.customerId), eq(customers.tenantId, sales.tenantId))).where(where),
+        ]);
+
+        return {
+          data: rows.map((row) => ({
+            id: Number(row.id),
+            number: String(row.number || row.id),
+            createdAt: row.createdAt,
+            customer: row.customerId ? { id: Number(row.customerId), name: row.customerName ?? null, dni: row.customerDni ?? null, phone: row.customerPhone ?? null } : null,
+            paymentMethod: row.paymentMethod,
+            subtotal: String(row.subtotal ?? "0"),
+            discount: String(row.discount ?? "0"),
+            surcharge: String(row.surcharge ?? "0"),
+            total: String(row.total ?? "0"),
+            branch: row.branchId ? { id: Number(row.branchId), name: row.branchName ?? null } : null,
+          })),
+          meta: { limit: normalizedLimit, offset: normalizedOffset, total: Number(totalRows[0]?.total || 0) },
+          usedMaterializedView: false,
+        };
+      } catch (fallbackErr: any) {
+        const message = String(fallbackErr?.message || "");
+        if (fallbackErr?.code === "42P01" || /does not exist|relation .* does not exist/i.test(message)) {
+          throw Object.assign(new Error("Faltan migraciones de ventas, ejecutar migrations/*.sql"), {
+            code: "MIGRATION_MISSING",
+          });
+        }
+        throw fallbackErr;
+      }
     }
   },
+
 
   async getSaleById(id: number, tenantId: number) {
     const [sale] = await db.select().from(sales).where(and(eq(sales.id, id), eq(sales.tenantId, tenantId)));

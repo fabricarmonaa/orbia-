@@ -148,7 +148,7 @@ export interface IStorage {
     surchargeValue: number;
     items: Array<{ productId: number; quantity: number; unitPrice?: number | null }>;
   }): Promise<{ sale: Sale }>;
-  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; q?: string; customer?: string; limit: number; offset: number }): Promise<Sale[]>;
+  listSales(tenantId: number, filters: { branchId?: number | null; from?: Date; to?: Date; number?: string; customerId?: number; customerQuery?: string; limit: number; offset: number; sort?: "date_desc" | "date_asc" }): Promise<{ data: Array<{ id: number; number: string; createdAt: Date; customer: { id?: number; name?: string | null; dni?: string | null; phone?: string | null } | null; paymentMethod: string; subtotal: string; discount: string; surcharge: string; total: string; branch: { id?: number | null; name?: string | null } | null }>; meta: { limit: number; offset: number; total: number }; usedMaterializedView: boolean }>;
   getSaleById(id: number, tenantId: number): Promise<Sale | undefined>;
   getSaleItems(id: number, tenantId: number): Promise<SaleItem[]>;
 

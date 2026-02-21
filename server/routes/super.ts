@@ -13,6 +13,7 @@ import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
 import { evaluatePassword } from "../services/password-policy";
+import { getTenantAddons as getTenantAddonsFlags, setTenantAddon } from "../services/tenant-addons";
 
 const createTenantSchema = z.object({
   code: z.string().trim().min(2).max(40),
@@ -321,13 +322,35 @@ export function registerSuperRoutes(app: Express) {
     }
   });
 
+
   app.get("/api/super/tenants/:tenantId/addons", superAuth, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId as string);
-      const addons = await storage.getTenantAddons(tenantId);
-      res.json({ data: addons });
+      const addons = await getTenantAddonsFlags(tenantId);
+      res.json({ addons });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      console.error("[super] SUPER_TENANT_ADDONS_ERROR", err);
+      res.status(500).json({ error: "No se pudieron obtener addons", code: "SUPER_TENANT_ADDONS_ERROR" });
+    }
+  });
+
+  app.put("/api/super/tenants/:tenantId/addons", superAuth, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId as string);
+      const payload = z.object({ addons: z.record(z.boolean()) }).parse(req.body);
+      const allowed = new Set(["barcode_scanner", "delivery", "messaging_whatsapp"]);
+      for (const [addonCode, enabled] of Object.entries(payload.addons || {})) {
+        if (!allowed.has(addonCode)) continue;
+        await setTenantAddon(tenantId, addonCode, Boolean(enabled), req.auth?.userId ?? null);
+      }
+      const addons = await getTenantAddonsFlags(tenantId);
+      return res.json({ addons });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "INVALID_ADDONS_PAYLOAD", details: err.errors });
+      }
+      console.error("[super] SUPER_TENANT_ADDONS_UPDATE_ERROR", err);
+      return res.status(500).json({ error: "No se pudieron guardar addons", code: "SUPER_TENANT_ADDONS_UPDATE_ERROR" });
     }
   });
 
@@ -336,13 +359,7 @@ export function registerSuperRoutes(app: Express) {
       const tenantId = parseInt(req.params.tenantId as string);
       const { addonKey, enabled } = req.body;
       if (!addonKey) return res.status(400).json({ error: "addonKey requerido" });
-      const addon = await storage.upsertTenantAddon({
-        tenantId,
-        addonKey,
-        enabled: enabled ?? true,
-        enabledById: req.auth!.userId,
-        enabledAt: enabled ? new Date() : null,
-      });
+      const addon = await setTenantAddon(tenantId, addonKey, enabled ?? true, req.auth?.userId ?? null);
       res.json({ data: addon });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -355,13 +372,7 @@ export function registerSuperRoutes(app: Express) {
       const addonKey = req.params.addonKey as string;
       const { enabled } = req.body;
       if (enabled === undefined) return res.status(400).json({ error: "enabled requerido" });
-      const addon = await storage.upsertTenantAddon({
-        tenantId,
-        addonKey,
-        enabled,
-        enabledById: req.auth!.userId,
-        enabledAt: enabled ? new Date() : null,
-      });
+      const addon = await setTenantAddon(tenantId, addonKey, enabled, req.auth?.userId ?? null);
       res.json({ data: addon });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
