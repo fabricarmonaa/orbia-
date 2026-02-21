@@ -1,6 +1,3 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import QRCode from "qrcode";
-import { TicketLayout } from "@/components/print/TicketLayout";
 import { useState, useEffect } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -210,48 +207,10 @@ export default function OrdersPage() {
 
   async function printOrder() {
     if (!selectedOrder) return;
-    try {
-      const res = await apiRequest("GET", `/api/orders/${selectedOrder.id}/print-data`);
-      const json = await res.json();
-      if (!res.ok || !json?.data) {
-        toast({ title: "Error", description: json?.error || "No se pudo cargar ticket", variant: "destructive" });
-        return;
-      }
-      const d = json.data;
-      if (!d?.order?.number) {
-        toast({ title: "Error", description: "Datos de ticket incompletos", variant: "destructive" });
-        return;
-      }
-      const qrImage = d.qr?.publicUrl ? await QRCode.toDataURL(d.qr.publicUrl, { margin: 1, width: 160 }) : null;
-      const html = renderToStaticMarkup(
-        <TicketLayout
-          mode="TICKET_80"
-          variant="ORDER"
-          data={{
-            tenant: { name: d.tenant?.name || "Negocio", logoUrl: d.tenant?.logoUrl || null },
-            order: { number: d.order.number, createdAt: d.order.createdAt, status: d.order.status, customerName: d.order.customerName, description: d.order.description, totalAmount: d.order.totalAmount },
-            totals: { total: d.order.totalAmount || "-" },
-            items: [{ qty: 1, name: d.order.type || "Pedido", subtotal: d.order.totalAmount || "-" }],
-            qr: { publicUrl: d.qr?.publicUrl, imageDataUrl: qrImage },
-          }}
-        />
-      );
-      if (!html || html.length < 30) {
-        toast({ title: "Error", description: "No se pudo renderizar el ticket", variant: "destructive" });
-        return;
-      }
-      const win = window.open("about:blank", "_blank", "noopener,noreferrer,width=900,height=700");
-      if (!win) {
-        toast({ title: "Popup bloqueado", description: "Permití ventanas emergentes para imprimir", variant: "destructive" });
-        return;
-      }
-      win.document.open();
-      win.document.write(`<!doctype html><html><head><meta charset="utf-8" /><title>Ticket cliente</title></head><body>${html}</body></html>`);
-      win.document.close();
-      win.focus();
-      win.print();
-    } catch (err: any) {
-      toast({ title: "Error", description: err?.message || "No se pudo imprimir", variant: "destructive" });
+    const printUrl = `${window.location.origin}/app/print/order/${selectedOrder.id}`;
+    const win = window.open(printUrl, "_blank", "noopener,noreferrer");
+    if (!win) {
+      window.location.href = printUrl;
     }
   }
 

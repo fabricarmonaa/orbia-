@@ -1,6 +1,8 @@
 # CHANGELOG_FIXES
 
 ## Arreglos principales
+- Dashboard: actividad destacada ahora usa estados configurables por tenant (Configuración → Estados), con listado compacto (máx. 5 por estado) y indicador "+N".
+- Pedidos: Ticket cliente migra a ruta imprimible real `/app/print/order/:id` para evitar `about:blank` y falsos bloqueos de popup.
 - Dashboard: se agregaron endpoints y UI para pedidos recientes (pendientes/en proceso) y actividad reciente.
 - Pedidos: `Ticket cliente` ahora valida payload, maneja errores y popup bloqueado; evita `about:blank` vacío.
 - Caja: tabs simplificados a Movimientos + Indicadores; título interno actualizado a **Indicador Clave Desempeño**.
@@ -13,6 +15,8 @@
 - Logs: logger mensual por tenant en JSONL (`logs/tenant_<id>/events_YYYY-MM.log`) con retención configurable.
 
 ## Endpoints tocados
+- `GET /api/dashboard/highlight-orders`
+- `GET/PUT /api/dashboard/highlight-settings`
 - `GET /api/dashboard/recent-orders`
 - `GET /api/dashboard/activity`
 - `GET /api/customers`

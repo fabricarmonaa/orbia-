@@ -10,6 +10,8 @@ import bcrypt from "bcryptjs";
 import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
 import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
+import { pool } from "../db";
+import { getStatuses } from "../services/statuses";
 
 
 const changePasswordSchema = z.object({
@@ -37,6 +39,26 @@ const tenantConfigSchema = z.object({
   trackingBgColor: z.string().trim().max(30).optional(),
   trackingTosText: z.string().trim().max(200).optional(),
 });
+
+const dashboardSettingsSchema = z.object({
+  statusCodes: z.array(z.string().trim().min(1).max(40)).min(1).max(6),
+});
+
+const DASHBOARD_DEFAULT_CODES = ["PENDIENTE", "EN_PROCESO"];
+
+async function getDashboardHighlightCodes(tenantId: number) {
+  try {
+    const settings = await pool.query(`SELECT highlight_status_codes FROM tenant_dashboard_settings WHERE tenant_id = $1`, [tenantId]);
+    const raw = settings.rows[0]?.highlight_status_codes;
+    if (Array.isArray(raw) && raw.length) {
+      return raw.map((x: any) => String(x).trim().toUpperCase()).filter(Boolean).slice(0, 6);
+    }
+  } catch {
+    // fallback when migration is not applied yet
+  }
+  return DASHBOARD_DEFAULT_CODES;
+}
+
 
 export function registerTenantRoutes(app: Express) {
   const sensitiveActionLimiter = createRateLimiter({
@@ -261,6 +283,110 @@ export function registerTenantRoutes(app: Express) {
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+
+  app.get("/api/dashboard/highlight-settings", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const statusCodes = await getDashboardHighlightCodes(tenantId);
+      return res.json({ data: { statusCodes } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo obtener configuración", code: "DASHBOARD_SETTINGS_ERROR" });
+    }
+  });
+
+  app.put("/api/dashboard/highlight-settings", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const payload = dashboardSettingsSchema.parse(req.body || {});
+      const statusCodes = payload.statusCodes.map((x) => x.trim().toUpperCase()).slice(0, 6);
+      await pool.query(`CREATE TABLE IF NOT EXISTS tenant_dashboard_settings (tenant_id INTEGER PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE, highlight_status_codes JSONB NOT NULL DEFAULT '["PENDIENTE","EN_PROCESO"]'::jsonb, updated_at TIMESTAMP NOT NULL DEFAULT NOW())`);
+      await pool.query(
+        `INSERT INTO tenant_dashboard_settings (tenant_id, highlight_status_codes, updated_at)
+         VALUES ($1, $2::jsonb, NOW())
+         ON CONFLICT (tenant_id)
+         DO UPDATE SET highlight_status_codes = EXCLUDED.highlight_status_codes, updated_at = NOW()`,
+        [tenantId, JSON.stringify(statusCodes)]
+      );
+      return res.json({ data: { statusCodes } });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Configuración inválida", code: "DASHBOARD_SETTINGS_INVALID" });
+      return res.status(500).json({ error: "No se pudo guardar configuración", code: "DASHBOARD_SETTINGS_SAVE_ERROR" });
+    }
+  });
+
+  app.get("/api/dashboard/highlight-orders", tenantAuth, enforceBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const limit = Math.min(20, Math.max(1, Number(req.query.limit || 5)));
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
+      const statusCodes = await getDashboardHighlightCodes(tenantId);
+      const statuses = await getStatuses(tenantId, "ORDER", true);
+      const statusMap = new Map(statuses.map((s: any) => [String(s.code || "").toUpperCase(), s]));
+      const result: any[] = [];
+      try {
+        for (const code of statusCodes) {
+          const params: any[] = [tenantId, code, limit];
+          const branchClause = branchId ? ` AND branch_id = $4` : "";
+          if (branchId) params.push(branchId);
+          const itemsQuery = `SELECT order_id AS id, order_number AS number, customer_name AS "customerName", created_at AS "createdAt"
+                             FROM mv_orders_by_status
+                             WHERE tenant_id = $1 AND status_code = $2${branchClause}
+                             ORDER BY created_at DESC LIMIT $3`;
+          const totalQuery = `SELECT COUNT(*)::int AS total
+                             FROM mv_orders_by_status
+                             WHERE tenant_id = $1 AND status_code = $2${branchClause}`;
+          const [itemsRows, totalRows] = await Promise.all([
+            pool.query(itemsQuery, params),
+            pool.query(totalQuery, branchId ? [tenantId, code, branchId] : [tenantId, code]),
+          ]);
+          const statusDef = statusMap.get(code);
+          result.push({
+            statusCode: code,
+            label: statusDef?.label || code,
+            color: statusDef?.color || "#6B7280",
+            total: Number(totalRows.rows[0]?.total || 0),
+            items: itemsRows.rows || [],
+          });
+        }
+      } catch {
+        for (const code of statusCodes) {
+          const branchClause = branchId ? ` AND o.branch_id = $3` : "";
+          const itemsSql = `SELECT o.id, o.order_number AS number, o.customer_name AS "customerName", o.created_at AS "createdAt"
+                            FROM orders o
+                            INNER JOIN status_definitions sd
+                              ON sd.id = o.status_id
+                             AND sd.tenant_id = o.tenant_id
+                             AND sd.entity_type = 'ORDER'
+                            WHERE o.tenant_id = $1
+                              AND UPPER(sd.code) = $2${branchClause}
+                            ORDER BY o.created_at DESC
+                            LIMIT ${limit}`;
+          const countSql = `SELECT COUNT(*)::int AS total
+                            FROM orders o
+                            INNER JOIN status_definitions sd
+                              ON sd.id = o.status_id
+                             AND sd.tenant_id = o.tenant_id
+                             AND sd.entity_type = 'ORDER'
+                            WHERE o.tenant_id = $1
+                              AND UPPER(sd.code) = $2${branchClause}`;
+          const params = branchId ? [tenantId, code, branchId] : [tenantId, code];
+          const [itemsRows, totalRows] = await Promise.all([pool.query(itemsSql, params), pool.query(countSql, params)]);
+          const statusDef = statusMap.get(code);
+          result.push({
+            statusCode: code,
+            label: statusDef?.label || code,
+            color: statusDef?.color || "#6B7280",
+            total: Number(totalRows.rows[0]?.total || 0),
+            items: itemsRows.rows || [],
+          });
+        }
+      }
+      return res.json({ highlightStatuses: result });
+    } catch {
+      return res.status(500).json({ error: "No se pudieron obtener pedidos destacados", code: "DASHBOARD_HIGHLIGHT_ERROR" });
     }
   });
 

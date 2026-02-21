@@ -13,11 +13,17 @@ export function StatusesSettings() {
   const [entity, setEntity] = useState<"ORDER" | "PRODUCT" | "DELIVERY">("ORDER");
   const [rows, setRows] = useState<StatusDef[]>([]);
   const [label, setLabel] = useState("");
+  const [highlightCodes, setHighlightCodes] = useState<string[]>([]);
 
   async function load() {
     const res = await apiRequest("GET", `/api/statuses/${entity}`);
     const json = await res.json();
     setRows(json.data || []);
+    if (entity === "ORDER") {
+      const settingsRes = await apiRequest("GET", "/api/dashboard/highlight-settings");
+      const settingsJson = await settingsRes.json();
+      setHighlightCodes(settingsJson?.data?.statusCodes || []);
+    }
   }
 
   useEffect(() => { load(); }, [entity]);
@@ -31,6 +37,15 @@ export function StatusesSettings() {
 
   async function updateStatus(id: number, patch: Record<string, unknown>) {
     await apiRequest("PATCH", `/api/statuses/${entity}/${id}`, patch);
+    await load();
+  }
+
+
+  async function toggleHighlight(code: string, checked: boolean) {
+    const next = checked ? Array.from(new Set([...highlightCodes, code])) : highlightCodes.filter((c) => c !== code);
+    if (!next.length) return;
+    setHighlightCodes(next);
+    await apiRequest("PUT", "/api/dashboard/highlight-settings", { statusCodes: next });
     await load();
   }
 
@@ -52,6 +67,23 @@ export function StatusesSettings() {
           <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Nuevo estado" />
           <Button onClick={createStatus}>Crear</Button>
         </div>
+
+
+        {entity === "ORDER" ? (
+          <div className="space-y-2 border rounded p-3">
+            <p className="text-sm font-medium">Estados destacados en Dashboard</p>
+            <p className="text-xs text-muted-foreground">Se mostrarán hasta 5 pedidos por estado destacado.</p>
+            <div className="space-y-1">
+              {rows.filter((r) => r.isActive).map((s) => (
+                <label key={`hl-${s.id}`} className="flex items-center justify-between text-sm">
+                  <span>{s.label}</span>
+                  <Switch checked={highlightCodes.includes(s.code)} onCheckedChange={(checked) => toggleHighlight(s.code, checked)} />
+                </label>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
 
         <div className="space-y-2">
           {rows.map((s) => (

@@ -39,6 +39,7 @@ const exportSchema = z.object({
 
 const summaryLimiter = createRateLimiter({ windowMs: 60_000, max: parseInt(process.env.REPORTS_LIMIT_PER_MIN || "4", 10), keyGenerator: (req) => `monthly-summary:${req.auth?.tenantId || req.ip}`, errorMessage: "Demasiadas solicitudes.", code: "REPORT_RATE_LIMIT" });
 const metricsRefreshLimiter = createRateLimiter({ windowMs: 60_000, max: parseInt(process.env.METRICS_REFRESH_LIMIT_PER_MIN || "2", 10), keyGenerator: (req) => `metrics-refresh:${req.auth?.tenantId || req.ip}`, errorMessage: "Demasiados refresh.", code: "METRICS_REFRESH_RATE_LIMIT" });
+const materializedRefreshByTenant = new Map<number, number>();
 
 function ensureExportDir() { if (!fs.existsSync(EXPORT_DIR)) fs.mkdirSync(EXPORT_DIR, { recursive: true }); }
 function csvEscape(value: unknown) { const raw = String(value ?? ""); const safe = /^[=+\-@]/.test(raw) ? `'${raw}` : raw; return (safe.includes(",") || safe.includes('"') || safe.includes("\n")) ? `"${safe.replace(/"/g, '""')}"` : safe; }
@@ -330,8 +331,36 @@ export function registerReportRoutes(app: Express) {
     }
   });
 
+
+  app.post("/api/reports/materialized/refresh", tenantAuth, requireTenantAdmin, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const scope = String(req.query.scope || "all").toLowerCase();
+      const now = Date.now();
+      const throttleMs = Number(process.env.MATERIALIZED_REFRESH_THROTTLE_MS || 300000);
+      const last = materializedRefreshByTenant.get(tenantId) || 0;
+      if (now - last < throttleMs) {
+        const retryInSec = Math.ceil((throttleMs - (now - last)) / 1000);
+        return res.status(429).json({ error: "Refresh reciente, intentá en unos segundos", code: "MV_REFRESH_THROTTLED", retryInSec });
+      }
+      if (scope === "dashboard") {
+        await pool.query("REFRESH MATERIALIZED VIEW mv_orders_by_status");
+      } else {
+        await pool.query("REFRESH MATERIALIZED VIEW mv_orders_by_status");
+        await pool.query("REFRESH MATERIALIZED VIEW mv_sales_history");
+        await pool.query("REFRESH MATERIALIZED VIEW mv_cash_daily");
+        await pool.query("REFRESH MATERIALIZED VIEW mv_reports_daily_sales");
+      }
+      materializedRefreshByTenant.set(tenantId, now);
+      return res.json({ ok: true, code: "MATERIALIZED_REFRESHED", scope });
+    } catch {
+      return res.status(500).json({ error: "No se pudieron refrescar vistas materializadas", code: "MATERIALIZED_REFRESH_ERROR" });
+    }
+  });
+
   app.post("/api/admin/refresh-views", tenantAuth, requireTenantAdmin, async (req, res) => {
     try {
+      await pool.query("REFRESH MATERIALIZED VIEW mv_orders_by_status");
       await pool.query("REFRESH MATERIALIZED VIEW mv_sales_history");
       await pool.query("REFRESH MATERIALIZED VIEW mv_cash_daily");
       await pool.query("REFRESH MATERIALIZED VIEW mv_reports_daily_sales");
