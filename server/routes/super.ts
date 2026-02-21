@@ -92,6 +92,12 @@ const planPatchSchema = z.object({
   featuresJson: z.record(z.boolean()).optional(),
 });
 
+const planPutSchema = z.object({
+  priceMonthly: z.coerce.number().min(0).max(999999999).optional(),
+  description: z.string().trim().max(500).optional(),
+  limits: z.record(z.number()).optional(),
+});
+
 const subscriptionPatchSchema = z.object({
   planCode: z.string().trim().min(2).max(50),
   status: z.enum(["ACTIVE", "EXPIRED", "SUSPENDED"]),
@@ -172,6 +178,27 @@ export function registerSuperRoutes(app: Express) {
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/super/plans/:planCode", superAuth, async (req, res) => {
+    try {
+      const planCode = String(req.params.planCode || "").trim().toUpperCase();
+      const payload = planPutSchema.parse(req.body || {});
+      const updated = await storage.updatePlanByCode(planCode, {
+        description: payload.description,
+        priceMonthly: payload.priceMonthly !== undefined ? String(payload.priceMonthly) : undefined,
+        limitsJson: payload.limits,
+      } as any);
+      if (!updated) {
+        return res.status(404).json({ error: "Plan no encontrado", code: "PLAN_NOT_FOUND" });
+      }
+      return res.json({ data: updated });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Payload inválido", code: "PLAN_PAYLOAD_INVALID", details: err.errors });
+      }
+      return res.status(500).json({ error: err.message || "No se pudo actualizar plan" });
     }
   });
 

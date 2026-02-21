@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Dialog,
@@ -49,6 +50,7 @@ import {
   Pencil,
   KeyRound,
   Trash2,
+  Barcode,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -396,7 +398,15 @@ export default function OwnerDashboard() {
   async function savePlan(planCode: string, payload: Record<string, unknown>) {
     setPlanSavingCode(planCode);
     try {
-      await apiRequest("PATCH", `/api/super/plans/${planCode}`, payload);
+      await apiRequest("PUT", `/api/super/plans/${planCode}`, {
+        priceMonthly: Number(payload.priceMonthly || 0),
+        description: String(payload.description || ""),
+        limits: {
+          max_branches: Number((payload as any).maxBranches || 0),
+          max_staff_users: Number(((payload as any).limitsJson || {}).max_staff_users || 0),
+          max_staff_per_branch: Number(((payload as any).limitsJson || {}).max_staff_per_branch || 0),
+        },
+      });
       await fetchData();
       toast({ title: "Plan actualizado" });
     } catch (err: any) {
@@ -1111,7 +1121,8 @@ export default function OwnerDashboard() {
                                 data-testid={`switch-messaging-addon-${tenant.id}`}
                               />
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 rounded-md border px-2 py-1">
+                              <Barcode className="w-4 h-4 text-muted-foreground" />
                               <Label className="text-xs text-muted-foreground whitespace-nowrap">Lector códigos</Label>
                               <Switch
                                 checked={!!addonStatus[tenant.id]?.barcode_scanner}
@@ -1191,22 +1202,55 @@ export default function OwnerDashboard() {
             <h2 className="text-xl font-semibold">Suscripciones</h2>
 
             <Card>
-              <CardContent className="py-4 space-y-4">
-                <h3 className="font-semibold">Planes</h3>
-                <div className="space-y-3">
-                  {plans.map((plan) => (
-                    <div key={plan.planCode} className="border rounded-md p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="font-medium">{plan.name} ({plan.planCode})</p>
-                        <Button size="sm" onClick={() => savePlan(plan.planCode, plan as any)} disabled={planSavingCode === plan.planCode}>{planSavingCode === plan.planCode ? "Guardando..." : "Guardar"}</Button>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        <Input value={(plan as any).description || ""} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, description: e.target.value } as any) : p))} placeholder="Descripción" />
-                        <Input type="number" value={String((plan as any).priceMonthly || "0")} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, priceMonthly: e.target.value } as any) : p))} placeholder="Precio" />
-                        <Input type="number" value={String((plan as any).maxBranches || 0)} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, maxBranches: Number(e.target.value) } as any) : p))} placeholder="Máx sucursales" />
-                      </div>
-                    </div>
-                  ))}
+              <CardHeader>
+                <h3 className="font-semibold">Planes (edición individual)</h3>
+                <p className="text-sm text-muted-foreground">Editá precio y descripción por plan con vista en cards.</p>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  {plans.map((plan) => {
+                    const limits = ((plan as any).limitsJson || {}) as Record<string, number>;
+                    return (
+                      <Card key={plan.planCode} className="border-dashed">
+                        <CardContent className="py-4 space-y-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold leading-none">{plan.name}</p>
+                              <p className="text-xs text-muted-foreground mt-1">{plan.planCode}</p>
+                            </div>
+                            <Badge variant="outline">{String((plan as any).currency || "ARS")}</Badge>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label>Precio mensual</Label>
+                            <Input type="number" min={0} value={String((plan as any).priceMonthly || "0")} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, priceMonthly: e.target.value } as any) : p))} placeholder="0" />
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label>Descripción</Label>
+                            <Textarea value={(plan as any).description || ""} onChange={(e) => setPlans((prev) => prev.map((p) => p.planCode === plan.planCode ? ({ ...p, description: e.target.value } as any) : p))} placeholder="Descripción extensa del plan" className="min-h-[100px]" />
+                          </div>
+
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                            <div className="rounded-md border p-2">
+                              <p className="text-xs text-muted-foreground">Sucursales</p>
+                              <p className="text-sm font-medium">{Number((plan as any).maxBranches || limits.max_branches || 0)}</p>
+                            </div>
+                            <div className="rounded-md border p-2">
+                              <p className="text-xs text-muted-foreground">Usuarios</p>
+                              <p className="text-sm font-medium">{Number(limits.max_staff_users || 0)}</p>
+                            </div>
+                            <div className="rounded-md border p-2">
+                              <p className="text-xs text-muted-foreground">Cajeros</p>
+                              <p className="text-sm font-medium">{(plan as any).allowCashiers ? "Sí" : "No"}</p>
+                            </div>
+                          </div>
+
+                          <Button className="w-full" onClick={() => savePlan(plan.planCode, plan as any)} disabled={planSavingCode === plan.planCode}>{planSavingCode === plan.planCode ? "Guardando..." : "Guardar cambios"}</Button>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>

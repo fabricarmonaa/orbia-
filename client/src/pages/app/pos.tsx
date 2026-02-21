@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
-import { apiRequest, useAuth } from "@/lib/auth";
+import { apiRequest, authFetch, useAuth } from "@/lib/auth";
 import { fetchAddons } from "@/lib/addons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useToast } from "@/hooks/use-toast";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
+import CameraScanner from "@/components/addons/CameraScanner";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 interface ProductRow {
   id: number;
@@ -63,6 +65,7 @@ export default function PosPage() {
   const [creatingCustomer, setCreatingCustomer] = useState(false);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
+  const [cameraScanOpen, setCameraScanOpen] = useState(false);
   useEffect(() => {
     fetchAddons()
       .then((d) => setAddonStatus(d || {}))
@@ -128,10 +131,19 @@ export default function PosPage() {
     const parsed = parseScannedCode(rawCode);
     if (!parsed.code) return;
     try {
-      const res = await apiRequest("GET", `/api/products/lookup?code=${encodeURIComponent(parsed.code)}`);
-      const json = await res.json();
+      const res = await authFetch(`/api/products/lookup?code=${encodeURIComponent(parsed.code)}`);
+      const json = await res.json().catch(() => ({}));
+      if (res.status === 403) {
+        setAddonStatus((prev) => ({ ...prev, barcode_scanner: false }));
+        toast({ title: "Addon no activo", description: "El addon de lector está deshabilitado.", variant: "destructive" });
+        return;
+      }
+      if (res.status === 404) {
+        toast({ title: "Producto no encontrado", description: `Producto no encontrado: ${parsed.code}`, variant: "destructive" });
+        return;
+      }
       if (!res.ok) throw new Error(json?.error || "No encontrado");
-      const product = json.data as ProductRow | null;
+      const product = json.product as ProductRow | null;
       if (!product) {
         toast({ title: "Sin coincidencias", description: `No existe producto con código ${parsed.code}`, variant: "destructive" });
         return;
@@ -275,13 +287,22 @@ export default function PosPage() {
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar por nombre/código" className="flex-1 min-w-[220px]" />
             <Button onClick={searchProducts}>Buscar</Button>
             {addonStatus.barcode_scanner && (
-              <Button variant="outline" onClick={() => setScanEnabled((v) => !v)}>
-                <ScanLine className="w-4 h-4 mr-1" />
-                {scanEnabled ? "Escuchando..." : "Escanear"}
-              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <ScanLine className="w-4 h-4 mr-1" />
+                    Escanear con...
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setScanEnabled(true)}>Pistola/Teclado</DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setCameraScanOpen(true)}>Cámara (móvil)</DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </div>
-          <BarcodeListener enabled={scanEnabled} onCode={handleScanToCart} durationMs={10000} />
+          <BarcodeListener enabled={scanEnabled} onCode={handleScanToCart} onCancel={() => setScanEnabled(false)} durationMs={10000} />
+          <CameraScanner open={cameraScanOpen} onClose={() => setCameraScanOpen(false)} onCode={handleScanToCart} timeoutMs={10000} />
           <div className="space-y-2 max-h-[420px] overflow-auto">
             {products.map((product) => (
               <div key={product.id} className="border rounded p-2 flex justify-between items-center">
