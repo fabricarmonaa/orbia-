@@ -105,7 +105,7 @@ export default function CameraScanner({ open, onClose, onCode, formats = ["qr", 
         await scanner.start(
           { facingMode: { ideal: "environment" } },
           { fps: 10, aspectRatio: 1.7778 },
-          async (decodedText) => {
+          async (decodedText: string) => {
             const parsed = parseScannedCode(decodedText);
             if (!parsed.code) return;
             await cleanup();

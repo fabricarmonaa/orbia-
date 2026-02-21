@@ -374,7 +374,7 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   <Label>Cliente</Label>
                   <Input
-                    placeholder="Ej: Consumidor Final / Empresa S.A."
+                    placeholder="Ingrese nombre cliente..."
                     value={newOrder.customerName}
                     onChange={(e) => setNewOrder({ ...newOrder, customerName: e.target.value })}
                     data-testid="input-customer-name"
@@ -405,7 +405,7 @@ export default function OrdersPage() {
                 <div className="space-y-2">
                   <Label>Descripción</Label>
                   <Textarea
-                    placeholder="Ej: 2x Hamburguesas completas sin pepino"
+                    placeholder="Ingrese descripción..."
                     value={newOrder.description}
                     onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
                     data-testid="input-description"
@@ -429,7 +429,7 @@ export default function OrdersPage() {
                         <div className="space-y-2">
                           <Label>Calle y número</Label>
                           <Input
-                            placeholder="Ej: Av. San Martín 1234"
+                            placeholder="Ingrese calle"
                             value={newOrder.deliveryAddress}
                             onChange={(e) => setNewOrder({ ...newOrder, deliveryAddress: e.target.value })}
                             data-testid="input-delivery-address"
@@ -438,7 +438,7 @@ export default function OrdersPage() {
                         <div className="space-y-2">
                           <Label>Ciudad</Label>
                           <Input
-                            placeholder="Ej: Buenos Aires"
+                            placeholder="Ciudad"
                             value={newOrder.deliveryCity}
                             onChange={(e) => setNewOrder({ ...newOrder, deliveryCity: e.target.value })}
                             data-testid="input-delivery-city"
@@ -447,7 +447,7 @@ export default function OrdersPage() {
                         <div className="space-y-2">
                           <Label>Notas para el delivery</Label>
                           <Input
-                            placeholder="Piso 2 Depto B, Timbre 'Gómez'"
+                            placeholder="Piso, Depto, Descripción"
                             value={newOrder.deliveryAddressNotes}
                             onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
                             data-testid="input-delivery-notes"

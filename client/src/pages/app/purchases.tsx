@@ -10,7 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 import CameraScanner from "@/components/addons/CameraScanner";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 interface PurchaseRow {
@@ -330,6 +330,7 @@ export default function PurchasesPage() {
         <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Detalle de compra</DialogTitle>
+            <DialogDescription>Revisá los ítems, cantidades y montos de la compra seleccionada.</DialogDescription>
           </DialogHeader>
           {detailLoading ? (
             <p className="text-sm text-muted-foreground">Cargando detalle...</p>

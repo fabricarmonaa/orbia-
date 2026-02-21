@@ -623,7 +623,7 @@ export default function ProductsPage() {
                       />
                     </th>
                     <th className="text-left p-2">Nombre</th>
-                    <th className="text-left p-2">SKU</th>
+                    <th className="text-left p-2">CÓDIGO</th>
                     <th className="text-left p-2">Categoría</th>
                     <th className="text-right p-2">Precio</th>
                     <th className="text-left p-2">Stock</th>
@@ -769,7 +769,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
     <form className="space-y-3" onSubmit={onSubmit}>
       <div className="space-y-2">
         <Label>Nombre</Label>
-        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Ej: Remera Talle M / Servicio de Limpieza" />
+        <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Nombre del producto" />
       </div>
       <div className="space-y-2">
         <Label>Descripción</Label>
@@ -829,7 +829,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label>SKU</Label>
+            <Label>CÓDIGO</Label>
             {scannerEnabled && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
