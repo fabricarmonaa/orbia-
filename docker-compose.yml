@@ -1,0 +1,63 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: orbia-postgres
+    env_file:
+      - .env.production
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-orbia}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-123}
+    ports:
+      - "5050:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-orbia}"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  ai:
+    build:
+      context: .
+      dockerfile: Dockerfile.ai
+    container_name: orbia-ai
+    env_file:
+      - .env.production
+    ports:
+      - "8001:8001"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    container_name: orbia-web
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # Ensure docker DNS hostname is used (overrides any local values)
+      DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-123}@postgres:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-orbia}
+      POSTGRES_HOST: postgres
+      AI_SERVICE_URL: http://ai:8001
+      NODE_ENV: production
+      PORT: "5000"
+      SEED: "${SEED:-false}"
+    ports:
+      - "5000:5000"
+    command: >
+      sh -c "
+      echo 'Waiting postgres...';
+      npm run db:push;
+      echo 'Starting server...';
+      node dist/index.cjs
+      "
+    restart: unless-stopped
+
+volumes:
+  pgdata:

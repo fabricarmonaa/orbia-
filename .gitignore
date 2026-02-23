@@ -1,0 +1,32 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+client/dist/
+
+# env files
+.env
+.env.*
+.env.example
+.env.production
+# python
+**/__pycache__/
+*.pyc
+ai-service/venv/
+.venv/
+
+# logs
+logs/
+*.log
+
+# uploads (keep folders only)
+uploads/*
+!uploads/.gitkeep
+!uploads/**/.gitkeep
+uploads/dummy/*
+
+# OS/editor
+.DS_Store
+.vscode/
+.idea/
