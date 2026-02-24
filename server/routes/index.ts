@@ -25,6 +25,7 @@ import { registerStatusRoutes } from "./statuses";
 import { registerStockRoutes } from "./stock";
 import { registerPurchaseCrudRoutes } from "./purchases";
 import { registerCustomerRoutes } from "./customers";
+import { registerOrderPresetRoutes } from "./order-presets";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -56,5 +57,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerStockRoutes(app);
   registerPurchaseCrudRoutes(app);
   registerCustomerRoutes(app);
+  registerOrderPresetRoutes(app);
   return httpServer;
 }

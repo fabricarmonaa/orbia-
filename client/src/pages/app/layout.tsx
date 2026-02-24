@@ -17,6 +17,7 @@ import BranchesPage from "./branches";
 import BranchDetailPage from "./branch-detail";
 import DeliveryPage from "./delivery";
 import SettingsPage from "./settings";
+import SettingsOrdersPage from "./settings-orders";
 import MessagingSettingsPage from "./messaging";
 import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
@@ -92,6 +93,7 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/branches/:branchId" component={BranchDetailPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/branches" component={BranchesPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/delivery" component={DeliveryPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/settings/orders" component={SettingsOrdersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}

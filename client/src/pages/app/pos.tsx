@@ -166,8 +166,15 @@ export default function PosPage() {
     }
 
     try {
-      const byDniRes = await apiRequest("GET", `/api/customers/by-dni?dni=${encodeURIComponent(dni)}`);
-      const byDniJson = await byDniRes.json();
+      const byDniRes = await authFetch(`/api/customers/by-dni?dni=${encodeURIComponent(dni)}`);
+      const byDniJson = await byDniRes.json().catch(() => ({} as any));
+      if (byDniRes.status === 404) {
+        setQuickCreateOpen(true);
+        return;
+      }
+      if (!byDniRes.ok) {
+        throw new Error(byDniJson?.error?.message || byDniJson?.error || "Error de búsqueda");
+      }
       const exact = byDniJson?.data || null;
       if (exact) {
         setSelectedCustomer({ id: exact.id, name: exact.name, doc: exact.doc || null, phone: exact.phone || null });

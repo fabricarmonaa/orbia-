@@ -36,6 +36,10 @@ interface CreateSaleInput {
 }
 
 
+function isApiDebugEnabled() {
+  return process.env.DEBUG_API === "1";
+}
+
 export const salesStorage = {
   async createSaleAtomic(input: CreateSaleInput) {
     return db.transaction(async (tx) => {
@@ -337,6 +341,16 @@ export const salesStorage = {
         ORDER BY ${orderByMV}
         LIMIT $${listParams.length - 1} OFFSET $${listParams.length}
       `;
+      if (isApiDebugEnabled()) {
+        console.info("[debug-api] sales.listSales mv query", {
+          tenantId,
+          branchId: filters.branchId ?? null,
+          where: whereSql.join(" AND "),
+          params,
+          limit: normalizedLimit,
+          offset: normalizedOffset,
+        });
+      }
       const rows = await pool.query(listQuery, listParams);
 
       return {

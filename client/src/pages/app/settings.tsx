@@ -23,6 +23,7 @@ import { BrandingSettings } from "@/components/settings/BrandingSettings";
 import { OperationsSettings } from "@/components/settings/OperationsSettings";
 import { AdvancedSettings } from "@/components/settings/AdvancedSettings";
 import { StatusesSettings } from "@/components/settings/StatusesSettings";
+import { OrderPresetsSettings } from "@/components/settings/OrderPresetsSettings";
 import { PriceListPdfSettings } from "@/components/pdfs/PriceListPdfSettings";
 
 interface Config {
@@ -396,6 +397,11 @@ export default function SettingsPage() {
           id: "statuses",
           label: "Estados",
           content: <StatusesSettings />,
+        },
+        {
+          id: "order-presets",
+          label: "Pedidos (campos)",
+          content: <OrderPresetsSettings />,
         },
         {
           id: "pdfs",

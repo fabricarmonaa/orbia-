@@ -61,6 +61,7 @@ const menuItems: MenuItem[] = [
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true },
+  { title: "Configuración pedidos", url: "/app/settings/orders", icon: Settings, adminOnly: true },
 ];
 
 export function AppSidebar() {
