@@ -31,7 +31,16 @@ async function api(token, path, init = {}) {
 }
 
 async function main() {
-  const token = process.env.AUTH_TOKEN || await login();
+  let token;
+  try {
+    token = process.env.AUTH_TOKEN || await login();
+  } catch (err) {
+    if (String(err?.message || err).toLowerCase().includes("fetch")) {
+      console.error("smoke_order_custom_fields: backend no disponible en", appUrl);
+      process.exit(2);
+    }
+    throw err;
+  }
 
   const fieldsRes = await api(token, '/api/order-presets/types/SERVICIO/fields');
   assert.equal(fieldsRes.res.status, 200, `fields expected 200 got ${fieldsRes.res.status}`);
@@ -66,8 +75,21 @@ async function main() {
 
   const readCustom = await api(token, `/api/orders/${orderId}/custom-fields`);
   assert.equal(readCustom.res.status, 200, `custom-fields expected 200 got ${readCustom.res.status}: ${JSON.stringify(readCustom.body)}`);
-  const found = (readCustom.body?.data?.customFields || []).find((x) => x.fieldId === field.id);
+  let found = (readCustom.body?.data?.customFields || []).find((x) => x.fieldId === field.id);
   assert.ok(found, 'custom field should be returned');
+
+  const updatedValue = `valor smoke actualizado ${Date.now()}`;
+  const patchOrder = await api(token, `/api/orders/${orderId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ customFields: [{ fieldId: field.id, valueText: updatedValue }] }),
+  });
+  assert.equal(patchOrder.res.status, 200, `patch order expected 200 got ${patchOrder.res.status}: ${JSON.stringify(patchOrder.body)}`);
+
+  const readAfter = await api(token, `/api/orders/${orderId}/custom-fields`);
+  assert.equal(readAfter.res.status, 200, `custom-fields after patch expected 200 got ${readAfter.res.status}: ${JSON.stringify(readAfter.body)}`);
+  found = (readAfter.body?.data?.customFields || []).find((x) => x.fieldId === field.id);
+  assert.equal(found?.valueText, updatedValue, `custom value should be updated, got ${found?.valueText}`);
 
   console.log('smoke_order_custom_fields: OK', { appUrl, orderId, fieldId: field.id });
 }

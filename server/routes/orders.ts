@@ -9,7 +9,7 @@ import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams } from "../middleware/validate";
 import { getDefaultStatus, resolveOrderStatusIdByCode, ensureStatusExists, normalizeStatusCode } from "../services/statuses";
 import { db } from "../db";
-import { and, eq } from "drizzle-orm";
+import { and, count, eq } from "drizzle-orm";
 import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
@@ -202,6 +202,9 @@ export function registerOrderRoutes(app: Express) {
       }
       res.status(201).json(responseBody);
     } catch (err: any) {
+      if (err instanceof HttpError) {
+        return res.status(err.status).json({ error: { code: err.code, message: err.message, ...(err.extra || {}) } });
+      }
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
       }
@@ -218,7 +221,7 @@ export function registerOrderRoutes(app: Express) {
       const customFields = await getOrderCustomFields(id, tenantId);
       return res.json({ data: { orderId: id, orderTypeCode: order.type, customFields } });
     } catch (err: any) {
-      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message, ...(err.extra || {}) } });
       return res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
   });
@@ -232,6 +235,12 @@ export function registerOrderRoutes(app: Express) {
       if (!current) return res.status(404).json({ error: "Pedido no encontrado" });
 
       const nextType = (payload.orderTypeCode || payload.type || current.type || "PEDIDO").toUpperCase();
+      if (nextType !== String(current.type || "").toUpperCase()) {
+        const [row] = await db.select({ c: count() }).from(orderFieldValues).where(and(eq(orderFieldValues.orderId, id), eq(orderFieldValues.tenantId, tenantId)));
+        if ((row?.c || 0) > 0) {
+          return res.status(400).json({ error: { code: "ORDER_TYPE_CHANGE_BLOCKED", message: "No se puede cambiar el tipo con custom fields existentes" } });
+        }
+      }
       await db.update(orders).set({
         type: nextType,
         customerName: payload.customerName !== undefined ? (payload.customerName || null) : current.customerName,
@@ -251,7 +260,7 @@ export function registerOrderRoutes(app: Express) {
       const customFields = await getOrderCustomFields(id, tenantId);
       return res.json({ data: saved, customFields });
     } catch (err: any) {
-      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message, ...(err.extra || {}) } });
       return res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
   });

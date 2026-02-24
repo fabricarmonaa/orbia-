@@ -491,11 +491,12 @@ export default function OrdersPage() {
                         ) : (
                           <div className="space-y-1">
                             <Input
-                              placeholder="Referencia archivo (fileId/storageKey)"
+                              placeholder="Requiere módulo de adjuntos"
                               value={customFieldInputs[field.id]?.fileStorageKey || ""}
-                              onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), fileStorageKey: e.target.value } }))}
+                              disabled
+                              readOnly
                             />
-                            <p className="text-xs text-muted-foreground">Extensiones permitidas: {(field.config?.allowedExtensions || ["pdf","docx","xlsx","jpg","png","jpeg","jfif"]).join(", ")}</p>
+                            <p className="text-xs text-muted-foreground">Este campo FILE requiere módulo de adjuntos para subir archivos. Extensiones permitidas: {(field.config?.allowedExtensions || ["pdf","docx","xlsx","jpg","png","jpeg","jfif"]).join(", ")}</p>
                           </div>
                         )}
                       </div>

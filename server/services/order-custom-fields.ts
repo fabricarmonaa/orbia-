@@ -54,7 +54,7 @@ export async function validateAndNormalizeCustomFields(
   const normalized = customFields.map((row) => {
     const def = row.fieldId ? byId.get(Number(row.fieldId)) : (row.fieldKey ? byKey.get(String(row.fieldKey)) : undefined);
     if (!def) {
-      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Campo personalizado inválido");
+      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Campo personalizado inválido", { fieldId: row.fieldId ?? null, fieldKey: row.fieldKey ?? null });
     }
 
     let valueText: string | null = row.valueText != null ? String(row.valueText) : null;
@@ -65,16 +65,16 @@ export async function validateAndNormalizeCustomFields(
       valueNumber = null;
       fileStorageKey = null;
       if (def.required && !String(valueText || "").trim()) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_TEXT" });
       }
     } else if (def.fieldType === "NUMBER") {
       valueText = null;
       fileStorageKey = null;
       if (valueNumber != null && Number.isNaN(Number(valueNumber))) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Número inválido en ${def.label}`);
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Número inválido en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_NUMBER" });
       }
       if (def.required && (valueNumber == null || valueNumber === "")) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_NUMBER" });
       }
     } else if (def.fieldType === "FILE") {
       valueText = null;
@@ -82,12 +82,12 @@ export async function validateAndNormalizeCustomFields(
       const cfg = (def.config || {}) as { allowedExtensions?: string[] };
       const allowed = (cfg.allowedExtensions && cfg.allowedExtensions.length ? cfg.allowedExtensions : Array.from(FILE_ALLOWED)).map((x) => String(x).toLowerCase());
       if (def.required && !fileStorageKey) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_FILE" });
       }
       if (fileStorageKey) {
         const ext = getExt(fileStorageKey);
         if (ext && !allowed.includes(ext) && !FILE_ALLOWED.has(ext)) {
-          throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Extensión no permitida en ${def.label}`);
+          throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Extensión no permitida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_FILE_EXTENSION", fileStorageKey });
         }
       }
     }
@@ -102,7 +102,7 @@ export async function validateAndNormalizeCustomFields(
 
   const requiredMissing = defs.filter((d) => d.required && !normalized.some((n) => n.fieldDefinitionId === d.id));
   if (requiredMissing.length > 0) {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Faltan campos requeridos: ${requiredMissing.map((r) => r.label).join(", ")}`);
+    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Faltan campos requeridos: ${requiredMissing.map((r) => r.label).join(", ")}`, { missing: requiredMissing.map((r) => ({ fieldId: r.id, fieldKey: r.fieldKey })) });
   }
 
   return { typeRow, normalized, defs };
@@ -150,6 +150,7 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
     fieldKey: map.get(v.fieldDefinitionId)?.fieldKey || null,
     label: map.get(v.fieldDefinitionId)?.label || null,
     fieldType: map.get(v.fieldDefinitionId)?.fieldType || null,
+    required: map.get(v.fieldDefinitionId)?.required ?? false,
     valueText: v.valueText,
     valueNumber: v.valueNumber,
     fileStorageKey: v.fileStorageKey,

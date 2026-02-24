@@ -107,3 +107,14 @@ Con backend arriba (si no pasás `AUTH_TOKEN`, el script hace login demo automá
 ```bash
 APP_URL=http://localhost:5000 node scripts/smoke_order_custom_fields.mjs
 ```
+
+
+## Custom fields pedidos (prueba manual)
+1) Ir a **Configuración → Pedidos (campos)** y crear un campo `TEXT` para `SERVICIO` (ej: "Observación técnica").
+2) Ir a **Pedidos → Nuevo Pedido**, elegir tipo `SERVICIO` y completar el campo adicional.
+3) Crear pedido y abrir su detalle: debe verse la sección **Campos adicionales** con el valor guardado.
+4) (API) Verificar lectura directa:
+```bash
+curl -i "http://localhost:5000/api/orders/<ORDER_ID>/custom-fields"   -H "Authorization: Bearer TOKEN_JWT"   -H "Accept: application/json"
+```
+> Nota FILE: hoy la UI de pedidos deja el campo FILE deshabilitado y muestra mensaje de módulo de adjuntos pendiente.
