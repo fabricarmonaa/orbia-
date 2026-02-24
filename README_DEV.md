@@ -99,3 +99,11 @@ Con backend arriba (si no pasás `AUTH_TOKEN`, el script hace login demo automá
 ```bash
 APP_URL=http://localhost:5000 node scripts/smoke_order_presets.mjs
 ```
+
+
+## Smoke test ETAPA 5.3 (order custom fields create/read)
+Con backend arriba (si no pasás `AUTH_TOKEN`, el script hace login demo automáticamente):
+
+```bash
+APP_URL=http://localhost:5000 node scripts/smoke_order_custom_fields.mjs
+```

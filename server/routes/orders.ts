@@ -8,6 +8,11 @@ import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentRe
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams } from "../middleware/validate";
 import { getDefaultStatus, resolveOrderStatusIdByCode, ensureStatusExists, normalizeStatusCode } from "../services/statuses";
+import { db } from "../db";
+import { and, eq } from "drizzle-orm";
+import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
+import { HttpError } from "../lib/http-errors";
+import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
@@ -23,8 +28,18 @@ const sanitizeOptionalLong = (max: number) =>
     z.string().transform((value) => sanitizeLongText(value, max)).optional()
   );
 
+const customFieldSchema = z.object({
+  fieldId: z.coerce.number().int().positive().optional(),
+  fieldKey: z.string().trim().min(1).max(80).optional(),
+  valueText: z.string().optional().nullable(),
+  valueNumber: z.union([z.string(), z.number()]).optional().nullable(),
+  fileId: z.union([z.string(), z.number()]).optional().nullable(),
+  fileStorageKey: z.string().optional().nullable(),
+});
+
 const createOrderSchema = z.object({
   type: sanitizeOptionalShort(30),
+  orderTypeCode: sanitizeOptionalShort(30),
   customerName: sanitizeOptionalShort(120).nullable(),
   customerPhone: sanitizeOptionalShort(40).nullable(),
   customerEmail: z.preprocess(
@@ -40,6 +55,7 @@ const createOrderSchema = z.object({
   deliveryAddress: sanitizeOptionalLong(200).nullable(),
   deliveryCity: sanitizeOptionalShort(80).nullable(),
   deliveryAddressNotes: sanitizeOptionalLong(200).nullable(),
+  customFields: z.array(customFieldSchema).optional(),
 });
 
 const orderStatusSchema = z.object({
@@ -57,6 +73,21 @@ const linkSaleSchema = z.object({
   saleId: z.coerce.number().int().positive(),
 });
 
+const updateOrderSchema = z.object({
+  type: sanitizeOptionalShort(30).optional(),
+  orderTypeCode: sanitizeOptionalShort(30).optional(),
+  customerName: sanitizeOptionalShort(120).nullable().optional(),
+  customerPhone: sanitizeOptionalShort(40).nullable().optional(),
+  customerEmail: z.preprocess(
+    (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+    z.string().trim().email().max(120).optional()
+  ).nullable().optional(),
+  description: sanitizeOptionalLong(500).nullable().optional(),
+  totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
+  customFields: z.array(customFieldSchema).optional(),
+});
+
+
 export function registerOrderRoutes(app: Express) {
   app.get("/api/orders", tenantAuth, enforceBranchScope, async (req, res) => {
     try {
@@ -69,6 +100,9 @@ export function registerOrderRoutes(app: Express) {
       }
       res.json({ data });
     } catch (err: any) {
+      if (err instanceof HttpError) {
+        return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      }
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
   });
@@ -100,35 +134,59 @@ export function registerOrderRoutes(app: Express) {
         || (payload.statusCode ? await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(payload.statusCode)) : null)
         || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
         || null;
-      const data = await storage.createOrder({
-        tenantId,
-        orderNumber,
-        type: payload.type || "PEDIDO",
-        customerName: payload.customerName || null,
-        customerPhone: payload.customerPhone || null,
-        customerEmail: payload.customerEmail || null,
-        description: payload.description || null,
-        statusId: resolvedCreateStatusId,
-        totalAmount: payload.totalAmount !== undefined && payload.totalAmount !== null ? String(payload.totalAmount) : null,
-        branchId,
-        createdById: req.auth!.userId,
-        createdByScope: req.auth!.scope || "TENANT",
-        createdByBranchId: req.auth!.branchId || null,
-        requiresDelivery: payload.requiresDelivery || false,
-        deliveryAddress: payload.deliveryAddress || null,
-        deliveryCity: payload.deliveryCity || null,
-        deliveryAddressNotes: payload.deliveryAddressNotes || null,
-        deliveryStatus: payload.requiresDelivery ? "pending" : null,
-      });
-      if (data.statusId) {
-        await storage.createOrderHistory({
+      const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
+      const customPayload = payload.customFields || [];
+      const validatedCustom = customPayload.length > 0
+        ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload)
+        : null;
+
+      const data = await db.transaction(async (tx) => {
+        const [created] = await tx.insert(orders).values({
           tenantId,
-          orderId: data.id,
-          statusId: data.statusId,
-          changedById: req.auth!.userId,
-          note: "Pedido creado",
-        });
-      }
+          orderNumber,
+          type: orderTypeCode,
+          customerName: payload.customerName || null,
+          customerPhone: payload.customerPhone || null,
+          customerEmail: payload.customerEmail || null,
+          description: payload.description || null,
+          statusId: resolvedCreateStatusId,
+          totalAmount: payload.totalAmount !== undefined && payload.totalAmount !== null ? String(payload.totalAmount) : null,
+          branchId,
+          createdById: req.auth!.userId,
+          createdByScope: req.auth!.scope || "TENANT",
+          createdByBranchId: req.auth!.branchId || null,
+          requiresDelivery: payload.requiresDelivery || false,
+          deliveryAddress: payload.deliveryAddress || null,
+          deliveryCity: payload.deliveryCity || null,
+          deliveryAddressNotes: payload.deliveryAddressNotes || null,
+          deliveryStatus: payload.requiresDelivery ? "pending" : null,
+        }).returning();
+
+        if (created.statusId) {
+          await tx.insert(orderStatusHistory).values({
+            tenantId,
+            orderId: created.id,
+            statusId: created.statusId,
+            changedById: req.auth!.userId,
+            note: "Pedido creado",
+          });
+        }
+
+        if (validatedCustom && validatedCustom.normalized.length > 0) {
+          for (const row of validatedCustom.normalized) {
+            await tx.insert(orderFieldValues).values({
+              tenantId,
+              orderId: created.id,
+              fieldDefinitionId: row.fieldDefinitionId,
+              valueText: row.valueText,
+              valueNumber: row.valueNumber,
+              fileStorageKey: row.fileStorageKey,
+            });
+          }
+        }
+
+        return created;
+      });
       await refreshMetricsForDate(tenantId, new Date());
       const responseBody = { data };
       if (idemKey) {
@@ -148,6 +206,53 @@ export function registerOrderRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+    }
+  });
+
+  app.get("/api/orders/:id/custom-fields", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const order = await storage.getOrderById(id, tenantId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      const customFields = await getOrderCustomFields(id, tenantId);
+      return res.json({ data: { orderId: id, orderTypeCode: order.type, customFields } });
+    } catch (err: any) {
+      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      return res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+    }
+  });
+
+  app.patch("/api/orders/:id", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(updateOrderSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const payload = req.body as z.infer<typeof updateOrderSchema>;
+      const current = await storage.getOrderById(id, tenantId);
+      if (!current) return res.status(404).json({ error: "Pedido no encontrado" });
+
+      const nextType = (payload.orderTypeCode || payload.type || current.type || "PEDIDO").toUpperCase();
+      await db.update(orders).set({
+        type: nextType,
+        customerName: payload.customerName !== undefined ? (payload.customerName || null) : current.customerName,
+        customerPhone: payload.customerPhone !== undefined ? (payload.customerPhone || null) : current.customerPhone,
+        customerEmail: payload.customerEmail !== undefined ? (payload.customerEmail || null) : current.customerEmail,
+        description: payload.description !== undefined ? (payload.description || null) : current.description,
+        totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
+        updatedAt: new Date(),
+      }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+
+      if (payload.customFields) {
+        const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields);
+        await saveCustomFieldValues(id, tenantId, normalized.normalized);
+      }
+
+      const saved = await storage.getOrderById(id, tenantId);
+      const customFields = await getOrderCustomFields(id, tenantId);
+      return res.json({ data: saved, customFields });
+    } catch (err: any) {
+      if (err instanceof HttpError) return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+      return res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
   });
 
