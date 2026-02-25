@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,14 @@ export default function DeliveryLogin() {
   const [pin, setPin] = useState("");
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+
+  // Auto-redirect if a valid delivery session already exists
+  useEffect(() => {
+    const token = localStorage.getItem("delivery_token");
+    if (token) {
+      setLocation("/delivery/panel");
+    }
+  }, []);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();

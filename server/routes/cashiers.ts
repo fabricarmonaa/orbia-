@@ -118,11 +118,10 @@ export function registerCashierRoutes(app: Express) {
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
       const plan = await getTenantPlan(tenantId);
-      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
-      if (perBranchLimit > 0 && payload.branch_id) {
+      if (payload.branch_id) {
         const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
-        if (Number(row?.c || 0) >= perBranchLimit) {
-          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+        if (Number(row?.c || 0) >= 1) {
+          return res.status(400).json({ error: "Solo una caja permitida por sucursal", code: "BRANCH_LIMIT_REACHED", limit: "max_cashiers_per_branch" });
         }
       }
       const pinHash = await hashPassword(payload.pin);
@@ -132,6 +131,14 @@ export function registerCashierRoutes(app: Express) {
         name: payload.name,
         pinHash,
         active: true,
+      });
+      await storage.createAuditLog({
+        tenantId,
+        userId: req.auth!.userId,
+        action: "create",
+        entityType: "cashier",
+        entityId: data.id,
+        metadata: { branchId: payload.branch_id, name: payload.name },
       });
       res.status(201).json({ data: { id: data.id, name: data.name, branch_id: data.branchId, active: data.active } });
     } catch (err: any) {
@@ -158,11 +165,29 @@ export function registerCashierRoutes(app: Express) {
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
       const plan = await getTenantPlan(tenantId);
-      const perBranchLimit = Number((plan?.limits as any)?.max_staff_per_branch ?? ((plan?.planCode || "").toUpperCase() === "ESCALA" ? 10 : -1));
-      if (perBranchLimit > 0 && payload.branch_id) {
-        const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
-        if (Number(row?.c || 0) >= perBranchLimit) {
-          return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
+      if (payload.branch_id) {
+        // Excluimos la caja actual de la cuenta
+        const [row] = await db.select({ c: count() })
+          .from(cashiers)
+          .where(
+            and(
+              eq(cashiers.tenantId, tenantId),
+              eq(cashiers.branchId, payload.branch_id),
+              eq(cashiers.active, true)
+            )
+          );
+
+        // Si hay una caja y NO es la caja que estamos editando
+        const existing = await db.select().from(cashiers).where(
+          and(
+            eq(cashiers.tenantId, tenantId),
+            eq(cashiers.branchId, payload.branch_id),
+            eq(cashiers.active, true)
+          )
+        ).limit(1);
+
+        if (existing.length > 0 && existing[0].id !== id) {
+          return res.status(400).json({ error: "Solo una caja permitida por sucursal", code: "BRANCH_LIMIT_REACHED", limit: "max_cashiers_per_branch" });
         }
       }
       if (payload.pin) {

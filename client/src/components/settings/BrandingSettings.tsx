@@ -134,19 +134,7 @@ export function BrandingSettings({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label>Idioma</Label>
-                <Select value={config.language} onValueChange={(v) => setConfig({ ...config, language: v })}>
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="es">Español</SelectItem>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="pt">Português</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+
               <div className="space-y-2">
                 <Label>
                   Tracking (horas)

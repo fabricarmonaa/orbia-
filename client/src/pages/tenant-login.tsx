@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Building2, Eye, EyeOff } from "lucide-react";
-import { login } from "@/lib/auth";
+import { login, getToken, getUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useBranding } from "@/context/BrandingContext";
 import { BrandLogo } from "@/components/branding/BrandLogo";
@@ -21,6 +21,15 @@ export default function TenantLogin() {
   const [pin, setPin] = useState("");
   const { toast } = useToast();
   const { appBranding } = useBranding();
+
+  // Auto-redirect if a valid tenant session already exists in localStorage
+  useEffect(() => {
+    const token = getToken();
+    const user = getUser();
+    if (token && user && !user.isSuperAdmin) {
+      setLocation("/app");
+    }
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -72,7 +81,7 @@ export default function TenantLogin() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
-                            <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-2">
                 <Button type="button" variant={mode === "admin" ? "default" : "outline"} onClick={() => setMode("admin")}>Ingresar como Administrador</Button>
                 <Button type="button" variant={mode === "cashier" ? "default" : "outline"} onClick={() => setMode("cashier")}>Ingresar como Cajero</Button>
               </div>
@@ -81,7 +90,7 @@ export default function TenantLogin() {
                 <Label htmlFor="tenantCode">Código de negocio</Label>
                 <Input
                   id="tenantCode"
-                  placeholder="codigo-empresa"
+                  placeholder="Codigo del negocio"
                   value={tenantCode}
                   onChange={(e) => setTenantCode(e.target.value)}
                   required
@@ -92,7 +101,7 @@ export default function TenantLogin() {
                 <>
                   <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" placeholder="usuario@empresa.com" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-email" />
+                    <Input id="email" type="email" placeholder="Email empresa/dueño" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-email" />
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="password">Contraseña</Label>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, authFetch, useAuth } from "@/lib/auth";
 import { fetchAddons } from "@/lib/addons";
@@ -63,6 +63,8 @@ export default function PosPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<{ id: number; name: string; doc?: string | null; phone?: string | null } | null>(null);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   const [creatingCustomer, setCreatingCustomer] = useState(false);
+  // Prevents concurrent duplicate requests from double-clicks
+  const dniLookupInFlight = useRef(false);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
@@ -157,7 +159,13 @@ export default function PosPage() {
 
   async function confirmPendingCustomer() {
     if (!pendingSale) return;
-    const dni = pendingCustomerDni.trim();
+    // Prevent concurrent duplicate calls (e.g. double-click)
+    if (dniLookupInFlight.current) return;
+
+    const rawDni = pendingCustomerDni.trim();
+    // Normalize to digits only
+    const dni = rawDni.replace(/\D/g, "");
+
     if (!dni) {
       toast({ title: "Cliente sin DNI", description: "Podés continuar la venta sin cliente asociado." });
       setSelectedCustomer(null);
@@ -165,11 +173,28 @@ export default function PosPage() {
       return;
     }
 
+    // Guard: backend requires 6–12 digits — avoid sending a request we know will fail
+    if (dni.length < 6) {
+      toast({ title: "DNI muy corto", description: "Ingresá al menos 6 dígitos" });
+      return;
+    }
+    if (dni.length > 12) {
+      toast({ title: "DNI muy largo", description: "El DNI no puede superar 12 dígitos" });
+      return;
+    }
+
+    dniLookupInFlight.current = true;
     try {
       const byDniRes = await authFetch(`/api/customers/by-dni?dni=${encodeURIComponent(dni)}`);
       const byDniJson = await byDniRes.json().catch(() => ({} as any));
       if (byDniRes.status === 404) {
         setQuickCreateOpen(true);
+        return;
+      }
+      // 400 means the DNI format was rejected by the server despite our local guard;
+      // show a soft message instead of a destructive toast.
+      if (byDniRes.status === 400) {
+        toast({ title: "DNI inválido", description: "Verificá el número ingresado" });
         return;
       }
       if (!byDniRes.ok) {
@@ -187,6 +212,8 @@ export default function PosPage() {
       setQuickCreateOpen(true);
     } catch (err: any) {
       toast({ title: "No se pudo validar cliente", description: err?.message || "Error de búsqueda", variant: "destructive" });
+    } finally {
+      dniLookupInFlight.current = false;
     }
   }
 

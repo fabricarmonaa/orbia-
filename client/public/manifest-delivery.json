@@ -1,12 +1,12 @@
 {
-  "id": "/delivery",
+  "id": "/pwa-delivery",
   "name": "Orbia Delivery",
   "short_name": "Orbia Delivery",
   "display": "standalone",
-  "start_url": "/delivery",
-  "scope": "/delivery",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "start_url": "/delivery/login",
+  "scope": "/",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
   "screenshots": [
     {
       "src": "/screenshots/desktop-1.png",

@@ -1,12 +1,12 @@
 {
-  "id": "/owner",
+  "id": "/pwa-owner",
   "name": "Orbia Admin",
   "short_name": "Orbia Admin",
   "display": "standalone",
-  "start_url": "/owner",
-  "scope": "/owner",
-  "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "start_url": "/owner/login",
+  "scope": "/",
+  "background_color": "#111827",
+  "theme_color": "#111827",
   "screenshots": [
     {
       "src": "/screenshots/desktop-1.png",

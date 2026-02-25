@@ -22,6 +22,11 @@ export interface TrackingOrderData {
     content: string;
     date: string;
   }>;
+  customFields?: Array<{
+    label: string;
+    value: string | null;
+    fieldType: string;
+  }>;
   trackingLayout: string;
   trackingTosText?: string | null;
 }
@@ -149,6 +154,12 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
               <p className="font-medium">{formatDate(order.closedAt)}</p>
             </div>
           )}
+          {order.customFields?.map((field, idx) => (
+            <div key={idx}>
+              <p className="text-muted-foreground">{field.label}</p>
+              <p className="font-medium">{field.value || "-"}</p>
+            </div>
+          ))}
         </div>
       </CardContent>
     </Card>
@@ -255,8 +266,8 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
 
   const historySection = layout === "cards" ? cardsHistory
     : layout === "stepper" ? stepperHistory
-    : layout === "minimal" ? minimalHistory
-    : classicHistory;
+      : layout === "minimal" ? minimalHistory
+        : classicHistory;
 
   const commentsSection = order.publicComments.length > 0 && (
     <Card>

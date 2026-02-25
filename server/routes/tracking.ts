@@ -1,7 +1,9 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 
-async function buildTrackingPayload(trackingId: string) {
+import { getOrderCustomFields } from "../services/order-custom-fields";
+
+async function buildTrackingPayload(trackingId: string, reqBaseUrl: string) {
   const order = await storage.getOrderByTrackingId(trackingId);
   if (!order) return { status: 404, body: { error: "Seguimiento no encontrado" } };
   if (order.trackingRevoked) return { status: 410, body: { error: "Link de seguimiento revocado" } };
@@ -27,6 +29,37 @@ async function buildTrackingPayload(trackingId: string) {
     };
   });
 
+  // Fetch and filter custom fields based on visibility rules
+  const allCustomFields = await getOrderCustomFields(order.id, tenantId);
+  const publicCustomFields = allCustomFields
+    .filter((f) => {
+      // visible_override = true OR (visible_override IS NULL AND visible_in_tracking = true)
+      if (f.visibleOverride === true) return true;
+      if (f.visibleOverride === false) return false;
+      return f.visibleInTracking;
+    })
+    .map((f) => {
+      // For FILE fields, transform the raw file storage key
+      // If visible, they should see "Archivo Adjunto", but without the API we don't expose 
+      // direct auth-download. We just expose the attachment ID string for the frontend to show 
+      let displayValue: string | null = null;
+      if (f.fieldType === "FILE" && f.fileStorageKey) {
+        // Just return the attachment ID reference (e.g. "att:123"). Since we don't have
+        // public download endpoint right now as per plan, we'll just expose the flag.
+        displayValue = "Archivo adjunto";
+      } else if (f.fieldType === "NUMBER") {
+        displayValue = f.valueNumber !== null ? String(f.valueNumber) : null;
+      } else {
+        displayValue = f.valueText;
+      }
+
+      return {
+        label: f.label || "Campo",
+        value: displayValue,
+        fieldType: f.fieldType,
+      };
+    });
+
   return {
     status: 200,
     body: {
@@ -44,6 +77,7 @@ async function buildTrackingPayload(trackingId: string) {
           content: c.content,
           date: c.createdAt,
         })),
+        customFields: publicCustomFields,
         trackingLayout: config?.trackingLayout || "classic",
         trackingTosText: (branding.texts as any)?.trackingFooter || null,
         branding: {
@@ -66,7 +100,8 @@ async function buildTrackingPayload(trackingId: string) {
 export function registerTrackingRoutes(app: Express) {
   app.get("/api/public/track/:trackingId", async (req, res) => {
     try {
-      const result = await buildTrackingPayload(req.params.trackingId);
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const result = await buildTrackingPayload(req.params.trackingId, baseUrl);
       return res.status(result.status).json(result.body);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -75,7 +110,8 @@ export function registerTrackingRoutes(app: Express) {
 
   app.get("/api/public/tracking/:trackingId", async (req, res) => {
     try {
-      const result = await buildTrackingPayload(req.params.trackingId);
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const result = await buildTrackingPayload(req.params.trackingId, baseUrl);
       return res.status(result.status).json(result.body);
     } catch (err: any) {
       res.status(500).json({ error: err.message });

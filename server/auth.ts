@@ -113,20 +113,33 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   if (!tenant?.planId) return null;
   const plan = await storage.getPlanById(tenant.planId);
   if (!plan) return null;
+
+  // featuresJson is the canonical source of truth (populated by seed / super admin).
+  // For backwards compat, also merge the legacy boolean columns on the plans table
+  // so that tenants created before the featuresJson migration keep working.
   const baseFeatures = (plan.featuresJson || {}) as PlanFeatures;
   const computedFeatures: PlanFeatures = {
-    ...baseFeatures,
-    CASHIERS: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.CASHIERS) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
-    cashiers: Boolean((plan as any).allowCashiers) || Boolean(baseFeatures.cashiers) || ["PROFESIONAL","ESCALA"].includes(String(plan.planCode||"").toUpperCase()),
-    MARGIN_PRICING: Boolean((plan as any).allowMarginPricing) || Boolean(baseFeatures.MARGIN_PRICING),
-    EXCEL_IMPORT: Boolean((plan as any).allowExcelImport) || Boolean(baseFeatures.EXCEL_IMPORT),
-    CUSTOM_TOS: Boolean((plan as any).allowCustomTos) || Boolean(baseFeatures.CUSTOM_TOS),
+    // Backcompat: legacy boolean columns take effect if not explicitly in JSON
+    cashiers: baseFeatures.cashiers ?? Boolean((plan as any).allowCashiers),
+    CASHIERS: baseFeatures.CASHIERS ?? Boolean((plan as any).allowCashiers),
+    margin_pricing: baseFeatures.margin_pricing ?? Boolean((plan as any).allowMarginPricing),
+    MARGIN_PRICING: baseFeatures.MARGIN_PRICING ?? Boolean((plan as any).allowMarginPricing),
+    excel_import: baseFeatures.excel_import ?? Boolean((plan as any).allowExcelImport),
+    EXCEL_IMPORT: baseFeatures.EXCEL_IMPORT ?? Boolean((plan as any).allowExcelImport),
+    custom_tos: baseFeatures.custom_tos ?? Boolean((plan as any).allowCustomTos),
+    CUSTOM_TOS: baseFeatures.CUSTOM_TOS ?? Boolean((plan as any).allowCustomTos),
+    ...baseFeatures, // JSON keys win over backcompat defaults
   } as PlanFeatures;
+
+  const legacyMaxBranches = Number((plan as any).maxBranches ?? 0);
   const baseLimits = (plan.limitsJson || {}) as PlanLimits;
   const computedLimits: PlanLimits = {
+    // Spread JSON first; then override with legacy column values when the JSON key is absent
     ...baseLimits,
-    max_branches: Number((plan as any).maxBranches ?? baseLimits.max_branches ?? 0),
+    branches_max: baseLimits.branches_max ?? legacyMaxBranches,
+    max_branches: baseLimits.max_branches ?? legacyMaxBranches,
   } as PlanLimits;
+
   return {
     planCode: plan.planCode,
     name: plan.name,

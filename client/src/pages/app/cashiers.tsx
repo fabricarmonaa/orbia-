@@ -31,11 +31,17 @@ export default function CashiersPage() {
   }
 
   async function createCashier() {
-    await apiRequest("POST", "/api/cashiers", { name, pin, branch_id: null });
-    setName("");
-    setPin("");
-    toast({ title: "Cajero creado" });
-    await load();
+    try {
+      const res = await apiRequest("POST", "/api/cashiers", { name, pin, branch_id: null });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || data.error || "Error al crear cajero");
+      setName("");
+      setPin("");
+      toast({ title: "Cajero creado" });
+      await load();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
   }
 
   async function toggleActive(row: CashierRow, active: boolean) {

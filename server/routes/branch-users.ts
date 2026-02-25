@@ -47,16 +47,8 @@ export function registerBranchUserRoutes(app: Express) {
       }
 
       const tenant = await storage.getTenantById(tenantId);
-      const passEval = evaluatePassword(String(password || ""), { email, tenantCode: tenant?.code, tenantName: tenant?.name });
-      if (!passEval.isValid) {
-        await storage.createAuditLog({
-          tenantId,
-          userId: req.auth!.userId,
-          action: "password_change_fail_policy",
-          entityType: "branch_user",
-          metadata: { score: passEval.score, warnings: passEval.warnings },
-        });
-        return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
+      if (String(password).length < 4) {
+        return res.status(400).json({ error: "Password inválida: mínimo 4 caracteres", code: "PASSWORD_POLICY_FAILED" });
       }
 
       const hashedPassword = await hashPassword(password);
@@ -129,31 +121,31 @@ export function registerBranchUserRoutes(app: Express) {
     requireTenantAdmin,
     blockBranchScope,
     async (req, res) => {
-    try {
-      const tenantId = req.auth!.tenantId!;
-      const userId = parseInt(req.params.id as string);
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const userId = parseInt(req.params.id as string);
 
-      const pin = String(Math.floor(1000 + Math.random() * 9000));
-      const hashedPin = await hashPassword(pin);
+        const pin = String(Math.floor(1000 + Math.random() * 9000));
+        const hashedPin = await hashPassword(pin);
 
-      const user = await storage.updateUser(userId, tenantId, { password: hashedPin });
-      if (!user) {
-        return res.status(404).json({ error: "Usuario no encontrado" });
+        const user = await storage.updateUser(userId, tenantId, { password: hashedPin });
+        if (!user) {
+          return res.status(404).json({ error: "Usuario no encontrado" });
+        }
+
+        await storage.createAuditLog({
+          tenantId,
+          userId: req.auth!.userId,
+          action: "reset_password",
+          entityType: "branch_user",
+          entityId: userId,
+        });
+
+        res.json({ data: { temporaryPassword: pin } });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
       }
-
-      await storage.createAuditLog({
-        tenantId,
-        userId: req.auth!.userId,
-        action: "reset_password",
-        entityType: "branch_user",
-        entityId: userId,
-      });
-
-      res.json({ data: { temporaryPassword: pin } });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    });
 
   app.delete(
     "/api/branch-users/:id",

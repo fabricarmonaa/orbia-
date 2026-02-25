@@ -55,7 +55,7 @@ function parseJsonField(value: unknown, fallback: any) {
 }
 
 function cleanupUploadedFile(req: any) {
-  if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => {});
+  if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => { });
 }
 
 export function registerImportRoutes(app: Express) {
@@ -65,7 +65,11 @@ export function registerImportRoutes(app: Express) {
       const data = buildPreview("purchases", req.file.path);
       return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
     } catch (err: any) {
-      return res.status(400).json({ error: err?.message || "No se pudo leer el archivo", code: "IMPORT_PREVIEW_ERROR" });
+      console.error("[EXCEL PREVIEW ERROR]", err);
+      if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
+        return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });
+      }
+      return res.status(400).json({ error: err?.message || "No se pudo leer el archivo", code: "IMPORT_PREVIEW_ERROR", stack: err?.stack });
     } finally {
       cleanupUploadedFile(req);
     }
@@ -110,15 +114,24 @@ export function registerImportRoutes(app: Express) {
       };
       const rowErrors: Array<{ rowNumber: number; errors: string[] }> = [];
 
+      let excelProviderName: string | null = null;
+      let excelNotes: string | null = null;
+      for (const row of rows) {
+        if (!row.errors.length) {
+          if (!excelProviderName && row.normalized.supplier_name) excelProviderName = String(row.normalized.supplier_name);
+          if (!excelNotes && row.normalized.notes) excelNotes = String(row.normalized.notes);
+        }
+      }
+
       const result = await db.transaction(async (tx) => {
         const [purchase] = await tx.insert(purchases).values({
           tenantId,
           branchId,
           providerId: payload.provider_id ?? null,
-          providerName: payload.provider_name ? sanitizeShortText(payload.provider_name, 200) : null,
+          providerName: payload.provider_name ? sanitizeShortText(payload.provider_name, 200) : excelProviderName,
           purchaseDate: payload.purchase_date ? new Date(payload.purchase_date) : new Date(),
           currency: sanitizeShortText(payload.currency_default, 10).toUpperCase(),
-          notes: payload.notes ? sanitizeLongText(payload.notes, 2000) : null,
+          notes: payload.notes ? sanitizeLongText(payload.notes, 2000) : excelNotes,
           importedByUserId: userId,
           totalAmount: "0",
         }).returning();
@@ -240,6 +253,9 @@ export function registerImportRoutes(app: Express) {
 
       return res.json({ summary, purchase_id: result.id, errors: rowErrors });
     } catch (err: any) {
+      if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
+        return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });
+      }
       if (err?.message === "IMPORT_NO_VALID_ROWS") {
         return res.status(400).json({ error: "No hay filas válidas para importar", code: "IMPORT_NO_VALID_ROWS" });
       }

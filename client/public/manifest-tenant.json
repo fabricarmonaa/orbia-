@@ -1,12 +1,12 @@
 {
-  "id": "/app",
+  "id": "/pwa-tenant",
   "name": "Orbia",
   "short_name": "Orbia",
   "display": "standalone",
-  "start_url": "/app",
-  "scope": "/app",
+  "start_url": "/login",
+  "scope": "/",
   "background_color": "#ffffff",
-  "theme_color": "#000000",
+  "theme_color": "#0f172a",
   "screenshots": [
     {
       "src": "/screenshots/desktop-1.png",

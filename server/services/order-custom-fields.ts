@@ -10,6 +10,7 @@ export type CustomFieldPayload = {
   valueNumber?: number | string | null;
   fileId?: string | number | null;
   fileStorageKey?: string | null;
+  visibleOverride?: boolean | null;
 };
 
 const FILE_ALLOWED = new Set(["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]);
@@ -34,19 +35,32 @@ export async function resolveTypeOrThrow(tenantId: number, orderTypeCode: string
 export async function validateAndNormalizeCustomFields(
   tenantId: number,
   orderTypeCode: string,
-  customFields: CustomFieldPayload[]
+  customFields: CustomFieldPayload[],
+  orderPresetId?: number | null
 ) {
   const typeRow = await resolveTypeOrThrow(tenantId, orderTypeCode);
+
+  // Condición base: del tenant, del tipo, y activos
+  const conditions = [
+    eq(orderFieldDefinitions.tenantId, tenantId),
+    eq(orderFieldDefinitions.orderTypeId, typeRow.id),
+    eq(orderFieldDefinitions.isActive, true),
+  ];
+
+  // Si nos pasan un preset explicitamente, o estamos en el flujo legacy sin presets,
+  // filtramos los defs esperados para evitar pedir "required" de OTROS presets.
+  if (orderPresetId) {
+    conditions.push(eq(orderFieldDefinitions.presetId, orderPresetId));
+  } else {
+    // Si la BD tiene presets, los que tienen presetId=NULL son los legacy o default compartidos
+    // o tal vez si front no envía, queremos aceptar sin restricción pero esto es más seguro.
+    // conditions.push(isNull(orderFieldDefinitions.presetId));
+  }
+
   const defs = await db
     .select()
     .from(orderFieldDefinitions)
-    .where(
-      and(
-        eq(orderFieldDefinitions.tenantId, tenantId),
-        eq(orderFieldDefinitions.orderTypeId, typeRow.id),
-        eq(orderFieldDefinitions.isActive, true)
-      )
-    );
+    .where(and(...conditions));
 
   const byId = new Map(defs.map((d) => [d.id, d]));
   const byKey = new Map(defs.map((d) => [d.fieldKey, d]));
@@ -59,7 +73,7 @@ export async function validateAndNormalizeCustomFields(
 
     let valueText: string | null = row.valueText != null ? String(row.valueText) : null;
     let valueNumber: string | null = row.valueNumber != null && row.valueNumber !== "" ? String(row.valueNumber) : null;
-    let fileStorageKey: string | null = row.fileStorageKey != null ? String(row.fileStorageKey) : (row.fileId != null ? String(row.fileId) : null);
+    let fileStorageKey: string | null = row.fileStorageKey != null && row.fileStorageKey !== "" ? String(row.fileStorageKey) : (row.fileId != null && row.fileId !== "" ? String(row.fileId) : null);
 
     if (def.fieldType === "TEXT") {
       valueNumber = null;
@@ -97,6 +111,7 @@ export async function validateAndNormalizeCustomFields(
       valueText,
       valueNumber,
       fileStorageKey,
+      visibleOverride: row.visibleOverride !== undefined ? row.visibleOverride : null,
     };
   });
 
@@ -108,7 +123,7 @@ export async function validateAndNormalizeCustomFields(
   return { typeRow, normalized, defs };
 }
 
-export async function saveCustomFieldValues(orderId: number, tenantId: number, normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; fileStorageKey: string | null; }>) {
+export async function saveCustomFieldValues(orderId: number, tenantId: number, normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; fileStorageKey: string | null; visibleOverride: boolean | null; }>) {
   for (const row of normalized) {
     const existing = await db
       .select({ id: orderFieldValues.id })
@@ -116,9 +131,13 @@ export async function saveCustomFieldValues(orderId: number, tenantId: number, n
       .where(and(eq(orderFieldValues.orderId, orderId), eq(orderFieldValues.fieldDefinitionId, row.fieldDefinitionId), eq(orderFieldValues.tenantId, tenantId)));
 
     if (existing.length > 0) {
+      const updateData: any = { valueText: row.valueText, valueNumber: row.valueNumber, fileStorageKey: row.fileStorageKey };
+      if (row.visibleOverride !== undefined && row.visibleOverride !== null) {
+        updateData.visibleOverride = row.visibleOverride;
+      }
       await db
         .update(orderFieldValues)
-        .set({ valueText: row.valueText, valueNumber: row.valueNumber, fileStorageKey: row.fileStorageKey })
+        .set(updateData)
         .where(eq(orderFieldValues.id, existing[0].id));
     } else {
       await db.insert(orderFieldValues).values({
@@ -128,6 +147,7 @@ export async function saveCustomFieldValues(orderId: number, tenantId: number, n
         valueText: row.valueText,
         valueNumber: row.valueNumber,
         fileStorageKey: row.fileStorageKey,
+        visibleOverride: row.visibleOverride ?? null,
       });
     }
   }
@@ -151,8 +171,11 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
     label: map.get(v.fieldDefinitionId)?.label || null,
     fieldType: map.get(v.fieldDefinitionId)?.fieldType || null,
     required: map.get(v.fieldDefinitionId)?.required ?? false,
+    visibleInTracking: map.get(v.fieldDefinitionId)?.visibleInTracking ?? false,
     valueText: v.valueText,
     valueNumber: v.valueNumber,
     fileStorageKey: v.fileStorageKey,
+    visibleOverride: v.visibleOverride,
+    config: map.get(v.fieldDefinitionId)?.config || null,
   }));
 }

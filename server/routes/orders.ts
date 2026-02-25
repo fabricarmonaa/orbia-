@@ -35,6 +35,7 @@ const customFieldSchema = z.object({
   valueNumber: z.union([z.string(), z.number()]).optional().nullable(),
   fileId: z.union([z.string(), z.number()]).optional().nullable(),
   fileStorageKey: z.string().optional().nullable(),
+  visibleOverride: z.boolean().optional().nullable(),
 });
 
 const createOrderSchema = z.object({
@@ -56,6 +57,7 @@ const createOrderSchema = z.object({
   deliveryCity: sanitizeOptionalShort(80).nullable(),
   deliveryAddressNotes: sanitizeOptionalLong(200).nullable(),
   customFields: z.array(customFieldSchema).optional(),
+  orderPresetId: z.coerce.number().int().positive().optional().nullable(),
 });
 
 const orderStatusSchema = z.object({
@@ -85,6 +87,7 @@ const updateOrderSchema = z.object({
   description: sanitizeOptionalLong(500).nullable().optional(),
   totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
   customFields: z.array(customFieldSchema).optional(),
+  orderPresetId: z.coerce.number().int().positive().optional().nullable(),
 });
 
 
@@ -137,7 +140,7 @@ export function registerOrderRoutes(app: Express) {
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
       const customPayload = payload.customFields || [];
       const validatedCustom = customPayload.length > 0
-        ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload)
+        ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, payload.orderPresetId)
         : null;
 
       const data = await db.transaction(async (tx) => {
@@ -160,6 +163,7 @@ export function registerOrderRoutes(app: Express) {
           deliveryCity: payload.deliveryCity || null,
           deliveryAddressNotes: payload.deliveryAddressNotes || null,
           deliveryStatus: payload.requiresDelivery ? "pending" : null,
+          orderPresetId: payload.orderPresetId || null,
         }).returning();
 
         if (created.statusId) {
@@ -181,6 +185,7 @@ export function registerOrderRoutes(app: Express) {
               valueText: row.valueText,
               valueNumber: row.valueNumber,
               fileStorageKey: row.fileStorageKey,
+              visibleOverride: row.visibleOverride ?? null,
             });
           }
         }
@@ -248,11 +253,13 @@ export function registerOrderRoutes(app: Express) {
         customerEmail: payload.customerEmail !== undefined ? (payload.customerEmail || null) : current.customerEmail,
         description: payload.description !== undefined ? (payload.description || null) : current.description,
         totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
+        orderPresetId: payload.orderPresetId !== undefined ? (payload.orderPresetId || null) : current.orderPresetId,
         updatedAt: new Date(),
       }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
 
+      const targetPresetId = payload.orderPresetId !== undefined ? payload.orderPresetId : current.orderPresetId;
       if (payload.customFields) {
-        const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields);
+        const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields, targetPresetId);
         await saveCustomFieldValues(id, tenantId, normalized.normalized);
       }
 

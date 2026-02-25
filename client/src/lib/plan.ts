@@ -2,25 +2,11 @@ import { useState, useEffect, useCallback } from "react";
 import { apiRequest, getToken } from "@/lib/auth";
 
 export interface PlanFeatures {
-  orders: boolean;
-  tracking: boolean;
-  cash_simple: boolean;
-  cash_sessions: boolean;
-  products: boolean;
-  branches: boolean;
-  fixed_expenses: boolean;
-  variable_expenses: boolean;
-  reports_advanced: boolean;
-  stt: boolean;
+  // Use string index signature for dynamic feature keys from the DB
   [key: string]: boolean;
 }
 
 export interface PlanLimits {
-  max_branches: number;
-  max_staff_users: number;
-  max_orders_month: number;
-  tracking_retention_min_hours: number;
-  tracking_retention_max_hours: number;
   [key: string]: number;
 }
 
@@ -87,18 +73,22 @@ export function usePlan() {
     return () => { planListeners.delete(listener); };
   }, []);
 
+  /**
+   * Check if a plan feature is enabled.
+   * All feature checking goes through featuresJson from the DB — no hardcoded plan codes.
+   * Feature keys are canonical strings defined in shared/plan-features.ts.
+   */
   const hasFeature = useCallback((feature: string): boolean => {
     if (!plan) return false;
-    const code = (plan.planCode || "").toUpperCase();
-    if (feature === "branches") return code === "ESCALA";
-    if (feature === "stt") return code === "ESCALA";
-    if (feature === "cashiers" || feature === "CASHIERS") return ["PROFESIONAL", "ESCALA"].includes(code) || plan.features["CASHIERS"] === true || plan.features["cashiers"] === true;
     return plan.features[feature] === true;
   }, [plan]);
 
+  /**
+   * Get a numeric limit value. Returns -1 (unlimited) if the key is absent.
+   */
   const getLimit = useCallback((limit: string): number => {
     if (!plan) return 0;
-    return plan.limits[limit] ?? 0;
+    return plan.limits[limit] ?? -1;
   }, [plan]);
 
   return { plan, loading, hasFeature, getLimit };

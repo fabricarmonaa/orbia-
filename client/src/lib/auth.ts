@@ -170,7 +170,15 @@ export async function gracefulLogout(reason: LogoutReason = "manual") {
     }
 
     if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
-      window.location.assign("/login");
+      // Redirect to the correct login panel based on current path
+      const path = window.location.pathname;
+      if (path.startsWith("/owner") || path.startsWith("/super")) {
+        window.location.assign("/owner/login");
+      } else if (path.startsWith("/delivery")) {
+        window.location.assign("/delivery/login");
+      } else {
+        window.location.assign("/login");
+      }
     }
   })().finally(() => {
     logoutPromise = null;
@@ -273,7 +281,7 @@ export async function apiRequest(
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
-  if (data) {
+  if (data && !(data instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
 
@@ -288,7 +296,7 @@ export async function apiRequest(
     const res = await fetch(url, {
       method,
       headers,
-      body: data ? JSON.stringify(data) : undefined,
+      body: data ? (data instanceof FormData ? data : JSON.stringify(data)) : undefined,
       signal,
     });
 

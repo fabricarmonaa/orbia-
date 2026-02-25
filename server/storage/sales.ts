@@ -170,33 +170,74 @@ export const salesStorage = {
             );
         }
       } else {
-        for (const item of enrichedItems) {
-          const current = Number(item.product.stock || 0);
-          await tx
-            .update(products)
-            .set({ stock: current - item.quantity })
-            .where(and(eq(products.tenantId, input.tenantId), eq(products.id, item.productId)));
-        }
+        // --- Single-tenant (no-branch) mode ---
+        // stockLevels is the authoritative source for stock tracking (supports kardex/movements).
+        // products.stock is kept in sync as a denormalized read cache for the UI.
+
+        // Load current stockLevels for all products in this sale (inside tx for read consistency)
+        const levelRows = await tx
+          .select()
+          .from(stockLevels)
+          .where(
+            and(
+              eq(stockLevels.tenantId, input.tenantId),
+              inArray(stockLevels.productId, requestedIds),
+              sql`${stockLevels.branchId} IS NULL`
+            )
+          );
+        const stockLevelByProduct = new Map(
+          levelRows.map((r) => [r.productId, Number(r.quantity || 0)])
+        );
 
         for (const item of enrichedItems) {
-          const [level] = await tx
-            .select()
-            .from(stockLevels)
-            .where(and(eq(stockLevels.tenantId, input.tenantId), eq(stockLevels.productId, item.productId), effectiveBranchId ? eq(stockLevels.branchId, effectiveBranchId) : sql`${stockLevels.branchId} IS NULL`));
-          const currentLevel = Number(level?.quantity || 0);
+          // Use stockLevels as source of truth; fall back to products.stock for bootstrap
+          // if the row doesn't exist yet (e.g. first time this product is sold).
+          const hasLevel = stockLevelByProduct.has(item.productId);
+          const currentLevel = hasLevel
+            ? stockLevelByProduct.get(item.productId)!
+            : Number(item.product.stock || 0);
+
+          // validateStock already ran at the top with product.stock.
+          // Here we re-validate against the *same* value we'll deduct from,
+          // ensuring no inconsistency between what was checked and what's deducted.
+          if (currentLevel < item.quantity) {
+            throw Object.assign(new Error("INSUFFICIENT_STOCK"), {
+              code: "INSUFFICIENT_STOCK",
+              productId: item.productId,
+              requested: item.quantity,
+              available: currentLevel,
+            });
+          }
+
           const nextLevel = currentLevel - item.quantity;
-          if (nextLevel < 0) {
-            throw Object.assign(new Error("INSUFFICIENT_STOCK"), { code: "INSUFFICIENT_STOCK", productId: item.productId, requested: item.quantity, available: currentLevel });
-          }
-          if (level) {
-            await tx.update(stockLevels).set({ quantity: String(nextLevel), updatedAt: new Date() }).where(eq(stockLevels.id, level.id));
+
+          if (hasLevel) {
+            const level = levelRows.find((r) => r.productId === item.productId)!;
+            await tx
+              .update(stockLevels)
+              .set({ quantity: String(nextLevel), updatedAt: new Date() })
+              .where(eq(stockLevels.id, level.id));
           } else {
-            await tx.insert(stockLevels).values({ tenantId: input.tenantId, productId: item.productId, branchId: effectiveBranchId, quantity: String(nextLevel), averageCost: "0" });
+            // Bootstrap: create stockLevels row starting from products.stock - qty
+            await tx.insert(stockLevels).values({
+              tenantId: input.tenantId,
+              productId: item.productId,
+              branchId: null,
+              quantity: String(nextLevel),
+              averageCost: "0",
+            });
           }
+
+          // Sync products.stock as a denormalized read cache for UI display
+          await tx
+            .update(products)
+            .set({ stock: nextLevel })
+            .where(and(eq(products.tenantId, input.tenantId), eq(products.id, item.productId)));
+
           await tx.insert(stockMovements).values({
             tenantId: input.tenantId,
             productId: item.productId,
-            branchId: effectiveBranchId,
+            branchId: null,
             movementType: "SALE",
             referenceId: sale.id,
             quantity: String(item.quantity),
@@ -208,7 +249,6 @@ export const salesStorage = {
             totalCost: null,
           });
         }
-
       }
 
       const [openSession] = await tx

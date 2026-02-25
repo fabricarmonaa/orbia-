@@ -374,7 +374,7 @@ export default function OwnerDashboard() {
     try {
       await apiRequest("POST", "/api/super/tenants", {
         ...newTenant,
-        planId: parseInt(newTenant.planId),
+        planId: newTenant.planId ? parseInt(newTenant.planId, 10) : null,
       });
       toast({ title: "Tenant creado correctamente" });
       setDialogOpen(false);

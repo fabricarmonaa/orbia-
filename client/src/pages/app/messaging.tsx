@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
+import { useBranding } from "@/context/BrandingContext";
 
 interface TemplateItem {
   id: number;
@@ -36,20 +37,19 @@ const sampleContext: Record<string, string> = {
   pedido_total: "$ 12.500",
   pedido_fecha: new Date().toLocaleString("es-AR"),
   direccion_entrega: "Av. Siempre Viva 742",
-  negocio_nombre: "Orbia Demo",
 };
 
-function renderPreview(body: string) {
-  const rendered = (body || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => sampleContext[key] || "");
+function renderPreview(body: string, negocioNombre: string) {
+  const context = { ...sampleContext, negocio_nombre: negocioNombre || "Tu Negocio" };
+  const rendered = (body || "").replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g, (_, key) => context[key as keyof typeof context] || "");
   return rendered.replace(/\s+/g, ' ').trim();
 }
 
 export default function MessagingSettingsPage() {
   const { toast } = useToast();
+  const { tenantBranding } = useBranding();
   const [loading, setLoading] = useState(true);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
-  const [defaultCountry, setDefaultCountry] = useState("AR");
-  const [savingCountry, setSavingCountry] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
@@ -61,7 +61,6 @@ export default function MessagingSettingsPage() {
       const res = await apiRequest("GET", "/api/message-templates?includeInactive=1");
       const data = await res.json();
       setTemplates(data.data || []);
-      setDefaultCountry(data.defaultCountry || "AR");
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -73,7 +72,7 @@ export default function MessagingSettingsPage() {
     fetchTemplates();
   }, []);
 
-  const livePreview = useMemo(() => renderPreview(body), [body]);
+  const livePreview = useMemo(() => renderPreview(body, tenantBranding?.displayName || "Orbia Demo"), [body, tenantBranding?.displayName]);
 
   function insertVariable(variable: string) {
     const token = `{{${variable}}}`;
@@ -120,42 +119,12 @@ export default function MessagingSettingsPage() {
     }
   }
 
-  async function saveCountry() {
-    setSavingCountry(true);
-    try {
-      await apiRequest("PUT", "/api/message-templates/default-country", { defaultCountry });
-      toast({ title: "País por defecto actualizado" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setSavingCountry(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Mensajería (WhatsApp)</h1>
         <p className="text-muted-foreground">Mensajes predefinidos para abrir WhatsApp con texto prellenado.</p>
       </div>
-
-      <Card>
-        <CardHeader>
-          <h3 className="font-semibold">Configuración</h3>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            Este addon permite abrir WhatsApp con mensajes predefinidos (no automático).
-          </p>
-          <div className="flex items-end gap-2 max-w-sm">
-            <div className="flex-1 space-y-1">
-              <Label>País por defecto</Label>
-              <Input value={defaultCountry} onChange={(e) => setDefaultCountry(e.target.value.toUpperCase())} maxLength={4} />
-            </div>
-            <Button onClick={saveCountry} disabled={savingCountry}>{savingCountry ? "Guardando..." : "Guardar"}</Button>
-          </div>
-        </CardContent>
-      </Card>
 
       <Card>
         <CardHeader>
@@ -212,7 +181,7 @@ export default function MessagingSettingsPage() {
                     <Button size="sm" variant="destructive" onClick={() => removeTemplate(tpl.id)}>Eliminar</Button>
                   </div>
                 </div>
-                <WhatsAppMessagePreview text={renderPreview(tpl.body)} />
+                <WhatsAppMessagePreview text={renderPreview(tpl.body, tenantBranding?.displayName || "Orbia Demo")} />
               </div>
             ))
           )}

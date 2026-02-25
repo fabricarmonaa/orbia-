@@ -23,10 +23,12 @@ export interface PreviewResult {
 
 const purchaseAliases: Record<string, string[]> = {
   code: ["codigo", "code", "sku", "id", "cod_producto"],
-  name: ["nombre", "producto", "descripcion", "name"],
-  quantity: ["cantidad", "qty", "cant"],
-  unit_price: ["precio", "precio_unit", "unit_price", "costo", "cost"],
-  currency: ["moneda", "currency"],
+  name: ["nombre", "producto", "descripcion", "name", "nombre_producto", "nombreproducto", "articulo"],
+  quantity: ["cantidad", "qty", "cant", "unidades"],
+  unit_price: ["precio", "precio_unit", "unit_price", "costo", "cost", "precio_por_unidad"],
+  currency: ["moneda", "currency", "divisa"],
+  supplier_name: ["proveedor", "supplier", "vendedor", "distribuidor"],
+  notes: ["notas", "observaciones", "detalle"],
 };
 
 const customerAliases: Record<string, string[]> = {
@@ -151,6 +153,8 @@ function normalizePurchaseRow(raw: Record<string, string>, mapping: Record<strin
     quantity: Number.isFinite(quantity) ? quantity : null,
     unit_price: Number.isFinite(unitPrice) ? unitPrice : null,
     currency: safeText(raw[mapping.currency || ""] || "", 10).toUpperCase(),
+    supplier_name: safeText(raw[mapping.supplier_name || ""] || "", 200),
+    notes: safeText(raw[mapping.notes || ""] || "", 2000),
   } as Record<string, string | number | null>;
   const errors: string[] = [];
   if (!normalized.code && !normalized.name) errors.push("Falta código o nombre");
@@ -209,7 +213,7 @@ export function buildPreview(entity: ImportEntity, filePath: string): PreviewRes
   const { headers, rows } = parseXlsxRows(filePath);
   const aliases = entity === "purchases" ? purchaseAliases : customerAliases;
   const mapping = pickSuggestedMapping(headers, aliases);
-  const requiredFields = entity === "purchases" ? ["quantity", "unit_price"] : ["name"];
+  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : ["name"];
   const warnings: string[] = [];
   const missingRequired = requiredFields.filter((f) => !mapping[f]);
   if (missingRequired.length) {
@@ -238,6 +242,14 @@ export function buildPreview(entity: ImportEntity, filePath: string): PreviewRes
 }
 
 export function normalizeRowsForCommit(entity: ImportEntity, filePath: string, mapping: Record<string, string>) {
+  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : ["name"];
+  const missingRequired = requiredFields.filter((f) => !mapping[f]);
+  if (missingRequired.length) {
+    const labels: Record<string, string> = { name: "Nombre producto", quantity: "Cantidad", unit_price: "Precio" };
+    const missingLabels = missingRequired.map(f => labels[f] || f);
+    throw new Error(`EXCEL_IMPORT_MISSING_COLUMNS|Debe mapear la columna '${missingLabels.join(", ")}' antes de continuar.`);
+  }
+
   const { rows } = parseXlsxRows(filePath);
   return rows.map((raw, idx) => {
     const normalizedPack = entity === "purchases"

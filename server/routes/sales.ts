@@ -8,6 +8,7 @@ import { validateBody, validateParams, validateQuery } from "../middleware/valid
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
 import { customers, sales } from "@shared/schema";
+import { bumpMetrics } from "../services/metrics";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -137,6 +138,11 @@ export function registerSaleRoutes(app: Express) {
       });
 
       await ensureSalePublicToken(created.sale.id, tenantId);
+
+      // Fire-and-forget: never blocks the response
+      bumpMetrics(tenantId, {
+        revenueTotal: Number(created.sale.totalAmount || 0),
+      });
 
       return res.status(201).json({
         sale_id: created.sale.id,

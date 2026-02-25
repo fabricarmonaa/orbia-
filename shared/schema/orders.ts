@@ -74,6 +74,8 @@ export const orders = pgTable(
     createdById: integer("created_by_id").references(() => users.id),
     createdByScope: varchar("created_by_scope", { length: 20 }).default("TENANT"),
     createdByBranchId: integer("created_by_branch_id").references(() => branches.id),
+    // Etapa A: which preset was used when creating this order
+    orderPresetId: integer("order_preset_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
