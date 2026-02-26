@@ -64,7 +64,7 @@ export const PLAN_DEFAULTS: Record<string, {
             tracking: true,
             cash_simple: true,
             cash_sessions: false,
-            products: false,
+            products: true,
             branches: false,
             fixed_expenses: false,
             variable_expenses: false,
