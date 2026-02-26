@@ -1,0 +1,50 @@
+{
+  "tables": {
+    "customers": {
+      "scope": ["tenant_id"],
+      "key_columns": ["id", "name", "doc", "email", "phone", "is_active", "created_at"],
+      "indexes": ["idx_customers_tenant", "idx_customers_tenant_created", "idx_customers_tenant_doc", "idx_customers_tenant_email"]
+    },
+    "products": {
+      "scope": ["tenant_id"],
+      "key_columns": ["id", "category_id", "name", "price", "sku", "is_active", "created_at"],
+      "constraints": ["uq_products_tenant_sku"]
+    },
+    "sales": {
+      "scope": ["tenant_id", "branch_id"],
+      "key_columns": ["id", "sale_number", "sale_datetime", "total_amount", "payment_method", "customer_id"],
+      "constraints": ["uq_sales_tenant_number"]
+    },
+    "sale_items": {
+      "scope": ["tenant_id", "branch_id"],
+      "key_columns": ["id", "sale_id", "product_id", "quantity", "unit_price", "line_total"]
+    },
+    "purchases": {
+      "scope": ["tenant_id", "branch_id"],
+      "key_columns": ["id", "provider_name", "purchase_date", "currency", "total_amount"]
+    },
+    "purchase_items": {
+      "scope": ["tenant_id", "branch_id"],
+      "key_columns": ["id", "purchase_id", "product_id", "product_name_snapshot", "quantity", "line_total"]
+    },
+    "stt_logs": {
+      "scope": ["tenant_id", "user_id"],
+      "key_columns": ["id", "context", "transcription", "intent_json", "confirmed", "result_entity_type", "result_entity_id", "created_at"]
+    },
+    "stt_interactions": {
+      "scope": ["tenant_id", "user_id"],
+      "key_columns": ["id", "transcript", "intent_confirmed", "entities_confirmed", "created_at"]
+    }
+  },
+  "relations": [
+    { "from": "sales.customer_id", "to": "customers.id", "type": "N:1" },
+    { "from": "sale_items.sale_id", "to": "sales.id", "type": "N:1" },
+    { "from": "sale_items.product_id", "to": "products.id", "type": "N:1" },
+    { "from": "purchase_items.purchase_id", "to": "purchases.id", "type": "N:1" },
+    { "from": "purchase_items.product_id", "to": "products.id", "type": "N:1" }
+  ],
+  "stt_endpoints": [
+    "POST /api/stt/interpret",
+    "POST /api/stt/execute"
+  ]
+}

@@ -1,6 +1,6 @@
 import { db } from "../db";
 import { eq, and, desc } from "drizzle-orm";
-import { sttLogs, type InsertSttLog } from "@shared/schema";
+import { sttLogs, sttInteractions, type InsertSttLog, type InsertSttInteraction } from "@shared/schema";
 
 export const sttStorage = {
   async createSttLog(data: InsertSttLog) {
@@ -41,5 +41,17 @@ export const sttStorage = {
       .orderBy(desc(sttLogs.createdAt))
       .limit(1);
     return log;
+  },
+  async createSttInteraction(data: InsertSttInteraction) {
+    const [row] = await db.insert(sttInteractions).values(data).returning();
+    return row;
+  },
+  async getSttInteractionsByTenant(tenantId: number, userId?: number | null, limit = 50) {
+    return db
+      .select()
+      .from(sttInteractions)
+      .where(userId ? and(eq(sttInteractions.tenantId, tenantId), eq(sttInteractions.userId, userId)) : eq(sttInteractions.tenantId, tenantId))
+      .orderBy(desc(sttInteractions.createdAt))
+      .limit(limit);
   },
 };

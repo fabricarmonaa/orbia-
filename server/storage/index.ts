@@ -135,6 +135,8 @@ export class DatabaseStorage implements IStorage {
   getSttLogs = sttStorage.getSttLogs;
   updateSttLogConfirmed = sttStorage.updateSttLogConfirmed;
   getLastUnconfirmedLog = sttStorage.getLastUnconfirmedLog;
+  createSttInteraction = sttStorage.createSttInteraction;
+  getSttInteractionsByTenant = sttStorage.getSttInteractionsByTenant;
 
   getDeliveryAgents = deliveryStorage.getDeliveryAgents;
   getDeliveryAgentById = deliveryStorage.getDeliveryAgentById;
