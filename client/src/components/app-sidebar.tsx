@@ -51,12 +51,12 @@ const menuItems: MenuItem[] = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard },
   { title: "Pedidos", url: "/app/orders", icon: ClipboardList },
   { title: "Caja", url: "/app/cash", icon: Wallet },
-  { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
-  { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, feature: "products", adminOnly: true },
-  { title: "Clientes", url: "/app/customers", icon: Users, feature: "products", adminOnly: true },
-  { title: "Ventas", url: "/app/pos", icon: ShoppingCart, feature: "products" },
-  { title: "Historial ventas", url: "/app/sales", icon: ReceiptText, feature: "products" },
-  { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true, planCodes: ["PROFESIONAL", "ESCALA"] },
+  { title: "Productos", url: "/app/products", icon: Package },
+  { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, adminOnly: true },
+  { title: "Clientes", url: "/app/customers", icon: Users, adminOnly: true },
+  { title: "Ventas", url: "/app/pos", icon: ShoppingCart },
+  { title: "Historial ventas", url: "/app/sales", icon: ReceiptText },
+  { title: "Cajeros", url: "/app/cashiers", icon: Users, adminOnly: true },
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
@@ -134,8 +134,6 @@ export function AppSidebar() {
               {menuItems
                 .filter((item) => !item.addon || addonStatus[item.addon])
                 .filter((item) => !item.adminOnly || isTenantAdmin)
-                .filter((item) => item.url !== "/app/branches" || planCode === "ESCALA")
-                .filter((item) => !item.planCodes || item.planCodes.includes(planCode))
                 .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url))
                 .map((item) => {
                   const blocked = item.feature && !hasFeature(item.feature);

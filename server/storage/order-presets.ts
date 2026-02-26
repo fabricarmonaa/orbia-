@@ -172,11 +172,44 @@ async function resolveUniqueFieldKey(
 export const orderPresetsStorage = {
   // ── Types ────────────────────────────────────────────────────────────────
   async listOrderTypes(tenantId: number) {
-    return db
+    const existing = await db
       .select()
       .from(orderTypeDefinitions)
       .where(eq(orderTypeDefinitions.tenantId, tenantId))
       .orderBy(asc(orderTypeDefinitions.id));
+
+    // Auto-create standard types if missing
+    const STANDARD_TYPES = [
+      { code: "PEDIDO", label: "Pedido" },
+      { code: "ENCARGO", label: "Encargo" },
+      { code: "TURNO", label: "Turno" },
+      { code: "SERVICIO", label: "Servicio" },
+    ];
+    const existingCodes = new Set(existing.map((t) => t.code));
+    const missing = STANDARD_TYPES.filter((t) => !existingCodes.has(t.code));
+    if (missing.length > 0) {
+      for (const ot of missing) {
+        const [typeRow] = await db.insert(orderTypeDefinitions).values({
+          tenantId,
+          code: ot.code,
+          label: ot.label,
+          isActive: true,
+        }).returning();
+        await db.insert(orderTypePresets).values({
+          tenantId,
+          orderTypeId: typeRow.id,
+          code: "default",
+          label: "Default",
+          isActive: true,
+          sortOrder: 0,
+        });
+        existing.push(typeRow);
+      }
+      // Re-sort by id
+      existing.sort((a, b) => a.id - b.id);
+    }
+
+    return existing;
   },
 
   // ── Presets ──────────────────────────────────────────────────────────────
