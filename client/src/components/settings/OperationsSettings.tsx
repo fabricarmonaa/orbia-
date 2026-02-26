@@ -17,7 +17,7 @@ export function OperationsSettings() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const { plan } = usePlan();
-  const isEconomic = (plan?.planCode || "").toUpperCase() === "ECONOMICO";
+
   const now = new Date();
   const [month, setMonth] = useState(String(now.getMonth() + 1));
   const [year, setYear] = useState(String(now.getFullYear()));
@@ -87,13 +87,13 @@ export function OperationsSettings() {
           <p className="text-sm text-muted-foreground">Configura gastos fijos y variables desde Caja</p>
         </CardHeader>
         <CardContent>
-          {!isEconomic && (<Button variant="outline" onClick={() => setLocation("/app/cash")}>
+          {<Button variant="outline" onClick={() => setLocation("/app/cash")}>
             <Receipt className="w-4 h-4 mr-2" />
             Configurar gastos
-          </Button>)}
+          </Button>}
         </CardContent>
       </Card>
-      {isAdmin && !isEconomic && (
+      {isAdmin && (
         <Card className="md:col-span-2">
           <CardHeader>
             <h3 className="font-semibold">Resumen mensual</h3>

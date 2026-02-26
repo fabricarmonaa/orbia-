@@ -144,7 +144,7 @@ async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSc
 }
 
 export function registerReportRoutes(app: Express) {
-  app.post("/api/reports/monthly-summary", tenantAuth, requireTenantAdmin, requireNotPlanCodes(["ECONOMICO"]), summaryLimiter, async (req, res) => {
+  app.post("/api/reports/monthly-summary", tenantAuth, requireTenantAdmin, requireNotPlanCodes([]), summaryLimiter, async (req, res) => {
     try {
       const { year, month, force } = monthlySummarySchema.parse(req.body);
       const tenantId = req.auth!.tenantId!;
@@ -163,7 +163,7 @@ export function registerReportRoutes(app: Express) {
     }
   });
 
-  app.post("/api/reports/metrics/refresh", tenantAuth, requireTenantAdmin, requireNotPlanCodes(["ECONOMICO"]), metricsRefreshLimiter, async (req, res) => {
+  app.post("/api/reports/metrics/refresh", tenantAuth, requireTenantAdmin, requireNotPlanCodes([]), metricsRefreshLimiter, async (req, res) => {
     try {
       const { from, to } = refreshMetricsSchema.parse(req.body || {});
       await refreshTenantMetrics(req.auth!.tenantId!, { from, to });
@@ -174,7 +174,7 @@ export function registerReportRoutes(app: Express) {
     }
   });
 
-  app.get("/api/reports/metrics/monthly", tenantAuth, requireNotPlanCodes(["ECONOMICO"]), async (req, res) => {
+  app.get("/api/reports/metrics/monthly", tenantAuth, requireNotPlanCodes([]), async (req, res) => {
     try {
       const monthParam = typeof req.query.month === "string" ? req.query.month : undefined;
       const monthDate = monthParam ? new Date(monthParam) : new Date();

@@ -79,7 +79,7 @@ function sendApiError(res: Response, err: unknown) {
 // ─────────────────────────────────────────────
 export function registerOrderPresetRoutes(app: Express) {
   // ── Types ──────────────────────────────────────────────────────────────
-  app.get("/api/order-presets/types", tenantAuth, requireTenantAdmin, async (req, res) => {
+  app.get("/api/order-presets/types", tenantAuth, async (req, res) => {
     try {
       const data = await orderPresetsStorage.listOrderTypes(req.auth!.tenantId!);
       return res.json({ data });
@@ -92,7 +92,6 @@ export function registerOrderPresetRoutes(app: Express) {
   app.get(
     "/api/order-presets/types/:code/presets",
     tenantAuth,
-    requireTenantAdmin,
     validateParams(codeParamSchema),
     async (req, res) => {
       try {
@@ -151,7 +150,6 @@ export function registerOrderPresetRoutes(app: Express) {
   app.get(
     "/api/order-presets/presets/:presetId/fields",
     tenantAuth,
-    requireTenantAdmin,
     validateParams(presetIdParamSchema),
     async (req, res) => {
       try {

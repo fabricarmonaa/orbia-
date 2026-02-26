@@ -411,7 +411,7 @@ export default function SettingsPage() {
       label: "Operativo",
       content: <OperationsSettings />,
     },
-    ...(isAdmin && !isEconomic
+    ...(isAdmin
       ? [
         {
           id: "advanced",

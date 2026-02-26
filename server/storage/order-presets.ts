@@ -90,7 +90,7 @@ function normalizeConfig(fieldType: "TEXT" | "NUMBER" | "FILE", config: unknown)
 
 async function getTypeOrThrow(tenantId: number, code: string) {
   const normalizedCode = String(code || "").trim().toUpperCase();
-  const [typeRow] = await db
+  let [typeRow] = await db
     .select()
     .from(orderTypeDefinitions)
     .where(
@@ -101,7 +101,22 @@ async function getTypeOrThrow(tenantId: number, code: string) {
     );
 
   if (!typeRow) {
-    throw notFound("ORDER_TYPE_NOT_FOUND", "Tipo de pedido no encontrado");
+    // Auto-create order type and default preset for existing tenants
+    const labels: Record<string, string> = { PEDIDO: "Pedido", ENCARGO: "Encargo", TURNO: "Turno", SERVICIO: "Servicio" };
+    [typeRow] = await db.insert(orderTypeDefinitions).values({
+      tenantId,
+      code: normalizedCode,
+      label: labels[normalizedCode] || normalizedCode,
+      isActive: true,
+    }).returning();
+    await db.insert(orderTypePresets).values({
+      tenantId,
+      orderTypeId: typeRow.id,
+      code: "default",
+      label: "Default",
+      isActive: true,
+      sortOrder: 0,
+    });
   }
 
   return typeRow;

@@ -39,7 +39,7 @@ export function registerExpenseRoutes(app: Express) {
         }
     });
 
-    app.get("/api/expenses/definitions", tenantAuth, requireNotPlanCodes(["ECONOMICO"]), async (req, res) => {
+    app.get("/api/expenses/definitions", tenantAuth, requireNotPlanCodes([]), async (req, res) => {
         try {
             const type = req.query.type ? String(req.query.type).toUpperCase() : undefined;
             if (type && !["FIXED", "VARIABLE"].includes(type)) {
@@ -52,7 +52,7 @@ export function registerExpenseRoutes(app: Express) {
         }
     });
 
-    app.post("/api/expenses/definitions", tenantAuth, requireNotPlanCodes(["ECONOMICO"]), requireTenantAdmin, blockBranchScope, validateBody(expenseDefinitionSchema), async (req, res) => {
+    app.post("/api/expenses/definitions", tenantAuth, requireNotPlanCodes([]), requireTenantAdmin, blockBranchScope, validateBody(expenseDefinitionSchema), async (req, res) => {
         try {
             const payload = req.body as z.infer<typeof expenseDefinitionSchema>;
             const data = await storage.createExpenseDefinition({
@@ -71,7 +71,7 @@ export function registerExpenseRoutes(app: Express) {
         }
     });
 
-    app.put("/api/expenses/definitions/:id", tenantAuth, requireNotPlanCodes(["ECONOMICO"]), requireTenantAdmin, blockBranchScope, validateBody(expenseDefinitionUpdateSchema), async (req, res) => {
+    app.put("/api/expenses/definitions/:id", tenantAuth, requireNotPlanCodes([]), requireTenantAdmin, blockBranchScope, validateBody(expenseDefinitionUpdateSchema), async (req, res) => {
         try {
             const payload = req.body as z.infer<typeof expenseDefinitionUpdateSchema>;
             if (!Object.keys(payload).length) {
@@ -93,7 +93,7 @@ export function registerExpenseRoutes(app: Express) {
         }
     });
 
-    app.delete("/api/expenses/definitions/:id", tenantAuth, requireNotPlanCodes(["ECONOMICO"]), requireTenantAdmin, blockBranchScope, async (req, res) => {
+    app.delete("/api/expenses/definitions/:id", tenantAuth, requireNotPlanCodes([]), requireTenantAdmin, blockBranchScope, async (req, res) => {
         try {
             await storage.deleteExpenseDefinition(parseInt(req.params.id as string), req.auth!.tenantId!);
             res.json({ ok: true });

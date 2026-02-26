@@ -8,6 +8,7 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import crypto from "crypto";
 import { db } from "../db";
 import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs } from "@shared/schema";
+import { orderTypeDefinitions, orderTypePresets } from "@shared/schema/order-presets";
 import { eq, and, isNull } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
@@ -328,6 +329,29 @@ export function registerSuperRoutes(app: Express) {
       ];
       for (const s of defaultStatuses) {
         await storage.createOrderStatus({ tenantId: tenant.id, ...s });
+      }
+      // Seed default order types and presets
+      const defaultOrderTypes = [
+        { code: "PEDIDO", label: "Pedido" },
+        { code: "ENCARGO", label: "Encargo" },
+        { code: "TURNO", label: "Turno" },
+        { code: "SERVICIO", label: "Servicio" },
+      ];
+      for (const ot of defaultOrderTypes) {
+        const [typeRow] = await db.insert(orderTypeDefinitions).values({
+          tenantId: tenant.id,
+          code: ot.code,
+          label: ot.label,
+          isActive: true,
+        }).returning();
+        await db.insert(orderTypePresets).values({
+          tenantId: tenant.id,
+          orderTypeId: typeRow.id,
+          code: "default",
+          label: "Default",
+          isActive: true,
+          sortOrder: 0,
+        });
       }
       res.status(201).json({
         data: tenant,
