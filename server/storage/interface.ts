@@ -212,6 +212,7 @@ export interface IStorage {
   updateTenantActive(tenantId: number, isActive: boolean): Promise<void>;
   updateTenantBlocked(tenantId: number, isBlocked: boolean): Promise<void>;
   updateTenantName(tenantId: number, name: string): Promise<void>;
+  updateTenantCode(tenantId: number, code: string): Promise<void>;
   softDeleteTenant(tenantId: number): Promise<void>;
 
   getTenantBranding(tenantId: number): Promise<{

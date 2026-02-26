@@ -17,8 +17,8 @@ import { getTenantAddons as getTenantAddonsFlags } from "../services/tenant-addo
 
 const changePasswordSchema = z.object({
   currentPassword: z.string().min(6).max(128),
-  newPassword: z.string().min(12).max(256),
-  confirmPassword: z.string().min(12).max(256),
+  newPassword: z.string().min(6).max(256),
+  confirmPassword: z.string().min(6).max(256),
 });
 
 const deleteTenantSchema = z.object({

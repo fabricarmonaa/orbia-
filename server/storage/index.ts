@@ -40,6 +40,7 @@ export class DatabaseStorage implements IStorage {
   updateTenantActive = tenantStorage.updateTenantActive;
   updateTenantBlocked = tenantStorage.updateTenantBlocked;
   updateTenantName = tenantStorage.updateTenantName;
+  updateTenantCode = tenantStorage.updateTenantCode;
   softDeleteTenant = tenantStorage.softDeleteTenant;
   getTenantAddon = tenantStorage.getTenantAddon;
   getTenantAddons = tenantStorage.getTenantAddons;

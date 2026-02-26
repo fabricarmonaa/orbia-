@@ -51,6 +51,10 @@ import {
   KeyRound,
   Trash2,
   Barcode,
+  Copy,
+  Mail,
+  Hash,
+  Check,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -141,10 +145,17 @@ export default function OwnerDashboard() {
   const [resetPasswordOpen, setResetPasswordOpen] = useState(false);
   const [setPasswordOpen, setSetPasswordOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [changeCodeOpen, setChangeCodeOpen] = useState(false);
+  const [changeEmailOpen, setChangeEmailOpen] = useState(false);
+  const [confirmationOpen, setConfirmationOpen] = useState(false);
   const [renameValue, setRenameValue] = useState("");
   const [tempPassword, setTempPassword] = useState<string | null>(null);
   const [newPasswordValue, setNewPasswordValue] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState("");
+  const [newCodeValue, setNewCodeValue] = useState("");
+  const [newEmailValue, setNewEmailValue] = useState("");
+  const [createdCredentials, setCreatedCredentials] = useState<{ code: string; adminEmail: string; adminPassword: string } | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
   const [processingTenantAction, setProcessingTenantAction] = useState(false);
 
   const [newTenant, setNewTenant] = useState({
@@ -372,12 +383,15 @@ export default function OwnerDashboard() {
   async function createTenant(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await apiRequest("POST", "/api/super/tenants", {
+      const res = await apiRequest("POST", "/api/super/tenants", {
         ...newTenant,
         planId: newTenant.planId ? parseInt(newTenant.planId, 10) : null,
       });
+      const data = await res.json();
       toast({ title: "Tenant creado correctamente" });
       setDialogOpen(false);
+      setCreatedCredentials(data.credentials || { code: newTenant.code, adminEmail: newTenant.adminEmail, adminPassword: newTenant.adminPassword });
+      setConfirmationOpen(true);
       setNewTenant({ code: "", name: "", planId: "", adminEmail: "", adminPassword: "", adminName: "" });
       fetchData();
     } catch (err: any) {
@@ -486,6 +500,62 @@ export default function OwnerDashboard() {
     setActionTenant(tenant);
     setDeleteConfirm("");
     setDeleteOpen(true);
+  }
+
+  function openChangeCodeDialog(tenant: Tenant) {
+    setActionTenant(tenant);
+    setNewCodeValue(tenant.code);
+    setChangeCodeOpen(true);
+  }
+
+  function openChangeEmailDialog(tenant: Tenant & { ownerEmail?: string | null }) {
+    setActionTenant(tenant);
+    setNewEmailValue(tenant.ownerEmail || "");
+    setChangeEmailOpen(true);
+  }
+
+  async function submitChangeCode() {
+    if (!actionTenant) return;
+    if (!newCodeValue.trim()) {
+      toast({ title: "Error", description: "Ingresá un código", variant: "destructive" });
+      return;
+    }
+    setProcessingTenantAction(true);
+    try {
+      await apiRequest("PATCH", `/api/super/tenants/${actionTenant.id}/code`, { code: newCodeValue.trim() });
+      toast({ title: "Código actualizado" });
+      setChangeCodeOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setProcessingTenantAction(false);
+    }
+  }
+
+  async function submitChangeEmail() {
+    if (!actionTenant) return;
+    if (!newEmailValue.trim()) {
+      toast({ title: "Error", description: "Ingresá un email", variant: "destructive" });
+      return;
+    }
+    setProcessingTenantAction(true);
+    try {
+      await apiRequest("PATCH", `/api/super/tenants/${actionTenant.id}/admin/email`, { email: newEmailValue.trim() });
+      toast({ title: "Email del admin actualizado" });
+      setChangeEmailOpen(false);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setProcessingTenantAction(false);
+    }
+  }
+
+  function copyToClipboard(text: string, field: string) {
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(null), 2000);
   }
 
   async function submitRename() {
@@ -939,6 +1009,113 @@ export default function OwnerDashboard() {
           </DialogContent>
         </Dialog>
 
+        <Dialog open={confirmationOpen} onOpenChange={setConfirmationOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>✅ Negocio creado exitosamente</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Guardá estas credenciales. El negocio puede iniciar sesión con estos datos:
+              </p>
+              {createdCredentials && (
+                <div className="space-y-3 rounded-md border p-4 bg-muted/30">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Código de negocio</p>
+                      <p className="font-mono text-sm font-medium">{createdCredentials.code}</p>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => copyToClipboard(createdCredentials.code, "code")}>
+                      {copiedField === "code" ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Email del admin</p>
+                      <p className="font-mono text-sm font-medium">{createdCredentials.adminEmail}</p>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => copyToClipboard(createdCredentials.adminEmail, "email")}>
+                      {copiedField === "email" ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Contraseña</p>
+                      <p className="font-mono text-sm font-medium">{createdCredentials.adminPassword}</p>
+                    </div>
+                    <Button variant="ghost" size="icon" onClick={() => copyToClipboard(createdCredentials.adminPassword, "password")}>
+                      {copiedField === "password" ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <Button
+                className="w-full"
+                onClick={() => {
+                  if (createdCredentials) {
+                    const text = `Código: ${createdCredentials.code}\nEmail: ${createdCredentials.adminEmail}\nContraseña: ${createdCredentials.adminPassword}`;
+                    copyToClipboard(text, "all");
+                  }
+                }}
+              >
+                <Copy className="w-4 h-4 mr-2" />
+                {copiedField === "all" ? "¡Copiado!" : "Copiar todas las credenciales"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={changeCodeOpen} onOpenChange={setChangeCodeOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Cambiar código de negocio</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                El código es lo que los usuarios ingresan para iniciar sesión. Si lo cambiás, tendrán que usar el nuevo.
+              </p>
+              <div className="space-y-2">
+                <Label>Nuevo código</Label>
+                <Input
+                  value={newCodeValue}
+                  onChange={(e) => setNewCodeValue(e.target.value)}
+                  placeholder="ej: mi-negocio"
+                />
+              </div>
+              <Button onClick={submitChangeCode} disabled={processingTenantAction}>
+                <Save className="w-4 h-4 mr-2" />
+                {processingTenantAction ? "Guardando..." : "Guardar código"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={changeEmailOpen} onOpenChange={setChangeEmailOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Cambiar email del admin</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Este es el email que usa el administrador del negocio para iniciar sesión.
+              </p>
+              <div className="space-y-2">
+                <Label>Nuevo email</Label>
+                <Input
+                  type="email"
+                  value={newEmailValue}
+                  onChange={(e) => setNewEmailValue(e.target.value)}
+                  placeholder="admin@negocio.com"
+                />
+              </div>
+              <Button onClick={submitChangeEmail} disabled={processingTenantAction}>
+                <Save className="w-4 h-4 mr-2" />
+                {processingTenantAction ? "Guardando..." : "Guardar email"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "emails" | "security")} data-testid="tabs-owner">
           <TabsList>
             <TabsTrigger value="tenants" data-testid="tab-tenants">Negocios</TabsTrigger>
@@ -1096,6 +1273,9 @@ export default function OwnerDashboard() {
                                 {tenant.name}
                               </p>
                               <p className="text-sm text-muted-foreground">{tenant.code}</p>
+                              {tenant.ownerEmail && (
+                                <p className="text-xs text-muted-foreground">{tenant.ownerEmail}</p>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-3 flex-wrap">
@@ -1180,6 +1360,14 @@ export default function OwnerDashboard() {
                                 <DropdownMenuItem onClick={() => openSetPasswordDialog(tenant)} disabled={!!tenant.deletedAt}>
                                   <KeyRound className="w-4 h-4 mr-2" />
                                   Cambiar contraseña admin
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openChangeCodeDialog(tenant)} disabled={!!tenant.deletedAt}>
+                                  <Hash className="w-4 h-4 mr-2" />
+                                  Cambiar código
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => openChangeEmailDialog(tenant as any)} disabled={!!tenant.deletedAt}>
+                                  <Mail className="w-4 h-4 mr-2" />
+                                  Cambiar email admin
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem onClick={() => openDeleteDialog(tenant)} disabled={!!tenant.deletedAt}>

@@ -33,6 +33,9 @@ export const tenantStorage = {
   async updateTenantName(tenantId: number, name: string) {
     await db.update(tenants).set({ name }).where(eq(tenants.id, tenantId));
   },
+  async updateTenantCode(tenantId: number, code: string) {
+    await db.update(tenants).set({ code, slug: code }).where(eq(tenants.id, tenantId));
+  },
   async softDeleteTenant(tenantId: number) {
     await db.update(tenants).set({ deletedAt: new Date(), isBlocked: true }).where(eq(tenants.id, tenantId));
   },

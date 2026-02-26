@@ -12,7 +12,6 @@ import { eq, and, isNull } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
-import { evaluatePassword } from "../services/password-policy";
 import { getTenantAddons as getTenantAddonsFlags, setTenantAddon } from "../services/tenant-addons";
 
 const createTenantSchema = z.object({
@@ -23,7 +22,7 @@ const createTenantSchema = z.object({
     z.coerce.number().int().positive().nullable()
   ).optional(),
   adminEmail: z.string().trim().email().max(120),
-  adminPassword: z.string().min(4).max(256),
+  adminPassword: z.string().min(6).max(256),
   adminName: z.string().trim().min(2).max(80),
 });
 
@@ -39,8 +38,16 @@ const renameSchema = z.object({
   name: z.string().trim().min(2).max(80),
 });
 
+const updateCodeSchema = z.object({
+  code: z.string().trim().min(2).max(40),
+});
+
+const updateAdminEmailSchema = z.object({
+  email: z.string().trim().email().max(120),
+});
+
 const setPasswordSchema = z.object({
-  newPassword: z.string().min(12).max(256),
+  newPassword: z.string().min(6).max(256),
 });
 
 const deleteSchema = z.object({
@@ -50,7 +57,7 @@ const deleteSchema = z.object({
 const updateSuperCredentialsSchema = z.object({
   currentPassword: z.string().min(6).max(128),
   newEmail: z.string().trim().email().max(120).optional(),
-  newPassword: z.string().min(12).max(256).optional(),
+  newPassword: z.string().min(6).max(256).optional(),
 });
 
 const setup2faSchema = z.object({
@@ -288,6 +295,7 @@ export function registerSuperRoutes(app: Express) {
       if (existing) {
         return res.status(400).json({ error: "Código de negocio ya existe" });
       }
+      const hashedPassword = await hashPassword(adminPassword);
       const tenant = await storage.createTenant({
         code,
         name,
@@ -295,11 +303,6 @@ export function registerSuperRoutes(app: Express) {
         planId: planId || null,
         isActive: true,
       });
-      const passEval = evaluatePassword(adminPassword, { email: adminEmail, tenantCode: code, tenantName: name });
-      if (!passEval.isValid) {
-        return res.status(400).json({ error: "Password admin inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
-      }
-      const hashedPassword = await hashPassword(adminPassword);
       await storage.createUser({
         tenantId: tenant.id,
         email: adminEmail,
@@ -326,7 +329,11 @@ export function registerSuperRoutes(app: Express) {
       for (const s of defaultStatuses) {
         await storage.createOrderStatus({ tenantId: tenant.id, ...s });
       }
-      res.status(201).json({ data: tenant });
+      res.status(201).json({
+        data: tenant,
+        admin: { email: adminEmail, fullName: adminName },
+        credentials: { code, adminEmail, adminPassword },
+      });
     } catch (err: any) {
       console.error("[SUPER ADMIN CREATE TENANT ERROR]", err?.message || err, err?.details || err?.errors);
       if (err instanceof z.ZodError) {
@@ -488,6 +495,58 @@ export function registerSuperRoutes(app: Express) {
     }
   });
 
+  app.patch("/api/super/tenants/:tenantId/code", superAuth, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId as string);
+      const { code } = updateCodeSchema.parse(req.body);
+      const existing = await storage.getTenantByCode(code);
+      if (existing && existing.id !== tenantId) {
+        return res.status(400).json({ error: "Código de negocio ya existe", code: "TENANT_CODE_TAKEN" });
+      }
+      await storage.updateTenantCode(tenantId, code);
+      await storage.createAuditLog({
+        tenantId,
+        userId: req.auth!.userId,
+        action: "TENANT_CODE_CHANGED",
+        entityType: "TENANT",
+        entityId: tenantId,
+        changes: { code },
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/tenants/:tenantId/admin/email", superAuth, async (req, res) => {
+    try {
+      const tenantId = parseInt(req.params.tenantId as string);
+      const { email } = updateAdminEmailSchema.parse(req.body);
+      const admin = await storage.getPrimaryTenantAdmin(tenantId);
+      if (!admin) {
+        return res.status(404).json({ error: "No se encontró admin principal" });
+      }
+      await storage.updateUser(admin.id, tenantId, { email });
+      await storage.createAuditLog({
+        tenantId,
+        userId: req.auth!.userId,
+        action: "TENANT_ADMIN_EMAIL_CHANGED",
+        entityType: "USER",
+        entityId: admin.id,
+        changes: { email },
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+      }
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   app.post("/api/super/tenants/:tenantId/reset-password", superAuth, async (req, res) => {
     try {
       const tenantId = parseInt(req.params.tenantId as string, 10);
@@ -547,8 +606,6 @@ export function registerSuperRoutes(app: Express) {
       if (!admin) {
         return res.status(404).json({ error: "No se encontró un admin principal" });
       }
-      const passEval = evaluatePassword(newPassword, { email: admin.email, tenantCode: tenant?.code, tenantName: tenant?.name });
-      if (!passEval.isValid) return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
       const hashedPassword = await hashPassword(newPassword);
       await storage.updateUser(admin.id, tenantId, { password: hashedPassword });
       await storage.createAuditLog({
@@ -642,8 +699,6 @@ export function registerSuperRoutes(app: Express) {
         payload.email = newEmail;
       }
       if (newPassword) {
-        const passEval = evaluatePassword(newPassword, { email: user.email, tenantCode: "t_root", tenantName: "root" });
-        if (!passEval.isValid) return res.status(400).json({ error: "Password inválida", code: "PASSWORD_POLICY_FAILED", details: passEval });
         payload.password = await hashPassword(newPassword);
       }
 
