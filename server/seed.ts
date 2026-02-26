@@ -1,13 +1,87 @@
 import { storage } from "./storage";
 import { hashPassword } from "./auth";
 import { db } from "./db";
-import { users, plans, tenants, deliveryAgents, tenantAddons } from "@shared/schema";
+import {
+  users,
+  plans,
+  tenants,
+  deliveryAgents,
+  tenantAddons,
+  orderTypeDefinitions,
+  orderFieldDefinitions,
+} from "@shared/schema";
 import { eq, and } from "drizzle-orm";
+
+const BASE_ORDER_TYPES = [
+  { code: "PEDIDO", label: "Pedido" },
+  { code: "ENCARGO", label: "Encargo" },
+  { code: "SERVICIO", label: "Servicio" },
+  { code: "TURNO", label: "Turno" },
+] as const;
+
+const DEFAULT_ORDER_FIELDS = [
+  { fieldKey: "cliente", label: "Cliente", fieldType: "TEXT", required: true, sortOrder: 0 },
+  { fieldKey: "telefono", label: "Teléfono", fieldType: "TEXT", required: false, sortOrder: 1 },
+  { fieldKey: "descripcion", label: "Descripción", fieldType: "TEXT", required: false, sortOrder: 2 },
+] as const;
+
+async function ensureOrderTypePresetsForAllTenants() {
+  const allTenants = await db.select({ id: tenants.id }).from(tenants);
+  for (const tenant of allTenants) {
+    const typeRows = await Promise.all(
+      BASE_ORDER_TYPES.map(async (typePreset) => {
+        const [typeRow] = await db
+          .insert(orderTypeDefinitions)
+          .values({
+            tenantId: tenant.id,
+            code: typePreset.code,
+            label: typePreset.label,
+            isActive: true,
+          })
+          .onConflictDoUpdate({
+            target: [orderTypeDefinitions.tenantId, orderTypeDefinitions.code],
+            set: { label: typePreset.label, isActive: true },
+          })
+          .returning({ id: orderTypeDefinitions.id });
+        return typeRow;
+      })
+    );
+
+    for (const typeRow of typeRows) {
+      for (const fieldPreset of DEFAULT_ORDER_FIELDS) {
+        await db
+          .insert(orderFieldDefinitions)
+          .values({
+            tenantId: tenant.id,
+            orderTypeId: typeRow.id,
+            fieldKey: fieldPreset.fieldKey,
+            label: fieldPreset.label,
+            fieldType: fieldPreset.fieldType,
+            required: fieldPreset.required,
+            sortOrder: fieldPreset.sortOrder,
+            config: {},
+            isActive: true,
+          })
+          .onConflictDoUpdate({
+            target: [orderFieldDefinitions.orderTypeId, orderFieldDefinitions.fieldKey],
+            set: {
+              label: fieldPreset.label,
+              fieldType: fieldPreset.fieldType,
+              required: fieldPreset.required,
+              sortOrder: fieldPreset.sortOrder,
+              isActive: true,
+            },
+          });
+      }
+    }
+  }
+}
 
 export async function seedDatabase() {
   try {
     const existingSuperAdmin = await storage.getSuperAdminByEmail("admin@orbia.app");
     if (existingSuperAdmin) {
+      await ensureOrderTypePresetsForAllTenants();
       console.log("Seed: Database already seeded, skipping.");
       return;
     }
@@ -398,6 +472,8 @@ export async function seedDatabase() {
       description: "Cobro mantenimiento Ana López",
       createdById: demoAdmin.id,
     });
+
+    await ensureOrderTypePresetsForAllTenants();
 
     console.log("Seed: Demo data created successfully!");
     console.log("---");

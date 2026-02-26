@@ -55,6 +55,27 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 
+
+type OrderPresetField = {
+  id: number;
+  fieldKey: string;
+  label: string;
+  fieldType: "TEXT" | "NUMBER" | "FILE";
+  required: boolean;
+  sortOrder: number;
+  config?: { allowedExtensions?: string[] };
+};
+
+type OrderCustomFieldValue = {
+  fieldId: number;
+  fieldKey?: string | null;
+  label?: string | null;
+  fieldType?: string | null;
+  valueText?: string | null;
+  valueNumber?: string | null;
+  fileStorageKey?: string | null;
+};
+
 type MessageTemplate = {
   id: number;
   name: string;
@@ -87,6 +108,10 @@ export default function OrdersPage() {
   const [whatsDialogOpen, setWhatsDialogOpen] = useState(false);
   const [renderedMessage, setRenderedMessage] = useState("");
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
+  const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
+  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string }>>({});
+  const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
+
   const [newOrder, setNewOrder] = useState({
     type: "PEDIDO",
     customerName: "",
@@ -103,6 +128,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchData();
+    void loadPresetFields(newOrder.type || "PEDIDO");
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
       .then((d) => {
@@ -117,6 +143,23 @@ export default function OrdersPage() {
       })
       .catch(() => { });
   }, []);
+
+  async function loadPresetFields(typeCode: string) {
+    try {
+      const res = await apiRequest("GET", `/api/order-presets/types/${encodeURIComponent(typeCode)}/fields`);
+      const json = await res.json();
+      const fields: OrderPresetField[] = json?.data || [];
+      setPresetFields(fields);
+      setCustomFieldInputs((prev) => {
+        const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string }> = {};
+        for (const f of fields) next[f.id] = prev[f.id] || {};
+        return next;
+      });
+    } catch {
+      setPresetFields([]);
+      setCustomFieldInputs({});
+    }
+  }
 
   async function fetchData() {
     try {
@@ -141,18 +184,32 @@ export default function OrdersPage() {
   async function createOrder(e: React.FormEvent) {
     e.preventDefault();
     try {
+      const customFields = presetFields.map((field) => {
+        const raw = customFieldInputs[field.id] || {};
+        return {
+          fieldId: field.id,
+          valueText: field.fieldType === "TEXT" ? (raw.valueText || "") : undefined,
+          valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
+          fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
+        };
+      });
+
       await apiRequest("POST", "/api/orders", {
         ...newOrder,
+        orderTypeCode: newOrder.type,
         totalAmount: newOrder.totalAmount ? parseFloat(newOrder.totalAmount) : null,
         statusId: newOrder.statusId ? parseInt(newOrder.statusId) : null,
         requiresDelivery: newOrder.requiresDelivery,
         deliveryAddress: newOrder.requiresDelivery ? newOrder.deliveryAddress : null,
         deliveryCity: newOrder.requiresDelivery ? newOrder.deliveryCity : null,
         deliveryAddressNotes: newOrder.requiresDelivery ? newOrder.deliveryAddressNotes : null,
+        customFields,
       });
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
       setNewOrder({ type: "PEDIDO", customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", statusId: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setCustomFieldInputs({});
+      await loadPresetFields("PEDIDO");
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -163,14 +220,17 @@ export default function OrdersPage() {
     setSelectedOrder(order);
     setDetailOpen(true);
     try {
-      const [commentsRes, historyRes] = await Promise.all([
+      const [commentsRes, historyRes, customRes] = await Promise.all([
         apiRequest("GET", `/api/orders/${order.id}/comments`),
         apiRequest("GET", `/api/orders/${order.id}/history`),
+        apiRequest("GET", `/api/orders/${order.id}/custom-fields`).catch(() => ({ json: async () => ({ data: { customFields: [] } }) } as any)),
       ]);
       const commentsData = await commentsRes.json();
       const historyData = await historyRes.json();
+      const customData = await customRes.json();
       setComments(commentsData.data || []);
       setHistory(historyData.data || []);
+      setDetailCustomFields(customData?.data?.customFields || []);
     } catch { }
   }
 
@@ -343,7 +403,7 @@ export default function OrdersPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Tipo</Label>
-                    <Select value={newOrder.type} onValueChange={(v) => setNewOrder({ ...newOrder, type: v })}>
+                    <Select value={newOrder.type} onValueChange={(v) => { setNewOrder({ ...newOrder, type: v }); void loadPresetFields(v); }}>
                       <SelectTrigger data-testid="select-order-type">
                         <SelectValue />
                       </SelectTrigger>
@@ -411,6 +471,38 @@ export default function OrdersPage() {
                     data-testid="input-description"
                   />
                 </div>
+                {presetFields.length > 0 && (
+                  <div className="space-y-3 border rounded-md p-3">
+                    <p className="text-sm font-medium">Campos adicionales</p>
+                    {presetFields.map((field) => (
+                      <div key={field.id} className="space-y-1">
+                        <Label>{field.label}{field.required ? " *" : ""}</Label>
+                        {field.fieldType === "TEXT" ? (
+                          <Input
+                            value={customFieldInputs[field.id]?.valueText || ""}
+                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+                          />
+                        ) : field.fieldType === "NUMBER" ? (
+                          <Input
+                            type="number"
+                            value={customFieldInputs[field.id]?.valueNumber || ""}
+                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
+                          />
+                        ) : (
+                          <div className="space-y-1">
+                            <Input
+                              placeholder="Requiere módulo de adjuntos"
+                              value={customFieldInputs[field.id]?.fileStorageKey || ""}
+                              disabled
+                              readOnly
+                            />
+                            <p className="text-xs text-muted-foreground">Este campo FILE requiere módulo de adjuntos para subir archivos. Extensiones permitidas: {(field.config?.allowedExtensions || ["pdf","docx","xlsx","jpg","png","jpeg","jfif"]).join(", ")}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 {addonStatus.delivery && (
                   <div className="space-y-3 p-3 rounded-md bg-muted/50">
                     <div className="flex items-center justify-between gap-4">
@@ -767,6 +859,18 @@ export default function OrdersPage() {
                     </Dialog>
                   )}
                 </div>
+
+                {detailCustomFields.length > 0 && (
+                  <div className="space-y-2 border rounded-md p-3">
+                    <p className="text-sm font-medium">Campos adicionales</p>
+                    {detailCustomFields.map((f) => (
+                      <div key={`${f.fieldId}-${f.fieldKey || "x"}`} className="text-sm flex justify-between gap-3">
+                        <span className="text-muted-foreground">{f.label || f.fieldKey || `Campo ${f.fieldId}`}</span>
+                        <span className="text-right break-all">{f.valueText || f.valueNumber || f.fileStorageKey || "-"}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
 
                 <Tabs defaultValue="comments">
                   <TabsList className="w-full">

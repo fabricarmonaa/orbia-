@@ -99,6 +99,10 @@ function buildPublicBaseUrl(slug?: string | null) {
   return `${process.env.APP_ORIGIN || ""}/public`;
 }
 
+function isApiDebugEnabled() {
+  return process.env.DEBUG_API === "1";
+}
+
 export function registerSaleRoutes(app: Express) {
   app.post("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateBody(createSaleSchema), async (req, res) => {
     try {
@@ -189,6 +193,21 @@ export function registerSaleRoutes(app: Express) {
         ? (raw.sort as "date_desc" | "date_asc" | "number_desc" | "number_asc")
         : "date_desc";
 
+      if (isApiDebugEnabled()) {
+        console.info("[debug-api] sales.history request", {
+          tenantId,
+          tokenScope: req.auth?.scope || null,
+          tokenBranchId: req.auth?.branchId ?? null,
+          effectiveBranchId: branchId ?? null,
+          from: raw.from || null,
+          to: raw.to || null,
+          number: String(raw.number ?? "").trim() || null,
+          customerId: customerId ?? null,
+          customerQuery: String(raw.customerQuery ?? raw.q ?? "").trim() || null,
+          repositoryMethod: "storage.listSales",
+        });
+      }
+
       const result = await storage.listSales(tenantId, {
         branchId,
         from: from || undefined,
@@ -221,6 +240,15 @@ export function registerSaleRoutes(app: Express) {
         data: result.data,
         meta: result.meta,
       };
+      if (isApiDebugEnabled()) {
+        console.info("[debug-api] sales.history response", {
+          tenantId,
+          effectiveBranchId: branchId ?? null,
+          total: Number(result.meta?.total || 0),
+          returnedItems: items.length,
+          usedMaterializedView: result.usedMaterializedView,
+        });
+      }
       if (process.env.NODE_ENV !== "production") payload.debug = { usedMaterializedView: result.usedMaterializedView };
       return res.json(payload);
     } catch (err: any) {

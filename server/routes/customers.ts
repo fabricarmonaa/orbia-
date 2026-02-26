@@ -66,6 +66,10 @@ function mapCustomerRow(row: any) {
   };
 }
 
+function isApiDebugEnabled() {
+  return process.env.DEBUG_API === "1";
+}
+
 export function registerCustomerRoutes(app: Express) {
   app.post("/api/customers", tenantAuth, requireRoleAny(["admin", "staff"]), validateBody(customerSchema), async (req, res) => {
     let tenantId = 0;
@@ -240,15 +244,101 @@ export function registerCustomerRoutes(app: Express) {
   });
 
   app.get("/api/customers/by-dni", tenantAuth, requireRoleAny(["admin", "staff"]), validateQuery(byDniQuery), async (req, res) => {
+    let tenantId = 0;
     try {
-      const tenantId = req.auth!.tenantId!;
-      const dni = normalizeDoc(String(req.query.dni || ""));
-      if (!dni) return res.json({ data: null });
-      const [row] = await db.select().from(customers).where(and(eq(customers.tenantId, tenantId), eq(customers.doc, dni))).limit(1);
-      return res.json({ data: row || null });
-    } catch (err) {
-      console.error("[customers] CUSTOMER_BY_DNI_ERROR", err);
-      return res.status(500).json({ error: "No se pudo buscar cliente", code: "CUSTOMER_BY_DNI_ERROR" });
+      tenantId = req.auth!.tenantId!;
+      const branchId = req.auth?.branchId ?? null;
+      const rawDni = String(req.query.dni ?? "");
+      const dni = normalizeDoc(rawDni);
+
+      if (isApiDebugEnabled()) {
+        console.info("[debug-api] customers.by-dni request", {
+          tenantId,
+          branchId,
+          rawDni,
+          normalizedDni: dni,
+          repositoryMethod: "pool.query(customers by tenant+doc)",
+        });
+      }
+
+      if (!dni || dni.length < 6 || dni.length > 12) {
+        return res.status(400).json({
+          error: {
+            code: "CUSTOMER_DNI_INVALID",
+            message: "DNI inválido",
+          },
+        });
+      }
+
+      const info = await getCustomersSchemaInfo();
+      const activeExpr = info.hasIsActive
+        ? "c.is_active"
+        : info.hasDeletedAt
+          ? "(c.deleted_at IS NULL)"
+          : "true";
+
+      const query = `
+        SELECT
+          c.id,
+          c.name,
+          c.doc,
+          c.phone,
+          c.email,
+          c.address,
+          c.notes,
+          c.created_at,
+          ${activeExpr} AS is_active
+        FROM customers c
+        WHERE c.tenant_id = $1
+          AND c.doc = $2
+          AND ${activeExpr} = true
+        ORDER BY c.id DESC
+        LIMIT 1
+      `;
+      const result = await pool.query(query, [tenantId, dni]);
+      const row = result.rows?.[0] || null;
+
+      if (!row) {
+        return res.status(404).json({
+          error: {
+            code: "CUSTOMER_NOT_FOUND",
+            message: "Cliente no encontrado",
+          },
+        });
+      }
+
+      if (isApiDebugEnabled()) {
+        console.info("[debug-api] customers.by-dni response", {
+          tenantId,
+          branchId,
+          found: true,
+          customerId: row.id,
+        });
+      }
+
+      return res.status(200).json({ data: mapCustomerRow(row) });
+    } catch (err: any) {
+      if (isApiDebugEnabled()) {
+        console.error("[customers] CUSTOMER_BY_DNI_ERROR", {
+          tenantId,
+          message: err?.message,
+          code: err?.code,
+          detail: err?.detail,
+          stack: err?.stack,
+        });
+      } else {
+        console.error("[customers] CUSTOMER_BY_DNI_ERROR", {
+          tenantId,
+          message: err?.message,
+          code: err?.code,
+        });
+      }
+      return res.status(500).json({
+        error: {
+          code: "CUSTOMER_BY_DNI_ERROR",
+          message: "No se pudo buscar cliente",
+        },
+      });
     }
   });
 
