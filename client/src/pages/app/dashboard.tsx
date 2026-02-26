@@ -14,6 +14,8 @@ type DashboardSummary = {
   cash: {
     monthIncome: number;
     monthExpense: number;
+    monthFixedExpense: number;
+    monthVariableExpense: number;
     monthResult: number;
   };
   products: {
@@ -23,7 +25,7 @@ type DashboardSummary = {
 
 const ZERO_SUMMARY: DashboardSummary = {
   orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
-  cash: { monthIncome: 0, monthExpense: 0, monthResult: 0 },
+  cash: { monthIncome: 0, monthExpense: 0, monthFixedExpense: 0, monthVariableExpense: 0, monthResult: 0 },
   products: { count: 0 },
 };
 
@@ -48,6 +50,8 @@ export default function Dashboard() {
             cash: {
               monthIncome: Number(json.cash?.monthIncome || 0),
               monthExpense: Number(json.cash?.monthExpense || 0),
+              monthFixedExpense: Number(json.cash?.monthFixedExpense || 0),
+              monthVariableExpense: Number(json.cash?.monthVariableExpense || 0),
               monthResult: Number(json.cash?.monthResult || 0),
             },
             products: { count: Number(json.products?.count || 0) },
@@ -103,24 +107,24 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {loading
           ? [1, 2, 3, 4].map((i) => (
-              <Card key={i}>
-                <CardContent className="pt-6"><Skeleton className="h-16 w-full" /></CardContent>
-              </Card>
-            ))
+            <Card key={i}>
+              <CardContent className="pt-6"><Skeleton className="h-16 w-full" /></CardContent>
+            </Card>
+          ))
           : cards.map((card) => (
-              <Card key={card.title}>
-                <CardContent className="pt-6">
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <p className="text-sm text-muted-foreground">{card.title}</p>
-                      <p className="text-2xl font-bold">{card.value}</p>
-                      <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
-                    </div>
-                    <div className="p-3 rounded-md bg-primary/10"><card.icon className="w-5 h-5 text-primary" /></div>
+            <Card key={card.title}>
+              <CardContent className="pt-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <p className="text-sm text-muted-foreground">{card.title}</p>
+                    <p className="text-2xl font-bold">{card.value}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{card.subtitle}</p>
                   </div>
-                </CardContent>
-              </Card>
-            ))}
+                  <div className="p-3 rounded-md bg-primary/10"><card.icon className="w-5 h-5 text-primary" /></div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -161,12 +165,18 @@ export default function Dashboard() {
                     ${summary.cash.monthIncome.toLocaleString("es-AR")}
                   </span>
                 </div>
-                <div className="flex items-center justify-between rounded-md border p-3">
-                  <span className="text-sm text-muted-foreground">Egresos</span>
-                  <span className="font-semibold inline-flex items-center gap-1 text-rose-600">
-                    <TrendingDown className="w-4 h-4" />
-                    ${summary.cash.monthExpense.toLocaleString("es-AR")}
-                  </span>
+                <div className="flex flex-col gap-1 rounded-md border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-muted-foreground">Egresos Totales</span>
+                    <span className="font-semibold inline-flex items-center gap-1 text-rose-600">
+                      <TrendingDown className="w-4 h-4" />
+                      ${summary.cash.monthExpense.toLocaleString("es-AR")}
+                    </span>
+                  </div>
+                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
+                    <span>Fijos: ${summary.cash.monthFixedExpense.toLocaleString("es-AR")}</span>
+                    <span>Variables: ${summary.cash.monthVariableExpense.toLocaleString("es-AR")}</span>
+                  </div>
                 </div>
                 <div className="flex items-center justify-between rounded-md border p-3 bg-primary/5">
                   <span className="text-sm font-medium">Resultado</span>

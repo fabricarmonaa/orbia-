@@ -23,7 +23,7 @@ const createTenantSchema = z.object({
     z.coerce.number().int().positive().nullable()
   ).optional(),
   adminEmail: z.string().trim().email().max(120),
-  adminPassword: z.string().min(12).max(256),
+  adminPassword: z.string().min(4).max(256),
   adminName: z.string().trim().min(2).max(80),
 });
 
@@ -328,8 +328,10 @@ export function registerSuperRoutes(app: Express) {
       }
       res.status(201).json({ data: tenant });
     } catch (err: any) {
+      console.error("[SUPER ADMIN CREATE TENANT ERROR]", err?.message || err, err?.details || err?.errors);
       if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+        const issues = err.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(', ');
+        return res.status(400).json({ error: `Datos inválidos: ${issues}`, details: err.errors });
       }
       res.status(500).json({ error: err.message });
     }
@@ -938,17 +940,17 @@ export function registerSuperRoutes(app: Express) {
     avatarUploadLimiter,
     handleSingleUpload(profileUpload, "avatar"),
     async (req, res) => {
-    try {
-      if (!req.file) return res.status(400).json({ error: "No se subió archivo" });
-      const avatarUrl = `/uploads/profiles/${req.file.filename}`;
-      const config = await storage.upsertSuperAdminConfig({
-        userId: req.auth!.userId,
-        avatarUrl,
-      });
-      const versionedUrl = `${avatarUrl}?v=${new Date().getTime()}`;
-      res.json({ data: { ...config, avatarUrl: versionedUrl } });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      try {
+        if (!req.file) return res.status(400).json({ error: "No se subió archivo" });
+        const avatarUrl = `/uploads/profiles/${req.file.filename}`;
+        const config = await storage.upsertSuperAdminConfig({
+          userId: req.auth!.userId,
+          avatarUrl,
+        });
+        const versionedUrl = `${avatarUrl}?v=${new Date().getTime()}`;
+        res.json({ data: { ...config, avatarUrl: versionedUrl } });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
+      }
+    });
 }

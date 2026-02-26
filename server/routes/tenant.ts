@@ -290,7 +290,7 @@ export function registerTenantRoutes(app: Express) {
   app.get("/api/dashboard/summary", tenantAuth, enforceBranchScope, async (req, res) => {
     const empty = {
       orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
-      cash: { monthIncome: 0, monthExpense: 0, monthResult: 0 },
+      cash: { monthIncome: 0, monthExpense: 0, monthFixedExpense: 0, monthVariableExpense: 0, monthResult: 0 },
       products: { count: 0 },
     };
 
@@ -299,30 +299,30 @@ export function registerTenantRoutes(app: Express) {
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
       const monthlySummary = !branchId ? await getTenantMonthlyMetricsSummary(tenantId) : null;
 
-      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesRaw, statuses, allOrders] = await Promise.all([
+      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesByType, statuses, allOrders] = await Promise.all([
         storage.countOrders(tenantId, branchId),
         storage.countProducts(tenantId),
         storage.getMonthlyIncome(tenantId, branchId),
-        storage.getMonthlyExpenses(tenantId, branchId),
+        storage.getMonthlyExpensesByType(tenantId, branchId),
         storage.getOrderStatuses(tenantId),
         branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
       ]);
 
       const pendingStatusIds = new Set(
         statuses
-          .filter((s) => {
+          .filter((s: any) => {
             const normalized = String(s.name || "").trim().toUpperCase();
             return normalized === "PENDIENTE" || normalized === "PENDING";
           })
-          .map((s) => s.id)
+          .map((s: any) => s.id)
       );
       const inProgressStatusIds = new Set(
         statuses
-          .filter((s) => {
+          .filter((s: any) => {
             const normalized = String(s.name || "").trim().toUpperCase().replace(/\s+/g, "_");
             return normalized === "EN_PROCESO" || normalized === "IN_PROGRESS";
           })
-          .map((s) => s.id)
+          .map((s: any) => s.id)
       );
 
       const pendingCount = allOrders.filter((o: any) => o.statusId && pendingStatusIds.has(o.statusId)).length;
@@ -330,7 +330,10 @@ export function registerTenantRoutes(app: Express) {
       const openCount = pendingCount + inProgressCount;
 
       const monthIncome = Number(monthlySummary ? monthlySummary.cashInTotal : monthlyIncomeRaw) || 0;
-      const monthExpense = Number(monthlySummary ? monthlySummary.cashOutTotal : monthlyExpensesRaw) || 0;
+      // We always rely on the live grouped computation for the expense breakdown because the monthly summary only holds the scalar total.
+      const monthExpense = Number((monthlyExpensesByType.fixed || 0) + (monthlyExpensesByType.variable || 0));
+      const monthFixedExpense = Number(monthlyExpensesByType.fixed || 0);
+      const monthVariableExpense = Number(monthlyExpensesByType.variable || 0);
 
       return res.json({
         orders: {
@@ -342,6 +345,8 @@ export function registerTenantRoutes(app: Express) {
         cash: {
           monthIncome,
           monthExpense,
+          monthFixedExpense,
+          monthVariableExpense,
           monthResult: monthIncome - monthExpense,
         },
         products: {
@@ -506,10 +511,10 @@ export function registerTenantRoutes(app: Express) {
         branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
         storage.getOrderStatuses(tenantId),
       ]);
-      const byId = new Map(statuses.map((s:any) => [s.id, String(s.name || "").toUpperCase()]));
-      const pending = orders.filter((o:any) => ["PENDIENTE","PENDING"].includes(byId.get(o.statusId) || "")).slice(0, limit);
-      const inProgress = orders.filter((o:any) => ["EN PROCESO","EN_PROCESO","IN_PROGRESS"].includes(byId.get(o.statusId) || "")).slice(0, limit);
-      const recent = [...orders].sort((a:any,b:any)=>+new Date(b.createdAt)-+new Date(a.createdAt)).slice(0, limit);
+      const byId = new Map(statuses.map((s: any) => [s.id, String(s.name || "").toUpperCase()]));
+      const pending = orders.filter((o: any) => ["PENDIENTE", "PENDING"].includes(byId.get(o.statusId) || "")).slice(0, limit);
+      const inProgress = orders.filter((o: any) => ["EN PROCESO", "EN_PROCESO", "IN_PROGRESS"].includes(byId.get(o.statusId) || "")).slice(0, limit);
+      const recent = [...orders].sort((a: any, b: any) => +new Date(b.createdAt) - +new Date(a.createdAt)).slice(0, limit);
       return res.json({ pending, inProgress, recent });
     } catch {
       return res.status(500).json({ error: "No se pudo cargar pedidos recientes", code: "DASHBOARD_RECENT_ORDERS_ERROR" });
@@ -527,10 +532,10 @@ export function registerTenantRoutes(app: Express) {
         storage.getCashMovements(tenantId),
       ]);
       const events = [
-        ...orders.slice(0, limit).map((o:any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
-        ...salesRows.data.slice(0, limit).map((s:any) => ({ ts: s.createdAt, type: "SALE", action: "created", reference: s.number || `#${s.id}`, entityId: s.id })),
-        ...cashRows.slice(0, limit).map((c:any) => ({ ts: c.createdAt, type: "CASH", action: c.type, reference: c.description || c.category || `#${c.id}`, entityId: c.id })),
-      ].sort((a,b)=>+new Date(b.ts)-+new Date(a.ts)).slice(0, limit);
+        ...orders.slice(0, limit).map((o: any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
+        ...salesRows.data.slice(0, limit).map((s: any) => ({ ts: s.createdAt, type: "SALE", action: "created", reference: s.number || `#${s.id}`, entityId: s.id })),
+        ...cashRows.slice(0, limit).map((c: any) => ({ ts: c.createdAt, type: "CASH", action: c.type, reference: c.description || c.category || `#${c.id}`, entityId: c.id })),
+      ].sort((a, b) => +new Date(b.ts) - +new Date(a.ts)).slice(0, limit);
       return res.json({ items: events });
     } catch {
       return res.status(500).json({ error: "No se pudo cargar actividad", code: "DASHBOARD_ACTIVITY_ERROR" });
@@ -556,7 +561,7 @@ export function registerTenantRoutes(app: Express) {
       } catch (err: any) {
         res.status(500).json({ error: err.message });
       }
-  });
+    });
 
 
 

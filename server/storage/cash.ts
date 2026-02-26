@@ -110,6 +110,47 @@ export const cashStorage = {
       .where(and(...conditions));
     return parseFloat(result[0]?.total || "0");
   },
+  async getMonthlyExpensesByType(tenantId: number, branchId?: number | null) {
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+
+    // 1. Sum up budgeted (configured) expenses
+    const budgets = await db.execute(sql`
+      SELECT type, COALESCE(SUM(default_amount), 0) as total
+      FROM expense_definitions
+      WHERE tenant_id = ${tenantId} AND is_active = true
+      GROUP BY type
+    `);
+
+    let fixed = 0;
+    let variable = 0;
+    for (const row of budgets.rows as any[]) {
+      if (row.type === 'FIXED') fixed += parseFloat(row.total || "0");
+      if (row.type === 'VARIABLE') variable += parseFloat(row.total || "0");
+    }
+
+    // 2. Sum up actual unlinked cash movements (to avoid double-counting recorded expenses)
+    let branchCondition = sql``;
+    if (branchId) {
+      branchCondition = sql`AND branch_id = ${branchId}`;
+    }
+
+    const unlinkedActuals = await db.execute(sql`
+      SELECT COALESCE(SUM(amount), 0) as total
+      FROM cash_movements
+      WHERE tenant_id = ${tenantId}
+        AND type = 'egreso'
+        AND created_at >= ${startOfMonth}
+        AND expense_definition_id IS NULL
+        ${branchCondition}
+    `);
+
+    const unlinked = parseFloat((unlinkedActuals.rows[0] as any)?.total || "0");
+    variable += unlinked;
+
+    return { fixed, variable };
+  },
   async getTodayIncome(tenantId: number, branchId?: number | null) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);

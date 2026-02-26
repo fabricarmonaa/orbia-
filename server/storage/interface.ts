@@ -100,6 +100,7 @@ export interface IStorage {
   createCashMovement(data: InsertCashMovement): Promise<CashMovement>;
   getMonthlyIncome(tenantId: number, branchId?: number | null): Promise<number>;
   getMonthlyExpenses(tenantId: number, branchId?: number | null): Promise<number>;
+  getMonthlyExpensesByType(tenantId: number, branchId?: number | null): Promise<{ fixed: number; variable: number }>;
   getTodayIncome(tenantId: number, branchId?: number | null): Promise<number>;
   getTodayExpenses(tenantId: number, branchId?: number | null): Promise<number>;
   getExpensesBreakdown(tenantId: number, dateFrom: Date, dateTo: Date): Promise<Record<string, number>>;
