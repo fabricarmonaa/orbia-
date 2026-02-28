@@ -18,6 +18,8 @@ import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-t
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
 import { aiPostForm, AiClientError } from "../services/ai-client";
 import { getIdempotencyKey } from "../services/idempotency";
+import { STT_INTERACTION_STATUS } from "../utils/status-codes";
+import { requireBranchScopeForOperation } from "../services/branch-scope";
 
 const STT_MAX_FILE_MB = Number(process.env.STT_MAX_FILE_MB || "10");
 const STT_MAX_FILE_SIZE = Math.max(1, STT_MAX_FILE_MB) * 1024 * 1024;
@@ -130,7 +132,7 @@ export function registerSttRoutes(app: Express) {
         transcript: transcript || "",
         intentConfirmed: "pending",
         entitiesConfirmed: {},
-        status: "PENDING",
+        status: STT_INTERACTION_STATUS.PENDING,
         idempotencyKey: interactionKey,
       });
 
@@ -145,7 +147,7 @@ export function registerSttRoutes(app: Express) {
 
       const log = await db.transaction(async (tx) => {
         await tx.update(sttInteractions).set({
-          status: "SUCCESS",
+          status: STT_INTERACTION_STATUS.SUCCESS,
           transcript: response.transcript,
           intentConfirmed: response.intent,
           entitiesConfirmed: response.entities,
@@ -170,7 +172,7 @@ export function registerSttRoutes(app: Express) {
       console.error("[STT_INTERPRET_ERROR]", { requestId, supportId, message: err?.message, code: err?.code, statusCode: err?.statusCode, stack: err?.stack });
       const interaction = await storage.getSttInteractionByIdempotency(tenantId, userId, interactionKey);
       if (interaction && interaction.status !== "SUCCESS") {
-        await storage.updateSttInteractionResult(interaction.id, tenantId, { status: "FAILED", errorCode: err?.code || err?.message || "STT_UPSTREAM_ERROR" });
+        await storage.updateSttInteractionResult(interaction.id, tenantId, { status: STT_INTERACTION_STATUS.FAILED, errorCode: err?.code || err?.message || "STT_UPSTREAM_ERROR" });
       }
       if (Number(err?.statusCode) === 415 || err?.message === "UNSUPPORTED_MEDIA_TYPE") {
         return res.status(415).json({ ok: false, code: "STT_UNSUPPORTED_MEDIA", message: "Formato de audio no soportado", supportId });
@@ -194,7 +196,10 @@ export function registerSttRoutes(app: Express) {
       const userId = req.auth!.userId;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
       if (!ALLOWED_INTENTS.has(payload.intent)) return res.status(400).json({ error: "Intent no permitido", code: "INTENT_NOT_ALLOWED" });
-      if ((payload.intent === "sale.create" || payload.intent === "sale.search") && !branchId) return res.status(400).json({ error: "Acción de venta requiere contexto de sucursal", code: "BRANCH_SCOPE_REQUIRED" });
+      if (payload.intent === "sale.create" || payload.intent === "sale.search") {
+        const branchScope = requireBranchScopeForOperation(req.auth!, "Acción de venta");
+        if (!branchScope.ok) return res.status(branchScope.status).json(branchScope.body);
+      }
       if (detectExfiltration(JSON.stringify(payload.entities))) return res.status(403).json({ error: "Consulta no permitida", code: "DATA_EXFIL_BLOCKED" });
       if (!consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: payload.intent, entities: payload.entities })) return res.status(403).json({ error: "Intent ticket inválido o expirado", code: "INTENT_TICKET_INVALID" });
       if (!hasSearchFilters(payload.intent, payload.entities)) return res.status(400).json({ error: "Filtro insuficiente para búsqueda", code: "SEARCH_FILTER_REQUIRED" });
@@ -206,7 +211,7 @@ export function registerSttRoutes(app: Express) {
         transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
         intentConfirmed: payload.intent,
         entitiesConfirmed: payload.entities,
-        status: "PENDING",
+        status: STT_INTERACTION_STATUS.PENDING,
         idempotencyKey: `execute-${crypto.randomUUID()}`,
       });
 
@@ -219,7 +224,7 @@ export function registerSttRoutes(app: Express) {
         if (!name || (doc && !/^\d{6,15}$/.test(doc))) return res.status(400).json({ error: "Datos inválidos" });
         const created = await db.transaction(async (tx) => {
           const [row] = await tx.insert(customers).values({ tenantId, name, doc: doc || null, isActive: true }).returning();
-          await tx.update(sttInteractions).set({ status: "SUCCESS", updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          await tx.update(sttInteractions).set({ status: STT_INTERACTION_STATUS.SUCCESS, updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
           return row;
         });
         result = created;
@@ -242,7 +247,7 @@ export function registerSttRoutes(app: Express) {
         if (!name || price === null || price < 0) return res.status(400).json({ error: "Datos inválidos" });
         const created = await db.transaction(async (tx) => {
           const [row] = await tx.insert(products).values({ tenantId, name, price: String(price), description: null, categoryId: null, sku: null }).returning();
-          await tx.update(sttInteractions).set({ status: "SUCCESS", updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          await tx.update(sttInteractions).set({ status: STT_INTERACTION_STATUS.SUCCESS, updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
           return row;
         });
         result = created;
@@ -273,7 +278,7 @@ export function registerSttRoutes(app: Express) {
 
       if (!["customer.create", "product.create"].includes(payload.intent)) {
         await storage.updateSttInteractionResult(executeInteraction.id, tenantId, {
-          status: "SUCCESS",
+          status: STT_INTERACTION_STATUS.SUCCESS,
           transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
           intentConfirmed: payload.intent,
           entitiesConfirmed: payload.entities,
@@ -291,7 +296,7 @@ export function registerSttRoutes(app: Express) {
         const userId = req.auth!.userId;
         const last = await storage.getSttInteractionsByTenant(tenantId, userId, 1);
         if (last[0]?.status === "PENDING") {
-          await storage.updateSttInteractionResult(last[0].id, tenantId, { status: "FAILED", errorCode: err?.code || "STT_EXECUTE_ERROR" });
+          await storage.updateSttInteractionResult(last[0].id, tenantId, { status: STT_INTERACTION_STATUS.FAILED, errorCode: err?.code || "STT_EXECUTE_ERROR" });
         }
       } catch {}
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.issues });

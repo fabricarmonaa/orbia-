@@ -1,20 +1,14 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db";
 import { statusDefinitions, orderStatuses, orders, products } from "@shared/schema";
+import { DELIVERY_STATUS } from "../utils/status-codes";
 
 export type StatusEntityType = "ORDER" | "PRODUCT" | "DELIVERY";
 
-export const DELIVERY_STATUS_CODES = {
-  PENDING: "PENDING",
-  ASSIGNED: "ASSIGNED",
-  IN_TRANSIT: "IN_TRANSIT",
-  DELIVERED: "DELIVERED",
-  CANCELED: "CANCELED",
-} as const;
 
 export function normalizeDeliveryStatus(input?: string | null) {
-  const code = normalizeStatusCode(input || "PENDING");
-  return (DELIVERY_STATUS_CODES as Record<string, string>)[code] || DELIVERY_STATUS_CODES.PENDING;
+  const code = normalizeStatusCode(input || DELIVERY_STATUS.PENDING);
+  return (DELIVERY_STATUS as Record<string, string>)[code] || DELIVERY_STATUS.PENDING;
 }
 
 export async function resolveCanonicalOrderStatusId(params: { tenantId: number; statusId?: number | null; statusCode?: string | null }) {

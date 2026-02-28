@@ -22,7 +22,7 @@ app = FastAPI(title="ORBIA AI Service", version="2.1.1")
 
 @app.on_event("startup")
 async def startup_event():
-    print(json.dumps({"event":"ai_startup","workerTimeout":WORKER_TIMEOUT,"maxAudioSeconds":MAX_AUDIO_SECONDS}))
+    print(json.dumps({"event":"ai_startup","workerTimeout":WORKER_TIMEOUT,"maxAudioSeconds":MAX_AUDIO_SECONDS,"maxConcurrent":AI_MAX_CONCURRENT_JOBS}))
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "")
 app.add_middleware(
@@ -35,6 +35,8 @@ app.add_middleware(
 
 WORKER_TIMEOUT = int(os.environ.get("AI_WORKER_TIMEOUT_SECONDS", "20"))
 MAX_AUDIO_SECONDS = int(os.environ.get("MAX_AUDIO_SECONDS", os.environ.get("STT_MAX_AUDIO_SECONDS", "20")))
+AI_MAX_CONCURRENT_JOBS = int(os.environ.get("AI_MAX_CONCURRENT_JOBS", "2"))
+ai_semaphore = asyncio.Semaphore(max(1, AI_MAX_CONCURRENT_JOBS))
 ALLOWED_INTENTS = {
     "customer.create", "customer.search", "customer.purchases",
     "product.create", "product.search", "sale.create", "sale.search",
@@ -245,6 +247,13 @@ async def _stt_interpret_internal(
     history: str | None,
     request_id: str,
 ):
+    acquired_slot = False
+    try:
+        await asyncio.wait_for(ai_semaphore.acquire(), timeout=0.05)
+        acquired_slot = True
+    except TimeoutError:
+        fail(429, "AI_BUSY", request_id)
+
     try:
         print(json.dumps({"event":"stt_request","requestId":request_id,"hasAudio":bool(audio),"hasText":bool((text or "").strip())}))
         parsed_history_raw = json.loads(history or "[]")
@@ -325,6 +334,8 @@ async def _stt_interpret_internal(
         print(json.dumps({"event":"stt_error","requestId":request_id,"message":str(err)}))
         fail(500, "AI_SERVICE_UNAVAILABLE", request_id)
     finally:
+        if acquired_slot:
+            ai_semaphore.release()
         for tmp in [temp_input, temp_wav]:
             if tmp and os.path.exists(tmp):
                 try:
