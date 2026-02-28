@@ -62,7 +62,8 @@ export function sttConcurrencyGuard(req: Request, res: Response, next: NextFunct
 }
 
 export function validateSttPayload(req: Request, res: Response, next: NextFunction) {
-  const text = req.body?.text as string | undefined;
+  const rawText = req.body?.text as string | undefined;
+  const text = typeof rawText === 'string' ? rawText.trim() : undefined;
   const hasAudioFile = Boolean(req.file && req.file.size > 0);
 
   if (!hasAudioFile && !text) {

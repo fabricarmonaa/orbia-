@@ -13,12 +13,12 @@ import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-t
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
 import { aiPostForm, AiClientError } from "../services/ai-client";
 
-const upload = multer({ limits: { fileSize: 15 * 1024 * 1024 } });
+const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
   upload.single("audio")(req, res, (err) => {
     if (err) {
       if (err.code === "LIMIT_FILE_SIZE") {
-        return res.status(413).json({ error: "Audio demasiado largo (máx 12MB)", code: "STT_AUDIO_TOO_LARGE" });
+        return res.status(413).json({ error: "Audio demasiado largo (máx 25MB)", code: "STT_AUDIO_TOO_LARGE" });
       }
       return res.status(400).json({ error: "Error procesando archivo", code: "STT_UPLOAD_ERROR" });
     }
@@ -130,6 +130,11 @@ export function registerSttRoutes(app: Express) {
       if (err instanceof AiClientError) {
         if (err.code === "AI_TIMEOUT") {
           return res.status(504).json({ error: "AI_SERVICE_TIMEOUT", requestId });
+        }
+        const status = Number((err as any)?.details?.status || 502);
+        const upstreamError = (err as any)?.details?.body?.error;
+        if (status === 400 || status === 413) {
+          return res.status(status).json({ error: upstreamError || "AI_INVALID_AUDIO", requestId });
         }
         return res.status(502).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
       }

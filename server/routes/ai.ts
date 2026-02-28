@@ -3,7 +3,7 @@ import multer from "multer";
 import { tenantAuth, requireFeature, requirePlanCodes } from "../auth";
 import { aiGetJson, aiPostForm, AiClientError, getAiServiceUrl } from "../services/ai-client";
 
-const upload = multer({ limits: { fileSize: 15 * 1024 * 1024 } });
+const upload = multer({ limits: { fileSize: 25 * 1024 * 1024 } });
 
 function aiErrorPayload(err: unknown) {
   if (err instanceof AiClientError) {
