@@ -77,7 +77,6 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   const [suggestedPassword, setSuggestedPassword] = useState(() => generatePassword(20, true, true));
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
-  const [deleteFinalConfirm, setDeleteFinalConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
   if (!user) return null;
   const currentUser = user;
@@ -134,7 +133,7 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
 
   async function handleDeleteAccount() {
     if (currentUser.role !== "admin") return toast({ title: "Acceso denegado", variant: "destructive" });
-    if (deleteConfirmText !== "ELIMINAR MI CUENTA") return toast({ title: "Confirmación inválida", description: "Debes escribir exactamente ELIMINAR MI CUENTA", variant: "destructive" });
+    if (deleteConfirmText !== "ELIMINAR MI EMPRESA") return toast({ title: "Confirmación inválida", description: "Debes escribir exactamente ELIMINAR MI EMPRESA", variant: "destructive" });
     if (!deletePassword) return toast({ title: "Contraseña requerida", variant: "destructive" });
     setDeleting(true);
     try {
@@ -180,6 +179,6 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
       <div className="flex gap-2"><Button variant="outline" onClick={regenerate}>Regenerar</Button><Button variant="outline" onClick={copySuggested}>Copiar</Button><Button onClick={useSuggested}>Usar esta contraseña</Button></div>
     </div>
 
-    {currentUser.role === "admin" && (<div className="space-y-3 border border-red-300 rounded-md p-4 bg-red-50/40"><h4 className="font-semibold text-red-700">Eliminar cuenta</h4><p className="text-sm text-muted-foreground">Esta acción borra permanentemente tu negocio y todos sus datos (usuarios, cajeros, productos, ventas, pedidos y configuraciones). No se puede deshacer.</p><div className="space-y-1"><Label>Escribí exactamente: ELIMINAR MI CUENTA</Label><Input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="ELIMINAR MI CUENTA" /></div><div className="space-y-1"><Label>Confirmación final: escribí BORRAR TODO</Label><Input value={deleteFinalConfirm} onChange={(e) => setDeleteFinalConfirm(e.target.value)} placeholder="BORRAR TODO" /></div><div className="space-y-1"><Label>Contraseña actual</Label><Input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} /></div><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" disabled={deleting || deleteConfirmText !== "ELIMINAR MI CUENTA" || deleteFinalConfirm !== "BORRAR TODO" || !deletePassword}>Eliminar cuenta</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Última confirmación</AlertDialogTitle><AlertDialogDescription>Vas a perder acceso y se eliminará toda la información del sistema de forma definitiva.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={handleDeleteAccount}>Sí, eliminar definitivamente</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>)}
+    {currentUser.role === "admin" && (<div className="space-y-3 border border-red-300 rounded-md p-4 bg-red-50/40"><h4 className="font-semibold text-red-700">Eliminar empresa</h4><p className="text-sm text-muted-foreground">Esta acción elimina permanentemente toda la información de tu empresa (usuarios, cajeros, productos, ventas, pedidos, archivos y configuraciones). Los datos no podrán recuperarse en el futuro.</p><div className="space-y-1"><Label>Escribí exactamente: ELIMINAR MI EMPRESA</Label><Input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="ELIMINAR MI EMPRESA" /></div><div className="space-y-1"><Label>Contraseña actual</Label><Input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} /></div><p className="text-xs text-muted-foreground">Al confirmar con tu contraseña, se borrará todo lo relacionado a tu empresa y no se guardará respaldo para recuperarlo luego.</p><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" disabled={deleting || deleteConfirmText !== "ELIMINAR MI EMPRESA" || !deletePassword}>Eliminar empresa</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Confirmación final</AlertDialogTitle><AlertDialogDescription>Se eliminarán datos, usuarios, registros y archivos vinculados a tu empresa en forma definitiva. Esta acción no se puede deshacer.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={handleDeleteAccount}>Sí, eliminar definitivamente</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>)}
   </CardContent></Card>);
 }

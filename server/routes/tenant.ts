@@ -583,7 +583,7 @@ export function registerTenantRoutes(app: Express) {
       }
       const payload = deleteTenantSchema.parse(req.body || {});
       const normalizedConfirm = String(payload.confirm || "").trim().toUpperCase();
-      if (normalizedConfirm !== "ELIMINAR MI CUENTA") {
+      if (normalizedConfirm !== "ELIMINAR MI EMPRESA") {
         return res.status(400).json({ error: "Confirmación inválida", code: "DELETE_CONFIRM_INVALID" });
       }
       const tenant = await storage.getTenantById(req.auth!.tenantId!);

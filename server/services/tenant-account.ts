@@ -148,6 +148,9 @@ export async function deleteTenantAtomic(tenantId: number) {
   try {
     await client.query("BEGIN");
 
+    const tenantRow = await client.query("SELECT code FROM tenants WHERE id = $1", [tenantId]);
+    const tenantCode = String(tenantRow.rows[0]?.code || "").trim();
+
     // FK-first deletions (safe if optional tables/migrations are missing)
     await deleteByTenantIfExists(client, counts, "sale_items", tenantId);
     await deleteByTenantIfExists(client, counts, "sales", tenantId);
@@ -202,13 +205,31 @@ export async function deleteTenantAtomic(tenantId: number) {
     await deleteByTenantIfExists(client, counts, "tenant_addons", tenantId);
     await deleteByTenantIfExists(client, counts, "tenant_subscriptions", tenantId);
 
-    counts.branch_users = await deleteByTenantIfExists(client, counts, "users", tenantId);
+    if (await tableExists(client, "users")) {
+      const userCountRes = await client.query("SELECT COUNT(*)::int as c FROM users WHERE tenant_id = $1 AND deleted_at IS NULL", [tenantId]);
+      counts.branch_users = Number(userCountRes.rows[0]?.c || 0);
+      await client.query("UPDATE users SET is_active = false, deleted_at = NOW() WHERE tenant_id = $1", [tenantId]);
+    } else {
+      counts.branch_users = 0;
+    }
     counts.branches = await deleteByTenantIfExists(client, counts, "branches", tenantId);
 
-    const tcount = await deleteCount(client, "tenants", "where id = $1", [tenantId]);
-    counts.tenants = tcount;
+    if (await tableExists(client, "tenants")) {
+      await client.query("UPDATE tenants SET is_active = false, is_blocked = true, deleted_at = NOW() WHERE id = $1", [tenantId]);
+      counts.tenants = 1;
+    } else {
+      counts.tenants = 0;
+    }
 
     await client.query("COMMIT");
+
+    if (tenantCode) {
+      const storageDir = path.join(process.cwd(), "storage", "tenants", tenantCode);
+      const uploadsDir = path.join(process.cwd(), "uploads", "tenants", tenantCode);
+      fs.rmSync(storageDir, { recursive: true, force: true });
+      fs.rmSync(uploadsDir, { recursive: true, force: true });
+    }
+
     return counts;
   } catch (err) {
     await client.query("ROLLBACK");

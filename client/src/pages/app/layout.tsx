@@ -53,7 +53,7 @@ function SubscriptionBanner() {
 
 export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
 
   useEffect(() => {
     if (!isAuthenticated || user?.isSuperAdmin) {
@@ -65,6 +65,19 @@ export default function AppLayout() {
   }, [isAuthenticated, user]);
 
   if (!isAuthenticated || user?.isSuperAdmin) return null;
+
+  const isPrintRoute = location.startsWith("/app/print/");
+
+  if (isPrintRoute) {
+    return (
+      <main className="min-h-screen bg-white">
+        <Switch>
+          {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
+          <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
+        </Switch>
+      </main>
+    );
+  }
 
   const style = {
     "--sidebar-width": "16rem",
