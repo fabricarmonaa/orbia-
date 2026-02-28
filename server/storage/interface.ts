@@ -165,6 +165,8 @@ export interface IStorage {
   updateSttLogConfirmed(logId: number, tenantId: number, updates: { resultEntityType: string; resultEntityId: number }): Promise<void>;
   getLastUnconfirmedLog(tenantId: number, userId: number, context: string): Promise<SttLog | undefined>;
   createSttInteraction(data: InsertSttInteraction): Promise<SttInteraction>;
+  updateSttInteractionResult(id: number, tenantId: number, patch: { status: "SUCCESS" | "FAILED"; transcript?: string; intentConfirmed?: string; entitiesConfirmed?: Record<string, unknown>; errorCode?: string | null }): Promise<void>;
+  getSttInteractionByIdempotency(tenantId: number, userId: number, idempotencyKey: string): Promise<SttInteraction | undefined>;
   getSttInteractionsByTenant(tenantId: number, userId?: number | null, limit?: number): Promise<SttInteraction[]>;
 
   getOrdersByBranch(tenantId: number, branchId: number): Promise<Order[]>;

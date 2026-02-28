@@ -7,7 +7,7 @@ export const customers = pgTable(
   "customers",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
     name: varchar("name", { length: 200 }).notNull(),
     phone: varchar("phone", { length: 50 }),
     email: varchar("email", { length: 255 }),

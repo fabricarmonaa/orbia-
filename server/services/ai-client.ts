@@ -20,10 +20,17 @@ export function getAiServiceUrl() {
 
 function extractAiErrorMessage(body: any, fallback: string) {
   if (typeof body?.error === "string") return body.error;
+  if (typeof body?.message === "string") return body.message;
   if (typeof body?.detail === "string") return body.detail;
   if (body?.detail && typeof body.detail === "object") {
     if (typeof body.detail.error === "string") return body.detail.error;
     if (typeof body.detail.message === "string") return body.detail.message;
+    if (typeof body.detail.error_code === "string") return body.detail.error_code;
+    try {
+      return JSON.stringify(body.detail);
+    } catch {
+      return fallback;
+    }
   }
   return fallback;
 }

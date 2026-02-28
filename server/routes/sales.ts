@@ -1,7 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
-import { randomBytes } from "crypto";
 import { enforceBranchScope, getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
@@ -10,6 +9,7 @@ import { db } from "../db";
 import { customers, sales } from "@shared/schema";
 import { bumpMetrics } from "../services/metrics";
 import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
+import { generatePublicToken } from "../utils/public-token";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -85,7 +85,7 @@ async function ensureSalePublicToken(saleId: number, tenantId: number) {
     .where(and(eq(sales.id, saleId), eq(sales.tenantId, tenantId)));
   const now = new Date();
   if (existing?.token && (!existing.expiresAt || new Date(existing.expiresAt) > now)) return existing.token;
-  const token = randomBytes(24).toString("base64url");
+  const token = generatePublicToken();
   await db
     .update(sales)
     .set({ publicToken: token, publicTokenCreatedAt: now, publicTokenExpiresAt: tokenExpiresAt(), updatedAt: now })

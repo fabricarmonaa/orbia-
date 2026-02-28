@@ -51,7 +51,7 @@ services:
       SEED: "${SEED}"
     ports:
       - "5000:5000"
-    command: [ "sh", "script/docker-entrypoint-web.sh" ]
+    command: [ "sh", "docker-entrypoint-web.sh" ]
     restart: unless-stopped
 
 volumes:

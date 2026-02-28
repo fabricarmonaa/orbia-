@@ -18,7 +18,11 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="ORBIA AI Service", version="2.1.0")
+app = FastAPI(title="ORBIA AI Service", version="2.1.1")
+
+@app.on_event("startup")
+async def startup_event():
+    print(json.dumps({"event":"ai_startup","workerTimeout":WORKER_TIMEOUT,"maxAudioSeconds":MAX_AUDIO_SECONDS}))
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "")
 app.add_middleware(
@@ -261,10 +265,13 @@ async def _stt_interpret_internal(
 
             suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
-                content = await audio.read()
-                if not content:
+                while True:
+                    chunk = await audio.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                if f.tell() <= 0:
                     fail(400, "AI_INVALID_AUDIO", request_id)
-                f.write(content)
                 temp_input = f.name
 
             with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fw:

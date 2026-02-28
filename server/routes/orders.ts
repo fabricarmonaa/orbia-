@@ -2,7 +2,6 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { tenantAuth, enforceBranchScope } from "../auth";
 import { z } from "zod";
-import { randomUUID } from "crypto";
 import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
@@ -14,6 +13,8 @@ import { and, count, eq } from "drizzle-orm";
 import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
+import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
+import { generatePublicToken } from "../utils/public-token";
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 
@@ -285,13 +286,11 @@ export function registerOrderRoutes(app: Express) {
         resolvedStatusId = await resolveOrderStatusIdByCode(tenantId, normalizedCode);
       }
       if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
-      const order = await storage.getOrderById(orderId, tenantId);
-      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
-        return res.status(403).json({ error: "No tenés acceso a este pedido" });
-      }
-      await storage.updateOrderStatus(orderId, tenantId, resolvedStatusId);
-      await storage.createOrderHistory({
+      const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
+      if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
+      const order = scopeCheck.order;
+
+      await changeOrderStatusWithHistory({
         tenantId,
         orderId,
         statusId: resolvedStatusId,
@@ -434,7 +433,7 @@ export function registerOrderRoutes(app: Express) {
       if (!order.publicTrackingId) {
         const config = await storage.getConfig(tenantId);
         const hours = config?.trackingExpirationHours || 24;
-        const trackingId = randomUUID();
+        const trackingId = generatePublicToken();
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
         order.publicTrackingId = trackingId as any;
@@ -494,7 +493,7 @@ export function registerOrderRoutes(app: Express) {
       if (!order.publicTrackingId) {
         const config = await storage.getConfig(tenantId);
         const hours = config?.trackingExpirationHours || 24;
-        const trackingId = randomUUID();
+        const trackingId = generatePublicToken();
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
         order.publicTrackingId = trackingId as any;
@@ -539,7 +538,7 @@ export function registerOrderRoutes(app: Express) {
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
       const config = await storage.getConfig(tenantId);
       const hours = config?.trackingExpirationHours || 24;
-      const trackingId = randomUUID();
+      const trackingId = generatePublicToken();
       const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
       await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
       res.json({ data: { publicTrackingId: trackingId, expiresAt } });
