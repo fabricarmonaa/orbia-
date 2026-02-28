@@ -7,6 +7,7 @@ import { customers, orderStatuses, orders, sales } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { getCustomersSchemaInfo } from "../services/schema-introspection";
+import { isValidEmail, isValidPhone, normalizePhone as normalizePhoneGlobal, shouldUseStrictEmailValidation } from "@shared/validation/contact";
 
 const customerSchema = z.object({
   name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200).trim()),
@@ -36,8 +37,7 @@ function normalizeDoc(raw: string | null | undefined) {
 }
 
 function normalizePhone(raw: string | null | undefined) {
-  const value = sanitizeShortText(raw || "", 50).trim();
-  return value || null;
+  return normalizePhoneGlobal(sanitizeShortText(raw || "", 50));
 }
 
 function parseIncludeInactive(raw: unknown) {
@@ -92,6 +92,12 @@ export function registerCustomerRoutes(app: Express) {
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
       }
+      if (!isValidPhone(body.phone)) {
+        return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });
+      }
+      if (!isValidEmail(body.email, shouldUseStrictEmailValidation())) {
+        return res.status(400).json({ error: "Ingresá un email válido (ej: nombre@dominio.com)", code: "CUSTOMER_EMAIL_INVALID" });
+      }
 
       let existing: any = null;
       let duplicateField: "dni" | "email" | null = null;
@@ -144,7 +150,6 @@ export function registerCustomerRoutes(app: Express) {
     } catch (err: any) {
       console.error("[customers] CUSTOMER_CREATE_ERROR", {
         tenantId,
-        body: { ...req.body, doc: String(req.body?.doc || "") },
         message: err?.message,
         code: err?.code,
         detail: err?.detail,
@@ -369,6 +374,12 @@ export function registerCustomerRoutes(app: Express) {
 
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
+      }
+      if (!isValidPhone(body.phone)) {
+        return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });
+      }
+      if (!isValidEmail(body.email, shouldUseStrictEmailValidation())) {
+        return res.status(400).json({ error: "Ingresá un email válido (ej: nombre@dominio.com)", code: "CUSTOMER_EMAIL_INVALID" });
       }
 
       const [existing] = await db.select().from(customers).where(and(eq(customers.id, id), eq(customers.tenantId, tenantId))).limit(1);

@@ -57,6 +57,7 @@ async function buildTrackingPayload(trackingId: string, reqBaseUrl: string) {
         label: f.label || "Campo",
         value: displayValue,
         fieldType: f.fieldType,
+        updatedAt: f.createdAt || null,
       };
     });
 

@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { securityHeaders } from "./middleware/security-headers";
 import { corsGuard } from "./middleware/cors";
 import { HttpError } from "./lib/http-errors";
+import { requestContext } from "./middleware/request-context";
 
 const app = express();
 const httpServer = createServer(app);
@@ -17,6 +18,7 @@ app.use(corsGuard);
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
+    requestId?: string;
   }
 }
 
@@ -30,6 +32,7 @@ app.use(
 );
 
 app.use(express.urlencoded({ extended: false }));
+app.use(requestContext);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -56,7 +59,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms [${req.requestId || "n/a"}]`;
       if (capturedJsonResponse && process.env.NODE_ENV !== "production") {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -81,7 +84,7 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const isHttpError = err instanceof HttpError;
     const status = isHttpError ? err.status : (err.status || err.statusCode || 500);
     const code = isHttpError
@@ -91,6 +94,8 @@ app.use((req, res, next) => {
 
     if (status >= 500) {
       console.error("[global-error-handler] Unhandled error:", {
+        requestId: req.requestId,
+        route: req.path,
         status,
         code,
         message: err?.message,
@@ -102,7 +107,7 @@ app.use((req, res, next) => {
       return next(err);
     }
 
-    const payload: Record<string, unknown> = { error: message, code };
+    const payload: Record<string, unknown> = { error: message, code, requestId: req.requestId || null };
     if (isHttpError && err.extra) {
       Object.assign(payload, err.extra);
     }

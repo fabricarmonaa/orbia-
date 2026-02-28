@@ -7,7 +7,7 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
-import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { generateTenantExportZip, validateExportToken } from "../services/tenant-account";
 import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 import { pool } from "../db";
@@ -583,7 +583,8 @@ export function registerTenantRoutes(app: Express) {
         return res.status(403).json({ error: "Acceso denegado", code: "FORBIDDEN" });
       }
       const payload = deleteTenantSchema.parse(req.body || {});
-      if (payload.confirm !== "ELIMINAR MI CUENTA") {
+      const normalizedConfirm = String(payload.confirm || "").trim().toUpperCase();
+      if (normalizedConfirm !== "ELIMINAR MI CUENTA") {
         return res.status(400).json({ error: "Confirmación inválida", code: "DELETE_CONFIRM_INVALID" });
       }
       const tenant = await storage.getTenantById(req.auth!.tenantId!);
@@ -597,17 +598,30 @@ export function registerTenantRoutes(app: Express) {
       const validPassword = await comparePassword(payload.password, user.password);
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
+      const admins = await storage.getTenantAdmins(req.auth!.tenantId!);
+      const activeAdmins = admins.filter((a) => a.isActive && !a.deletedAt);
+      if (activeAdmins.length <= 1 && activeAdmins[0]?.id === req.auth!.userId) {
+        return res.status(409).json({ error: "No podés eliminar el último administrador del negocio", code: "LAST_ADMIN_DELETE_FORBIDDEN" });
+      }
+
       let exportToken: string | undefined;
       if (payload.exportBeforeDelete) {
         const exportData = await generateTenantExportZip(req.auth!.tenantId!, req.auth!.userId);
         exportToken = exportData.token;
       }
 
-      const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
+      await storage.softDeleteUser(req.auth!.userId, req.auth!.tenantId!);
+      await storage.softDeleteTenant(req.auth!.tenantId!);
+      await storage.createAuditLog({
+        tenantId: req.auth!.tenantId!,
+        userId: req.auth!.userId,
+        action: "account_delete_success",
+        entityType: "auth",
+      });
+
       return res.json({
         deleted: true,
         exportUrl: exportToken ? `/api/tenant/export/${exportToken}` : undefined,
-        deletedCounts,
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
@@ -616,7 +630,8 @@ export function registerTenantRoutes(app: Express) {
       if (String(err?.message || "").includes("EXPORT")) {
         return res.status(500).json({ error: "No se pudo generar exportación", code: "EXPORT_FAILED" });
       }
-      return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR" });
+      console.error("[tenant] TENANT_DELETE_ERROR", { requestId: req.requestId, route: req.path, code: err?.code, message: err?.message });
+      return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR", requestId: req.requestId || null });
     }
   });
 

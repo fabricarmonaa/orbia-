@@ -240,9 +240,19 @@ export function registerProductRoutes(app: Express) {
       res.status(201).json({ data });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+        return res.status(400).json({ error: "Datos inválidos", code: "PRODUCT_INVALID", details: err.errors });
       }
-      res.status(500).json({ error: err.message });
+      if (err?.message === "STATUS_NOT_FOUND") {
+        return res.status(400).json({ error: "Estado de producto inválido", code: "PRODUCT_STATUS_INVALID" });
+      }
+      if (err?.code === "23505") {
+        return res.status(409).json({ error: "El código SKU ya existe", code: "PRODUCT_SKU_DUPLICATE" });
+      }
+      if (err?.code === "23503") {
+        return res.status(400).json({ error: "Categoría o referencia inválida", code: "PRODUCT_FK_INVALID" });
+      }
+      console.error("[products] PRODUCT_CREATE_ERROR", { requestId: req.requestId, route: req.path, code: err?.code, message: err?.message });
+      res.status(500).json({ error: "No se pudo crear el producto", code: "PRODUCT_CREATE_ERROR", requestId: req.requestId || null });
     }
   });
 
@@ -396,9 +406,19 @@ export function registerProductRoutes(app: Express) {
       res.json({ data: product });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+        return res.status(400).json({ error: "Datos inválidos", code: "PRODUCT_INVALID", details: err.errors });
       }
-      res.status(500).json({ error: err.message });
+      if (err?.message === "STATUS_NOT_FOUND") {
+        return res.status(400).json({ error: "Estado de producto inválido", code: "PRODUCT_STATUS_INVALID" });
+      }
+      if (err?.code === "23505") {
+        return res.status(409).json({ error: "El código SKU ya existe", code: "PRODUCT_SKU_DUPLICATE" });
+      }
+      if (err?.code === "23503") {
+        return res.status(400).json({ error: "Categoría o referencia inválida", code: "PRODUCT_FK_INVALID" });
+      }
+      console.error("[products] PRODUCT_CREATE_ERROR", { requestId: req.requestId, route: req.path, code: err?.code, message: err?.message });
+      res.status(500).json({ error: "No se pudo crear el producto", code: "PRODUCT_CREATE_ERROR", requestId: req.requestId || null });
     }
   });
 
