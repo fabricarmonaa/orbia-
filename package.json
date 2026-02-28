@@ -28,7 +28,8 @@
     "check:barcode-scanner": "tsx script/barcode-scanner-check.ts",
     "check:customers-api": "tsx script/customers-api-check.ts",
     "check:products-create": "tsx script/products-create-check.ts",
-    "check:validators": "tsx script/validators-check.ts"
+    "check:validators": "tsx script/validators-check.ts",
+    "check:tenant-delete": "tsx script/tenant-delete-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -78,7 +79,7 @@
     "express-session": "^1.18.1",
     "file-type": "^21.3.0",
     "framer-motion": "^11.13.1",
-    "html5-qrcode": "2.3.8",
+    "html5-qrcode": "^2.3.8",
     "input-otp": "^1.4.2",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.453.0",

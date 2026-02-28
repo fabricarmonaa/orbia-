@@ -598,12 +598,7 @@ export function registerTenantRoutes(app: Express) {
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
       const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
-      await storage.createAuditLog({
-        tenantId: req.auth!.tenantId!,
-        userId: req.auth!.userId,
-        action: "account_delete_success",
-        entityType: "auth",
-      });
+      console.info("[tenant] TENANT_DELETE_SUCCESS", { requestId: req.requestId, tenantId: req.auth!.tenantId!, actorUserId: req.auth!.userId, deletedCounts });
 
       return res.json({
         deleted: true,

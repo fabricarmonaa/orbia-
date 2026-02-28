@@ -205,21 +205,10 @@ export async function deleteTenantAtomic(tenantId: number) {
     await deleteByTenantIfExists(client, counts, "tenant_addons", tenantId);
     await deleteByTenantIfExists(client, counts, "tenant_subscriptions", tenantId);
 
-    if (await tableExists(client, "users")) {
-      const userCountRes = await client.query("SELECT COUNT(*)::int as c FROM users WHERE tenant_id = $1 AND deleted_at IS NULL", [tenantId]);
-      counts.branch_users = Number(userCountRes.rows[0]?.c || 0);
-      await client.query("UPDATE users SET is_active = false, deleted_at = NOW() WHERE tenant_id = $1", [tenantId]);
-    } else {
-      counts.branch_users = 0;
-    }
+    counts.branch_users = await deleteByTenantIfExists(client, counts, "users", tenantId);
     counts.branches = await deleteByTenantIfExists(client, counts, "branches", tenantId);
 
-    if (await tableExists(client, "tenants")) {
-      await client.query("UPDATE tenants SET is_active = false, is_blocked = true, deleted_at = NOW() WHERE id = $1", [tenantId]);
-      counts.tenants = 1;
-    } else {
-      counts.tenants = 0;
-    }
+    counts.tenants = await deleteCount(client, "tenants", "where id = $1", [tenantId]);
 
     await client.query("COMMIT");
 

@@ -9,6 +9,7 @@ import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
 import { customers, sales } from "@shared/schema";
 import { bumpMetrics } from "../services/metrics";
+import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -399,6 +400,59 @@ export function registerSaleRoutes(app: Express) {
 
   app.get("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
   app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
+
+  app.get("/api/sales/:id/ticket-pdf", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const width = String(req.query.width || "80") === "58" ? 58 : 80;
+      const saleId = Number(req.params.id);
+      const tenantId = req.auth!.tenantId!;
+      const sale = await storage.getSaleById(saleId, tenantId);
+      if (!sale) return res.status(404).json({ error: "Venta no encontrada", code: "SALE_NOT_FOUND" });
+
+      const [items, branding, tenant, customerData] = await Promise.all([
+        storage.getSaleItems(sale.id, sale.tenantId),
+        storage.getTenantBranding(sale.tenantId),
+        storage.getTenantById(sale.tenantId),
+        sale.customerId
+          ? db
+              .select({ name: customers.name, doc: customers.doc, phone: customers.phone })
+              .from(customers)
+              .where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, sale.tenantId)))
+              .limit(1)
+              .then((rows) => rows[0] ?? null)
+          : Promise.resolve(null),
+      ]);
+
+      const slug = (tenant as any)?.slug || null;
+      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
+      const trackUrl = `${base || ""}/tracking/${sale.publicToken || sale.id}${slug ? "" : ""}`;
+
+      const pdf = await buildThermalTicketPdf({
+        widthMm: width,
+        companyName: branding.displayName || "ORBIA",
+        ticketLabel: "Ticket",
+        ticketNumber: sale.saleNumber,
+        datetime: String(sale.saleDatetime),
+        paymentMethod: sale.paymentMethod,
+        customerName: customerData?.name || null,
+        customerDni: customerData?.doc || null,
+        customerPhone: customerData?.phone || null,
+        items: items.map((item: any) => ({ qty: Number(item.quantity), name: item.productNameSnapshot || "Producto", price: String(item.lineTotal || "") })),
+        subtotal: String(sale.subtotalAmount || "0"),
+        discount: String(sale.discountAmount || "0"),
+        surcharge: String(sale.surchargeAmount || "0"),
+        total: String(sale.totalAmount || "0"),
+        qrUrl: trackUrl,
+        notes: sale.notes,
+      });
+
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=\"ticket-${sale.saleNumber}-${width}mm.pdf\"`);
+      return res.send(pdf);
+    } catch {
+      return res.status(500).json({ error: "No se pudo generar ticket PDF", code: "SALE_TICKET_PDF_ERROR", requestId: req.requestId || null });
+    }
+  });
 
   app.get("/api/public/sale/:token", validateParams(tokenParamSchema), async (req, res) => {
     try {
