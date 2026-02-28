@@ -28,6 +28,7 @@ import { registerCustomerRoutes } from "./customers";
 import { registerOrderPresetRoutes } from "./order-presets";
 import { registerAttachmentRoutes } from "./attachments";
 import { registerAiRoutes } from "./ai";
+import { registerPublicRoutes } from "./public";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -35,6 +36,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   registerStaticUploads(app);
   registerUploadRoutes(app);
+  registerPublicRoutes(app);
   registerAuthRoutes(app);
   registerSuperRoutes(app);
   registerTenantRoutes(app);

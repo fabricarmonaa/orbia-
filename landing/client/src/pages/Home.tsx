@@ -5,6 +5,8 @@ import { Showcase } from "@/components/landing/Showcase";
 import { Pricing } from "@/components/landing/Pricing";
 import { WhyUs } from "@/components/landing/WhyUs";
 import { BottomCTA } from "@/components/landing/BottomCTA";
+import { SignupTrial } from "@/components/landing/SignupTrial";
+import { Faq } from "@/components/landing/Faq";
 import { Footer } from "@/components/landing/Footer";
 
 export default function Home() {
@@ -16,7 +18,9 @@ export default function Home() {
         <Features />
         <Showcase />
         <Pricing />
+        <SignupTrial />
         <WhyUs />
+        <Faq />
         <BottomCTA />
       </main>
       <Footer />

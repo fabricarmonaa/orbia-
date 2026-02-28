@@ -25,6 +25,8 @@ import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -54,6 +56,20 @@ function SubscriptionBanner() {
 export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
   const [location, setLocation] = useLocation();
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = `orbia:onboarding:dismissed:${user.id}`;
+    const dismissed = localStorage.getItem(key) === "1";
+    const ownerLike = ["admin", "owner"].includes(String((user as any).role || "").toLowerCase());
+    if (ownerLike && !dismissed) setOnboardingOpen(true);
+  }, [user?.id]);
+
+  const dismissOnboarding = () => {
+    if (user?.id) localStorage.setItem(`orbia:onboarding:dismissed:${user.id}`, "1");
+    setOnboardingOpen(false);
+  };
 
   useEffect(() => {
     if (!isAuthenticated || user?.isSuperAdmin) {
@@ -122,6 +138,24 @@ export default function AppLayout() {
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
+          <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Bienvenido a Orbia</DialogTitle>
+                <DialogDescription>Completá estos pasos para activar tu negocio rápido.</DialogDescription>
+              </DialogHeader>
+              <ol className="list-decimal pl-5 text-sm space-y-2">
+                <li>Completar perfil del negocio (ajustes).</li>
+                <li>Confirmar tu primera sucursal.</li>
+                <li>Cargar tu primer producto.</li>
+                <li>Ir al POS y registrar una venta demo.</li>
+              </ol>
+              <DialogFooter>
+                <Button variant="outline" onClick={dismissOnboarding}>Saltar</Button>
+                <Button onClick={() => { setOnboardingOpen(false); setLocation("/app/settings"); }}>Empezar</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <GlobalVoiceFab />
         </div>
       </div>
