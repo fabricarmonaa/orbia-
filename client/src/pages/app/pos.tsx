@@ -89,6 +89,10 @@ export default function PosPage() {
     }
   }, []);
 
+  useEffect(() => {
+    void searchProducts();
+  }, []);
+
   const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.product.estimatedSalePrice ?? item.product.price) * item.quantity, 0), [cart]);
   const discountAmount = useMemo(() => {
     if (discountType === "PERCENT") return Math.min(subtotal, (subtotal * discountValue) / 100);
@@ -104,9 +108,14 @@ export default function PosPage() {
   const total = subtotal - discountAmount + surchargeAmount;
 
   async function searchProducts() {
-    const res = await apiRequest("GET", `/api/products?q=${encodeURIComponent(q)}&pageSize=20`);
-    const json = await res.json();
-    setProducts(json.data || []);
+    try {
+      const res = await apiRequest("GET", `/api/products?q=${encodeURIComponent(q)}&pageSize=50`);
+      const json = await res.json();
+      setProducts(json.data || []);
+    } catch (err: any) {
+      setProducts([]);
+      toast({ title: "No se pudieron cargar productos", description: err?.message || "Error", variant: "destructive" });
+    }
   }
 
   function addToCart(product: ProductRow) {
@@ -383,6 +392,11 @@ export default function PosPage() {
                   <Button size="sm" onClick={() => addToCart(product)}>Agregar</Button>
                 </div>
               ))}
+              {products.length === 0 ? (
+                <div className="text-sm text-muted-foreground border rounded p-3">
+                  No hay productos para mostrar. Cargá productos o buscá con otro término.
+                </div>
+              ) : null}
             </div>
           </CardContent>
         </Card>

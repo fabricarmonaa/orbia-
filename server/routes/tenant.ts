@@ -7,7 +7,7 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
-import { generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
 import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 import { pool } from "../db";
@@ -24,7 +24,6 @@ const changePasswordSchema = z.object({
 const deleteTenantSchema = z.object({
   confirm: z.string().trim(),
   password: z.string().min(6).max(128),
-  exportBeforeDelete: z.boolean().optional().default(false),
 });
 
 const tenantConfigSchema = z.object({
@@ -598,14 +597,7 @@ export function registerTenantRoutes(app: Express) {
       const validPassword = await comparePassword(payload.password, user.password);
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
-      let exportToken: string | undefined;
-      if (payload.exportBeforeDelete) {
-        const exportData = await generateTenantExportZip(req.auth!.tenantId!, req.auth!.userId);
-        exportToken = exportData.token;
-      }
-
-      await storage.softDeleteUser(req.auth!.userId, req.auth!.tenantId!);
-      await storage.softDeleteTenant(req.auth!.tenantId!);
+      const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
       await storage.createAuditLog({
         tenantId: req.auth!.tenantId!,
         userId: req.auth!.userId,
@@ -615,7 +607,7 @@ export function registerTenantRoutes(app: Express) {
 
       return res.json({
         deleted: true,
-        exportUrl: exportToken ? `/api/tenant/export/${exportToken}` : undefined,
+        deletedCounts,
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {

@@ -9,7 +9,6 @@ import { apiRequest, getToken, type AuthUser, updateCurrentUser, logout } from "
 import { parseApiError } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Check, Circle, X } from "lucide-react";
 
 const AMBIGUOUS = /[O0Il]/g;
@@ -78,7 +77,7 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   const [suggestedPassword, setSuggestedPassword] = useState(() => generatePassword(20, true, true));
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
-  const [deleteWithExport, setDeleteWithExport] = useState(true);
+  const [deleteFinalConfirm, setDeleteFinalConfirm] = useState("");
   const [deleting, setDeleting] = useState(false);
   if (!user) return null;
   const currentUser = user;
@@ -139,10 +138,9 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
     if (!deletePassword) return toast({ title: "Contraseña requerida", variant: "destructive" });
     setDeleting(true);
     try {
-      const res = await apiRequest("DELETE", "/api/tenant", { confirm: deleteConfirmText, password: deletePassword, exportBeforeDelete: deleteWithExport });
+      const res = await apiRequest("DELETE", "/api/tenant", { confirm: deleteConfirmText, password: deletePassword });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "No se pudo eliminar la cuenta");
-      if (data?.exportUrl) window.open(data.exportUrl, "_blank", "noopener,noreferrer");
       sessionStorage.setItem("orbia_logout_message", "Cuenta eliminada.");
       logout("manual");
     } catch (err: any) {
@@ -182,6 +180,6 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
       <div className="flex gap-2"><Button variant="outline" onClick={regenerate}>Regenerar</Button><Button variant="outline" onClick={copySuggested}>Copiar</Button><Button onClick={useSuggested}>Usar esta contraseña</Button></div>
     </div>
 
-    {currentUser.role === "admin" && (<div className="space-y-3 border border-red-300 rounded-md p-4 bg-red-50/40"><h4 className="font-semibold text-red-700">Eliminar cuenta</h4><p className="text-sm text-muted-foreground">Una vez que se elimine su cuenta, todos sus recursos y datos se eliminarán permanentemente. Antes de eliminar su cuenta, descargue cualquier dato o información que desee conservar.</p><div className="space-y-1"><Label>Escribí exactamente: ELIMINAR MI CUENTA</Label><Input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="ELIMINAR MI CUENTA" /></div><div className="space-y-1"><Label>Contraseña actual</Label><Input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} /></div><div className="flex items-center gap-2"><Checkbox checked={deleteWithExport} onCheckedChange={(v) => setDeleteWithExport(Boolean(v))} /><span className="text-sm">Exportar datos antes de eliminar</span></div><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" disabled={deleting || deleteConfirmText !== "ELIMINAR MI CUENTA" || !deletePassword}>Eliminar cuenta</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Esta acción es irreversible</AlertDialogTitle><AlertDialogDescription>Se eliminarán permanentemente todos los datos del tenant.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={handleDeleteAccount}>Confirmar eliminación</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>)}
+    {currentUser.role === "admin" && (<div className="space-y-3 border border-red-300 rounded-md p-4 bg-red-50/40"><h4 className="font-semibold text-red-700">Eliminar cuenta</h4><p className="text-sm text-muted-foreground">Esta acción borra permanentemente tu negocio y todos sus datos (usuarios, cajeros, productos, ventas, pedidos y configuraciones). No se puede deshacer.</p><div className="space-y-1"><Label>Escribí exactamente: ELIMINAR MI CUENTA</Label><Input value={deleteConfirmText} onChange={(e) => setDeleteConfirmText(e.target.value)} placeholder="ELIMINAR MI CUENTA" /></div><div className="space-y-1"><Label>Confirmación final: escribí BORRAR TODO</Label><Input value={deleteFinalConfirm} onChange={(e) => setDeleteFinalConfirm(e.target.value)} placeholder="BORRAR TODO" /></div><div className="space-y-1"><Label>Contraseña actual</Label><Input type="password" value={deletePassword} onChange={(e) => setDeletePassword(e.target.value)} /></div><AlertDialog><AlertDialogTrigger asChild><Button variant="destructive" disabled={deleting || deleteConfirmText !== "ELIMINAR MI CUENTA" || deleteFinalConfirm !== "BORRAR TODO" || !deletePassword}>Eliminar cuenta</Button></AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Última confirmación</AlertDialogTitle><AlertDialogDescription>Vas a perder acceso y se eliminará toda la información del sistema de forma definitiva.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel>Cancelar</AlertDialogCancel><AlertDialogAction onClick={handleDeleteAccount}>Sí, eliminar definitivamente</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog></div>)}
   </CardContent></Card>);
 }

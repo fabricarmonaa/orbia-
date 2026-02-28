@@ -6,6 +6,7 @@ import { apiRequest } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import TicketLayout from "@/components/print/TicketLayout";
+import type { PrintMode } from "@/components/print/TicketLayout";
 
 export default function SalePrintPage() {
   const [location] = useLocation();
@@ -20,6 +21,12 @@ export default function SalePrintPage() {
 
   const autoprint = useMemo(() => {
     return new URLSearchParams(location.split("?")[1] || "").get("autoprint") === "1";
+  }, [location]);
+
+  const mode = useMemo<PrintMode>(() => {
+    const value = new URLSearchParams(location.split("?")[1] || "").get("mode");
+    if (value === "TICKET_58" || value === "TICKET_80" || value === "A4") return value;
+    return "TICKET_80";
   }, [location]);
 
   useEffect(() => {
@@ -39,7 +46,7 @@ export default function SalePrintPage() {
         const qrImage = d.qr?.publicUrl ? await QRCode.toDataURL(d.qr.publicUrl, { margin: 1, width: 160 }) : null;
         const markup = renderToStaticMarkup(
           <TicketLayout
-            mode="TICKET_80"
+            mode={mode}
             variant="SALE"
             data={{
               tenant: { name: d.business?.name || d.tenant?.name || "Negocio", logoUrl: d.business?.logoUrl || d.tenant?.logoUrl || null },
@@ -67,7 +74,14 @@ export default function SalePrintPage() {
         setLoading(false);
       }
     })();
-  }, [saleId, autoprint]);
+  }, [saleId, autoprint, mode]);
+
+  function setPrintMode(nextMode: PrintMode) {
+    const params = new URLSearchParams(location.split("?")[1] || "");
+    params.set("mode", nextMode);
+    if (autoprint) params.set("autoprint", "1");
+    window.location.replace(`/app/print/sale/${saleId}?${params.toString()}`);
+  }
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Cargando ticket...</div>;
 
@@ -86,8 +100,13 @@ export default function SalePrintPage() {
   }
 
   return (
-    <div className="p-4 space-y-3">
-      <div className="flex items-center justify-end">
+    <div className="p-4 space-y-3 print-page-shell">
+      <div className="flex items-center justify-end gap-2 print-hide">
+        <select value={mode} onChange={(e) => setPrintMode(e.target.value as PrintMode)} className="border rounded px-2 py-1 text-sm">
+          <option value="TICKET_58">Ticket 57/58mm</option>
+          <option value="TICKET_80">Ticket 80mm</option>
+          <option value="A4">A4</option>
+        </select>
         <Button onClick={() => window.print()}>Imprimir</Button>
       </div>
       <div dangerouslySetInnerHTML={{ __html: html }} />
