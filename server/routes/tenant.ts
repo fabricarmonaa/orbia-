@@ -7,7 +7,8 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
-import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { deleteTenantPermanent } from "../services/delete-tenant-permanent";
 import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 import { pool } from "../db";
@@ -597,21 +598,27 @@ export function registerTenantRoutes(app: Express) {
       const validPassword = await comparePassword(payload.password, user.password);
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
-      const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
+      const { deletedCounts, tenantTables } = await deleteTenantPermanent(req.auth!.tenantId!, req.auth!.userId, req.requestId || null);
       console.info("[tenant] TENANT_DELETE_SUCCESS", { requestId: req.requestId, tenantId: req.auth!.tenantId!, actorUserId: req.auth!.userId, deletedCounts });
 
       return res.json({
         deleted: true,
         deletedCounts,
+        tenantTables,
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
       }
-      if (String(err?.message || "").includes("EXPORT")) {
-        return res.status(500).json({ error: "No se pudo generar exportación", code: "EXPORT_FAILED" });
-      }
-      console.error("[tenant] TENANT_DELETE_ERROR", { requestId: req.requestId, route: req.path, code: err?.code, message: err?.message });
+      console.error("[TENANT DELETE ERROR]", {
+        requestId: req.requestId || null,
+        route: req.path,
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        constraint: err?.constraint,
+        table: err?.table,
+      });
       return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR", requestId: req.requestId || null });
     }
   });
