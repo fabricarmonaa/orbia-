@@ -518,6 +518,11 @@ export function registerOrderRoutes(app: Express) {
         footerText: status?.name ? `Estado: ${status.name}` : undefined,
       });
 
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+      );
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename=\"pedido-${order.orderNumber}-${width}mm.pdf\"`);
       return res.send(pdf);

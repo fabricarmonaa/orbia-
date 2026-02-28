@@ -1,9 +1,13 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
+import { apiRequest } from "@/lib/auth";
 
 export default function SalePrintPage() {
   const [location] = useLocation();
+  const [pdfBlobUrl, setPdfBlobUrl] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const saleId = useMemo(() => {
     const match = location.match(/\/app\/print\/sale\/(\d+)/);
@@ -18,6 +22,41 @@ export default function SalePrintPage() {
 
   const width = mode === "TICKET_58" ? "58" : "80";
   const pdfUrl = saleId ? `/api/sales/${saleId}/ticket-pdf?width=${width}` : null;
+
+  useEffect(() => {
+    if (!pdfUrl) return;
+    let active = true;
+    let localUrl: string | null = null;
+    setLoading(true);
+    setError(null);
+
+    (async () => {
+      try {
+        const res = await apiRequest("GET", pdfUrl);
+        if (!res.ok) {
+          const payload = await res.json().catch(() => ({}));
+          throw new Error(payload?.error || "No se pudo generar el PDF del ticket.");
+        }
+        const blob = await res.blob();
+        localUrl = URL.createObjectURL(blob);
+        if (active) {
+          setPdfBlobUrl((prev) => {
+            if (prev) URL.revokeObjectURL(prev);
+            return localUrl;
+          });
+        }
+      } catch (err: any) {
+        if (active) setError(err?.message || "No se pudo generar el PDF del ticket.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+
+    return () => {
+      active = false;
+      if (localUrl) URL.revokeObjectURL(localUrl);
+    };
+  }, [pdfUrl]);
 
   function isPrintMode(value: string): value is "TICKET_58" | "TICKET_80" {
     return value === "TICKET_58" || value === "TICKET_80";
@@ -38,9 +77,13 @@ export default function SalePrintPage() {
           <option value="TICKET_58">Ticket 57/58mm</option>
           <option value="TICKET_80">Ticket 80mm</option>
         </select>
-        <Button asChild variant="outline"><a href={pdfUrl} target="_blank" rel="noreferrer">Abrir PDF</a></Button>
+        <Button asChild variant="outline" disabled={!pdfBlobUrl}>
+          <a href={pdfBlobUrl || "#"} target="_blank" rel="noreferrer">Abrir PDF</a>
+        </Button>
       </div>
-      <iframe title="ticket-pdf" src={pdfUrl} className="w-full h-[92vh] border-0 bg-white" />
+      {loading && <div className="text-sm text-muted-foreground p-4">Generando PDF...</div>}
+      {error && <div className="text-sm text-destructive p-4">{error}</div>}
+      {!loading && !error && pdfBlobUrl && <iframe title="ticket-pdf" src={pdfBlobUrl} className="w-full h-[92vh] border-0 bg-white" />}
     </div>
   );
 }
