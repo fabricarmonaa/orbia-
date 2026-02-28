@@ -4,6 +4,37 @@ import { statusDefinitions, orderStatuses, orders, products } from "@shared/sche
 
 export type StatusEntityType = "ORDER" | "PRODUCT" | "DELIVERY";
 
+export const DELIVERY_STATUS_CODES = {
+  PENDING: "PENDING",
+  ASSIGNED: "ASSIGNED",
+  IN_TRANSIT: "IN_TRANSIT",
+  DELIVERED: "DELIVERED",
+  CANCELED: "CANCELED",
+} as const;
+
+export function normalizeDeliveryStatus(input?: string | null) {
+  const code = normalizeStatusCode(input || "PENDING");
+  return (DELIVERY_STATUS_CODES as Record<string, string>)[code] || DELIVERY_STATUS_CODES.PENDING;
+}
+
+export async function resolveCanonicalOrderStatusId(params: { tenantId: number; statusId?: number | null; statusCode?: string | null }) {
+  if (params.statusCode) {
+    const normalizedCode = normalizeStatusCode(params.statusCode);
+    await ensureStatusExists(params.tenantId, "ORDER", normalizedCode);
+    return await resolveOrderStatusIdByCode(params.tenantId, normalizedCode);
+  }
+
+  if (params.statusId) {
+    const [legacy] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, params.statusId), eq(orderStatuses.tenantId, params.tenantId))).limit(1);
+    if (!legacy) return null;
+    const normalizedLegacyCode = normalizeStatusCode(legacy.name || "");
+    const canonical = await ensureStatusExists(params.tenantId, "ORDER", normalizedLegacyCode);
+    return await resolveOrderStatusIdByCode(params.tenantId, canonical.code);
+  }
+
+  return null;
+}
+
 export function normalizeStatusCode(input: string) {
   return (input || "")
     .normalize("NFD")

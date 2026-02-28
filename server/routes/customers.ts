@@ -8,6 +8,7 @@ import { validateBody, validateQuery, validateParams } from "../middleware/valid
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { getCustomersSchemaInfo } from "../services/schema-introspection";
 import { isValidEmail, isValidPhone, normalizePhone as normalizePhoneGlobal, shouldUseStrictEmailValidation } from "@shared/validation/contact";
+import { resolvePagination } from "../utils/pagination";
 
 const customerSchema = z.object({
   name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200).trim()),
@@ -21,8 +22,10 @@ const customerSchema = z.object({
 const listQuery = z.object({
   q: z.string().optional().default(""),
   includeInactive: z.union([z.string(), z.number(), z.boolean()]).optional().default(false),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  page: z.coerce.number().int().min(1).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  cursor: z.string().optional(),
 });
 
 const byDniQuery = z.object({ dni: z.string().min(1).max(50) });
@@ -165,8 +168,7 @@ export function registerCustomerRoutes(app: Express) {
       tenantId = req.auth!.tenantId!;
       const info = await getCustomersSchemaInfo();
       const query = listQuery.parse(req.query || {});
-      const limit = Math.min(200, Math.max(1, Number(query.limit || 100)));
-      const offset = Math.max(0, Number(query.offset || 0));
+      const { limit, offset } = resolvePagination({ limit: query.limit, page: query.page, offset: query.offset, cursor: query.cursor });
       const includeInactive = parseIncludeInactive(query.includeInactive);
       const queryText = sanitizeShortText(String(query.q || ""), 80).trim();
 

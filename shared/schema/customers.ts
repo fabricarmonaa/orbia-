@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, varchar, text, timestamp, index, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, varchar, text, timestamp, index, boolean, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tenants } from "./tenants";
@@ -23,6 +23,8 @@ export const customers = pgTable(
     index("idx_customers_tenant_created").on(table.tenantId, table.createdAt),
     index("idx_customers_tenant_doc").on(table.tenantId, table.doc),
     index("idx_customers_tenant_email").on(table.tenantId, table.email),
+    uniqueIndex("uq_customers_tenant_doc").on(table.tenantId, table.doc),
+    uniqueIndex("uq_customers_tenant_email").on(table.tenantId, table.email),
   ]
 );
 

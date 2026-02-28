@@ -200,6 +200,16 @@ export function registerSttRoutes(app: Express) {
       if (!hasSearchFilters(payload.intent, payload.entities)) return res.status(400).json({ error: "Filtro insuficiente para búsqueda", code: "SEARCH_FILTER_REQUIRED" });
       if (payload.intent === "customer.purchases" && resolveCustomerPurchasesIntent(String(payload.transcript || "")) === "provider_purchases") return res.status(400).json({ error: "Para compras a proveedor usá el módulo de compras", code: "PROVIDER_PURCHASES_NOT_SUPPORTED" });
 
+      const executeInteraction = await storage.createSttInteraction({
+        tenantId,
+        userId,
+        transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
+        intentConfirmed: payload.intent,
+        entitiesConfirmed: payload.entities,
+        status: "PENDING",
+        idempotencyKey: `execute-${crypto.randomUUID()}`,
+      });
+
       let result: any = null;
       let response: any = { type: "error" };
 
@@ -207,7 +217,11 @@ export function registerSttRoutes(app: Express) {
         const name = sanitizeShortText(String(payload.entities.name || ""), 200).trim();
         const doc = String(payload.entities.dni || payload.entities.doc || "").replace(/\D/g, "");
         if (!name || (doc && !/^\d{6,15}$/.test(doc))) return res.status(400).json({ error: "Datos inválidos" });
-        const [created] = await db.insert(customers).values({ tenantId, name, doc: doc || null, isActive: true }).returning();
+        const created = await db.transaction(async (tx) => {
+          const [row] = await tx.insert(customers).values({ tenantId, name, doc: doc || null, isActive: true }).returning();
+          await tx.update(sttInteractions).set({ status: "SUCCESS", updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          return row;
+        });
         result = created;
         response = { type: "navigation", navigation: { route: "/app/customers", params: { id: created.id } }, data: created };
       } else if (payload.intent === "customer.search" || payload.intent === "customer.purchases") {
@@ -226,7 +240,11 @@ export function registerSttRoutes(app: Express) {
         const name = sanitizeShortText(String(payload.entities.name || ""), 200).trim();
         const price = n(payload.entities.price);
         if (!name || price === null || price < 0) return res.status(400).json({ error: "Datos inválidos" });
-        const created = await storage.createProduct({ tenantId, name, price: String(price), description: null, categoryId: null, sku: null });
+        const created = await db.transaction(async (tx) => {
+          const [row] = await tx.insert(products).values({ tenantId, name, price: String(price), description: null, categoryId: null, sku: null }).returning();
+          await tx.update(sttInteractions).set({ status: "SUCCESS", updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          return row;
+        });
         result = created;
         response = { type: "navigation", navigation: { route: "/app/products", params: { id: created.id } }, data: created };
       } else if (payload.intent === "product.search") {
@@ -253,13 +271,29 @@ export function registerSttRoutes(app: Express) {
         response = { type: "navigation", navigation: { route: "/app/sales", params: { id: created.sale.id } }, data: created.sale };
       }
 
-      await storage.createSttInteraction({ tenantId, userId, transcript: sanitizeShortText(payload.transcript || payload.intent, 500), intentConfirmed: payload.intent, entitiesConfirmed: payload.entities, status: "SUCCESS", idempotencyKey: `execute-${crypto.randomUUID()}` });
+      if (!["customer.create", "product.create"].includes(payload.intent)) {
+        await storage.updateSttInteractionResult(executeInteraction.id, tenantId, {
+          status: "SUCCESS",
+          transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
+          intentConfirmed: payload.intent,
+          entitiesConfirmed: payload.entities,
+          errorCode: null,
+        });
+      }
       if (result?.id) {
         const lastLog = await storage.getLastUnconfirmedLog(tenantId, userId, "voice_global");
         if (lastLog) await storage.updateSttLogConfirmed(lastLog.id, tenantId, { resultEntityType: payload.intent, resultEntityId: result.id });
       }
       return res.json(response);
-    } catch (err) {
+    } catch (err: any) {
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const userId = req.auth!.userId;
+        const last = await storage.getSttInteractionsByTenant(tenantId, userId, 1);
+        if (last[0]?.status === "PENDING") {
+          await storage.updateSttInteractionResult(last[0].id, tenantId, { status: "FAILED", errorCode: err?.code || "STT_EXECUTE_ERROR" });
+        }
+      } catch {}
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.issues });
       return res.status(500).json({ error: "No se pudo ejecutar la acción", code: "STT_EXECUTE_ERROR" });
     }

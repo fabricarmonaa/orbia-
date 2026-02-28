@@ -256,9 +256,9 @@ export function registerTenantRoutes(app: Express) {
       const monthlyExpenses = monthlySummary ? monthlySummary.cashOutTotal : monthlyExpensesRaw;
       let allOrders;
       if (branchId) {
-        allOrders = await storage.getOrdersByBranch(tenantId, branchId);
+        allOrders = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
       } else {
-        allOrders = await storage.getOrders(tenantId);
+        allOrders = (await storage.getOrders(tenantId, { limit: 200 })).data;
       }
       const statuses = await storage.getOrderStatuses(tenantId);
       const pendingLikeStatusIds = new Set(
@@ -299,13 +299,13 @@ export function registerTenantRoutes(app: Express) {
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
       const monthlySummary = !branchId ? await getTenantMonthlyMetricsSummary(tenantId) : null;
 
-      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesByType, statuses, allOrders] = await Promise.all([
+      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesByType, statuses, allOrdersResult] = await Promise.all([
         storage.countOrders(tenantId, branchId),
         storage.countProducts(tenantId),
         storage.getMonthlyIncome(tenantId, branchId),
         storage.getMonthlyExpensesByType(tenantId, branchId),
         storage.getOrderStatuses(tenantId),
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
       ]);
 
       const pendingStatusIds = new Set(
@@ -325,6 +325,7 @@ export function registerTenantRoutes(app: Express) {
           .map((s: any) => s.id)
       );
 
+      const allOrders = allOrdersResult.data;
       const pendingCount = allOrders.filter((o: any) => o.statusId && pendingStatusIds.has(o.statusId)).length;
       const inProgressCount = allOrders.filter((o: any) => o.statusId && inProgressStatusIds.has(o.statusId)).length;
       const openCount = pendingCount + inProgressCount;
@@ -507,10 +508,11 @@ export function registerTenantRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
-      const [orders, statuses] = await Promise.all([
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+      const [ordersResult, statuses] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
         storage.getOrderStatuses(tenantId),
       ]);
+      const orders = ordersResult.data;
       const byId = new Map(statuses.map((s: any) => [s.id, String(s.name || "").toUpperCase()]));
       const pending = orders.filter((o: any) => ["PENDIENTE", "PENDING"].includes(byId.get(o.statusId) || "")).slice(0, limit);
       const inProgress = orders.filter((o: any) => ["EN PROCESO", "EN_PROCESO", "IN_PROGRESS"].includes(byId.get(o.statusId) || "")).slice(0, limit);
@@ -526,11 +528,12 @@ export function registerTenantRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
-      const [orders, salesRows, cashRows] = await Promise.all([
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+      const [ordersResult, salesRows, cashRows] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
         storage.listSales(tenantId, { branchId, limit, offset: 0 }),
         storage.getCashMovements(tenantId),
       ]);
+      const orders = ordersResult.data;
       const events = [
         ...orders.slice(0, limit).map((o: any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
         ...salesRows.data.slice(0, limit).map((s: any) => ({ ts: s.createdAt, type: "SALE", action: "created", reference: s.number || `#${s.id}`, entityId: s.id })),

@@ -6,8 +6,8 @@ import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
-import { validateBody, validateParams } from "../middleware/validate";
-import { getDefaultStatus, resolveOrderStatusIdByCode, ensureStatusExists, normalizeStatusCode } from "../services/statuses";
+import { validateBody, validateParams, validateQuery } from "../middleware/validate";
+import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusId, normalizeDeliveryStatus } from "../services/statuses";
 import { db } from "../db";
 import { and, count, eq } from "drizzle-orm";
 import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
@@ -17,6 +17,11 @@ import { changeOrderStatusWithHistory, validateOrderScope } from "../services/or
 import { generatePublicToken } from "../utils/public-token";
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+const ordersListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+});
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -94,16 +99,15 @@ const updateOrderSchema = z.object({
 
 
 export function registerOrderRoutes(app: Express) {
-  app.get("/api/orders", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/orders", tenantAuth, enforceBranchScope, validateQuery(ordersListQuerySchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      let data;
-      if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
-        data = await storage.getOrdersByBranch(tenantId, req.auth!.branchId);
-      } else {
-        data = await storage.getOrders(tenantId);
-      }
-      res.json({ data });
+      const query = ordersListQuerySchema.parse(req.query || {});
+      const pagination = { limit: query.limit, page: query.page, cursor: query.cursor };
+      const result = (req.auth!.scope === "BRANCH" && req.auth!.branchId)
+        ? await storage.getOrdersByBranch(tenantId, req.auth!.branchId, pagination)
+        : await storage.getOrders(tenantId, pagination);
+      res.json({ data: result.data, items: result.data, meta: result.meta });
     } catch (err: any) {
       if (err instanceof HttpError) {
         return res.status(err.status).json({ error: { code: err.code, message: err.message } });
@@ -135,8 +139,7 @@ export function registerOrderRoutes(app: Express) {
       const orderNumber = await storage.getNextOrderNumber(tenantId);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (payload.branchId || null);
       const defaultOrderStatus = await getDefaultStatus(tenantId, "ORDER");
-      const resolvedCreateStatusId = payload.statusId
-        || (payload.statusCode ? await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(payload.statusCode)) : null)
+      const resolvedCreateStatusId = (await resolveCanonicalOrderStatusId({ tenantId, statusId: payload.statusId || null, statusCode: payload.statusCode || null }))
         || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
         || null;
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
@@ -164,7 +167,7 @@ export function registerOrderRoutes(app: Express) {
           deliveryAddress: payload.deliveryAddress || null,
           deliveryCity: payload.deliveryCity || null,
           deliveryAddressNotes: payload.deliveryAddressNotes || null,
-          deliveryStatus: payload.requiresDelivery ? "pending" : null,
+          deliveryStatus: payload.requiresDelivery ? normalizeDeliveryStatus("PENDING").toLowerCase() : null,
           orderPresetId: payload.orderPresetId || null,
         }).returning();
 
@@ -279,12 +282,7 @@ export function registerOrderRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
       const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
-      let resolvedStatusId = statusId || null;
-      if (!resolvedStatusId && statusCode) {
-        const normalizedCode = normalizeStatusCode(statusCode);
-        await ensureStatusExists(tenantId, "ORDER", normalizedCode);
-        resolvedStatusId = await resolveOrderStatusIdByCode(tenantId, normalizedCode);
-      }
+      const resolvedStatusId = await resolveCanonicalOrderStatusId({ tenantId, statusId: statusId || null, statusCode: statusCode || null });
       if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
       const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
       if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });

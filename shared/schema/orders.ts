@@ -103,7 +103,7 @@ export const orderStatusHistory = pgTable(
       .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     orderId: integer("order_id")
-      .references(() => orders.id)
+      .references(() => orders.id, { onDelete: "cascade" })
       .notNull(),
     statusId: integer("status_id").references(() => orderStatuses.id, { onDelete: "set null" }),
     changedById: integer("changed_by_id").references(() => users.id, { onDelete: "set null" }),
@@ -129,7 +129,7 @@ export const orderComments = pgTable(
       .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     orderId: integer("order_id")
-      .references(() => orders.id)
+      .references(() => orders.id, { onDelete: "cascade" })
       .notNull(),
     userId: integer("user_id").references(() => users.id),
     content: text("content").notNull(),

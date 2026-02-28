@@ -74,7 +74,7 @@ export interface IStorage {
   getOrderStatusById(id: number, tenantId: number): Promise<OrderStatus | undefined>;
   createOrderStatus(data: InsertOrderStatus): Promise<OrderStatus>;
 
-  getOrders(tenantId: number): Promise<Order[]>;
+  getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
   getOrderById(id: number, tenantId: number): Promise<Order | undefined>;
   getOrderByTrackingId(trackingId: string): Promise<Order | undefined>;
   createOrder(data: InsertOrder): Promise<Order>;
@@ -169,7 +169,7 @@ export interface IStorage {
   getSttInteractionByIdempotency(tenantId: number, userId: number, idempotencyKey: string): Promise<SttInteraction | undefined>;
   getSttInteractionsByTenant(tenantId: number, userId?: number | null, limit?: number): Promise<SttInteraction[]>;
 
-  getOrdersByBranch(tenantId: number, branchId: number): Promise<Order[]>;
+  getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
   getCashSessionsByBranch(tenantId: number, branchId: number): Promise<CashSession[]>;
   getCashMovementsByBranch(tenantId: number, branchId: number): Promise<CashMovement[]>;
   getBranchById(id: number, tenantId: number): Promise<Branch | undefined>;

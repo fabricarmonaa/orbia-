@@ -9,6 +9,7 @@ import { db } from "../db";
 import { customers, sales } from "@shared/schema";
 import { bumpMetrics } from "../services/metrics";
 import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
+import { resolvePagination } from "../utils/pagination";
 import { generatePublicToken } from "../utils/public-token";
 
 const optionalLong = (max: number) =>
@@ -189,10 +190,7 @@ export function registerSaleRoutes(app: Express) {
       if (raw.from && from === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
       if (raw.to && to === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
 
-      const limitParsed = Number(raw.limit ?? "50");
-      const offsetParsed = Number(raw.offset ?? "0");
-      const limit = Number.isFinite(limitParsed) ? Math.min(200, Math.max(1, Math.trunc(limitParsed))) : 50;
-      const offset = Number.isFinite(offsetParsed) ? Math.max(0, Math.trunc(offsetParsed)) : 0;
+      const { limit, offset } = resolvePagination({ limit: raw.limit ?? "50", offset: raw.offset, page: raw.page });
 
       const customerIdParsed = Number(raw.customerId ?? "");
       const customerId = Number.isFinite(customerIdParsed) && customerIdParsed > 0 ? customerIdParsed : undefined;
