@@ -23,7 +23,7 @@ import subprocess
 
 paths = []
 for root in site.getsitepackages():
-    paths.extend(glob.glob(os.path.join(root, "ctranslate2", "*.so*")))
+    paths.extend(glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True))
 
 for so_path in paths:
     subprocess.run(["patchelf", "--clear-execstack", so_path], check=False)

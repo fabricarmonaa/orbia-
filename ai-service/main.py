@@ -55,10 +55,33 @@ from typing import Any as _Any
 
 whisper_model: _Any | None = None
 
+def patch_ctranslate_execstack_once() -> None:
+    if os.environ.get("CTRANSLATE_EXECSTACK_PATCHED") == "1":
+        return
+
+    try:
+        import glob
+        import site
+
+        patched = 0
+        for root in site.getsitepackages():
+            for so_path in glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True):
+                try:
+                    subprocess.run(["patchelf", "--clear-execstack", so_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    patched += 1
+                except Exception:
+                    continue
+
+        os.environ["CTRANSLATE_EXECSTACK_PATCHED"] = "1"
+        print(json.dumps({"event": "ctranslate_patch", "patched": patched}))
+    except Exception as err:
+        print(json.dumps({"event": "ctranslate_patch_error", "message": str(err)}))
+
 
 def get_whisper_model():
     global whisper_model
     if whisper_model is None:
+        patch_ctranslate_execstack_once()
         from faster_whisper import WhisperModel
         model_size = os.environ.get("WHISPER_MODEL", "base")
         whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
