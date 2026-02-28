@@ -72,26 +72,26 @@ export function sttConcurrencyGuard(req: Request, res: Response, next: NextFunct
 }
 
 export function validateSttPayload(req: Request, res: Response, next: NextFunction) {
-  const { audio, text } = req.body as { audio?: string; text?: string };
+  const text = req.body?.text as string | undefined;
+  let audioBase64: string | undefined;
 
-  if (!audio && !text) {
+  if (req.file) {
+    audioBase64 = req.file.buffer.toString('base64');
+    req.body.audio = audioBase64;
+  } else if (typeof req.body?.audio === 'string') {
+    audioBase64 = req.body.audio;
+  }
+
+  if (!audioBase64 && !text) {
     return res.status(400).json({ error: 'Audio o texto requerido', code: 'STT_PAYLOAD_INVALID' });
   }
 
-  if (audio) {
-    if (typeof audio !== 'string') {
-      return res.status(400).json({ error: 'Audio inválido', code: 'STT_PAYLOAD_INVALID' });
-    }
-    if (audio.length > STT_MAX_BASE64_BYTES) {
+  if (audioBase64) {
+    const estimatedDurationSec = estimateAudioDurationSec(audioBase64);
+    // Enforce 20s max audio duration
+    if (estimatedDurationSec > 20) {
       return res.status(413).json({
-        error: `Audio demasiado largo. Máximo ${(STT_MAX_BASE64_BYTES / 1024 / 1024).toFixed(1)}MB.`,
-        code: 'PAYLOAD_TOO_LARGE',
-      });
-    }
-    const estimatedDurationSec = estimateAudioDurationSec(audio);
-    if (estimatedDurationSec > STT_MAX_AUDIO_SECONDS) {
-      return res.status(413).json({
-        error: `Audio demasiado largo. Máximo ${STT_MAX_AUDIO_SECONDS}s por comando.`,
+        error: `Audio demasiado largo. Máximo 20s por comando.`,
         code: 'AUDIO_TOO_LONG',
       });
     }

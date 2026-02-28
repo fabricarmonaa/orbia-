@@ -27,7 +27,7 @@ services:
     env_file:
       - .env.production
     ports:
-      - "8001:8001"
+      - "8000:8000"
     restart: unless-stopped
 
   web:
@@ -45,14 +45,13 @@ services:
       # Overriding with shell interpolation (${POSTGRES_USER} etc.) fails on Windows Docker Desktop
       # because host-shell variables are empty when compose reads them.
       POSTGRES_HOST: postgres
-      AI_SERVICE_URL: http://ai:8001
+      AI_SERVICE_URL: http://ai:8000
       NODE_ENV: production
       PORT: "5000"
       SEED: "${SEED}"
     ports:
       - "5000:5000"
-    command: >
-      sh -c " echo 'Waiting postgres...'; npm run db:push; echo 'Starting server...'; node dist/index.cjs "
+    command: [ "sh", "script/docker-entrypoint-web.sh" ]
     restart: unless-stopped
 
 volumes:

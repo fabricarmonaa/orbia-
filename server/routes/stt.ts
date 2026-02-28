@@ -1,5 +1,7 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { z } from "zod";
+import multer from "multer";
+import crypto from "crypto";
 import { and, desc, eq, ilike, or } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
@@ -10,7 +12,20 @@ import { sanitizeShortText } from "../security/sanitize";
 import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-ticket";
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
 
-const STT_TIMEOUT_MS = parseInt(process.env.STT_TIMEOUT_MS || "9000", 10);
+const upload = multer({ limits: { fileSize: 12 * 1024 * 1024 } });
+const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
+  upload.single("audio")(req, res, (err) => {
+    if (err) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(413).json({ error: "Audio demasiado largo (máx 12MB)", code: "STT_AUDIO_TOO_LARGE" });
+      }
+      return res.status(400).json({ error: "Error procesando archivo", code: "STT_UPLOAD_ERROR" });
+    }
+    next();
+  });
+};
+
+const STT_TIMEOUT_MS = parseInt(process.env.STT_TIMEOUT_MS || "15000", 10);
 const ALLOWED_INTENTS = new Set([
   "customer.create",
   "customer.search",
@@ -35,7 +50,7 @@ function n(value: unknown) {
 }
 
 async function callAiInterpret(payload: Record<string, unknown>, signal: AbortSignal) {
-  const aiServiceUrl = process.env.AI_SERVICE_URL || "http://localhost:8001";
+  const aiServiceUrl = process.env.AI_SERVICE_URL || "http://ai:8000";
   const aiRes = await fetch(`${aiServiceUrl}/api/stt/interpret`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -52,9 +67,10 @@ async function callAiInterpret(payload: Record<string, unknown>, signal: AbortSi
 }
 
 export function registerSttRoutes(app: Express) {
-  app.post("/api/stt/interpret", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), sttRateLimiter, sttConcurrencyGuard, validateSttPayload, async (req, res) => {
+  app.post("/api/stt/interpret", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), uploadAudio, sttRateLimiter, sttConcurrencyGuard, validateSttPayload, async (req, res) => {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);
+    const requestId = req.headers['x-request-id'] || crypto.randomUUID();
 
     try {
       const tenantId = req.auth!.tenantId!;
@@ -97,10 +113,14 @@ export function registerSttRoutes(app: Express) {
         },
       });
     } catch (err: any) {
+      console.error(`[STT_ERROR] RequestId: ${requestId}`, err?.stack || err);
       if (err?.name === "AbortError") {
         return res.status(504).json({ error: "Timeout de STT", code: "AI_TIMEOUT" });
       }
-      return res.status(500).json({ error: "No se pudo interpretar el comando", code: "STT_INTERPRET_ERROR" });
+      if (err?.message?.includes("fetch failed") || err?.message?.includes("ECONNREFUSED")) {
+        return res.status(502).json({ error: "Servicio AI no disponible", code: "AI_UNAVAILABLE" });
+      }
+      return res.status(500).json({ error: "No se pudo interpretar el comando", code: "STT_INTERPRET_FAILED" });
     } finally {
       clearTimeout(timeout);
     }
