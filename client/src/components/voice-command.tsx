@@ -122,6 +122,11 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
       recorder.onstop = async () => {
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
+        if (chunks.length === 0) {
+          setError("No se recibió audio del navegador");
+          setProcessing(false);
+          return;
+        }
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
         if (blob.size === 0) {
           setError("No se grabó audio");
@@ -133,7 +138,7 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
         console.debug("[stt] audio_blob", { size: blob.size, type: blob.type });
         try {
           const form = new FormData();
-          form.append("audio", blob, "voice.webm");
+          form.append("audio", blob, "recording.webm");
           form.append("context", context);
 
           const res = await apiRequest("POST", "/api/ai/stt", form);
@@ -181,6 +186,7 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
 
   const handleStopRecording = useCallback(() => {
     if (mediaRecorder && mediaRecorder.state === "recording") {
+      try { mediaRecorder.requestData(); } catch {}
       mediaRecorder.stop();
       mediaRecorderRef.current = null;
       setRecording(false);

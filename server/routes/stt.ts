@@ -29,7 +29,7 @@ const upload = multer({
   limits: { fileSize: STT_MAX_FILE_SIZE },
 });
 
-const ALLOWED_AUDIO_MIMES = new Set(["audio/mpeg", "audio/wav", "audio/webm", "audio/ogg", "audio/x-wav"]);
+const ALLOWED_AUDIO_MIMES = new Set(["audio/mpeg", "audio/wav", "audio/webm", "video/webm", "audio/ogg", "video/ogg", "audio/x-wav"]);
 
 const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
   upload.single("audio")(req, res, (err: any) => {
@@ -68,6 +68,7 @@ async function cleanupTempFile(filePath?: string) {
 async function validateAudioMime(filePath: string) {
   const detected = await fileTypeFromFile(filePath);
   const mime = detected?.mime;
+  console.info("[stt_debug_magic_mime]", { filePath, detectedMime: mime });
   if (!mime || !ALLOWED_AUDIO_MIMES.has(mime)) {
     const err = new Error("UNSUPPORTED_MEDIA_TYPE");
     (err as any).statusCode = 415;
@@ -113,6 +114,15 @@ export function registerSttRoutes(app: Express) {
 
       const transcript = typeof req.body.text === "string" ? sanitizeShortText(req.body.text, 500) : undefined;
       const history = await storage.getSttInteractionsByTenant(tenantId, userId, 25);
+
+      if (req.file) {
+        console.info("[stt_debug_upload]", {
+          requestId,
+          clientMime: req.file.mimetype,
+          size: req.file.size,
+          path: req.file.path,
+        });
+      }
 
       const interaction = existing || await storage.createSttInteraction({
         tenantId,
