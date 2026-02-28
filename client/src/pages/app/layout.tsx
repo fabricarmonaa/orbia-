@@ -24,6 +24,7 @@ import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
+import { GlobalVoiceFab } from "@/components/global-voice-fab";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -108,6 +109,7 @@ export default function AppLayout() {
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
+          <GlobalVoiceFab />
         </div>
       </div>
     </SidebarProvider>

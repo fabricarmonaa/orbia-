@@ -49,31 +49,45 @@ async function ensureOrderTypePresetsForAllTenants() {
 
     for (const typeRow of typeRows) {
       for (const fieldPreset of DEFAULT_ORDER_FIELDS) {
-        await db
-          .insert(orderFieldDefinitions)
-          .values({
-            tenantId: tenant.id,
-            orderTypeId: typeRow.id,
-            fieldKey: fieldPreset.fieldKey,
-            label: fieldPreset.label,
-            fieldType: fieldPreset.fieldType,
-            required: fieldPreset.required,
-            sortOrder: fieldPreset.sortOrder,
-            config: {},
-            isActive: true,
-            isSystemDefault: fieldPreset.isSystemDefault,
-          })
-          .onConflictDoUpdate({
-            target: [orderFieldDefinitions.orderTypeId, orderFieldDefinitions.fieldKey],
-            set: {
+        const existingField = await db
+          .select({ id: orderFieldDefinitions.id })
+          .from(orderFieldDefinitions)
+          .where(
+            and(
+              eq(orderFieldDefinitions.orderTypeId, typeRow.id),
+              eq(orderFieldDefinitions.fieldKey, fieldPreset.fieldKey)
+            )
+          )
+          .limit(1);
+
+        if (existingField.length > 0) {
+          await db
+            .update(orderFieldDefinitions)
+            .set({
               label: fieldPreset.label,
               fieldType: fieldPreset.fieldType,
               required: fieldPreset.required,
               sortOrder: fieldPreset.sortOrder,
               isActive: true,
               isSystemDefault: fieldPreset.isSystemDefault,
-            },
-          });
+            })
+            .where(eq(orderFieldDefinitions.id, existingField[0].id));
+        } else {
+          await db
+            .insert(orderFieldDefinitions)
+            .values({
+              tenantId: tenant.id,
+              orderTypeId: typeRow.id,
+              fieldKey: fieldPreset.fieldKey,
+              label: fieldPreset.label,
+              fieldType: fieldPreset.fieldType,
+              required: fieldPreset.required,
+              sortOrder: fieldPreset.sortOrder,
+              config: {},
+              isActive: true,
+              isSystemDefault: fieldPreset.isSystemDefault,
+            });
+        }
       }
     }
   }

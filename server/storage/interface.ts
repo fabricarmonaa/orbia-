@@ -15,7 +15,7 @@ import type {
   ExpenseDefinition, InsertExpenseDefinition,
   ProductCategory, InsertProductCategory,
   Product, InsertProduct,
-  SttLog, InsertSttLog,
+  SttLog, InsertSttLog, SttInteraction, InsertSttInteraction,
   TenantAddon, InsertTenantAddon,
   DeliveryAgent, InsertDeliveryAgent,
   DeliveryActionState, InsertDeliveryActionState,
@@ -164,6 +164,8 @@ export interface IStorage {
   getSttLogs(tenantId: number): Promise<SttLog[]>;
   updateSttLogConfirmed(logId: number, tenantId: number, updates: { resultEntityType: string; resultEntityId: number }): Promise<void>;
   getLastUnconfirmedLog(tenantId: number, userId: number, context: string): Promise<SttLog | undefined>;
+  createSttInteraction(data: InsertSttInteraction): Promise<SttInteraction>;
+  getSttInteractionsByTenant(tenantId: number, userId?: number | null, limit?: number): Promise<SttInteraction[]>;
 
   getOrdersByBranch(tenantId: number, branchId: number): Promise<Order[]>;
   getCashSessionsByBranch(tenantId: number, branchId: number): Promise<CashSession[]>;

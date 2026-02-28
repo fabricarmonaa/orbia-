@@ -1,3 +1,6 @@
+import { z } from "zod";
+
+// No API routes needed for a static landing page
 export const api = {};
 
 export function buildUrl(path: string, params?: Record<string, string | number>): string {

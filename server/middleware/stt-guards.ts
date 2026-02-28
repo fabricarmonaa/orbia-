@@ -1,42 +1,45 @@
 import { Request, Response, NextFunction } from 'express';
 
-interface TenantRateLimitStore {
+interface RateLimitStore {
   requests: number[];
 }
 
-const rateLimitStore = new Map<number, TenantRateLimitStore>();
+const rateLimitStore = new Map<string, RateLimitStore>();
 const concurrencyTracker = new Map<number, boolean>();
 
-const STT_RATE_LIMIT_PER_MIN = parseInt(process.env.STT_RATE_LIMIT_PER_MIN || '10');
-const STT_CONCURRENCY_PER_TENANT = parseInt(process.env.STT_CONCURRENCY_PER_TENANT || '1');
+const STT_RATE_LIMIT_PER_MIN = parseInt(process.env.STT_RATE_LIMIT_PER_MIN || '12', 10);
+const STT_CONCURRENCY_PER_TENANT = parseInt(process.env.STT_CONCURRENCY_PER_TENANT || '1', 10);
+const STT_MAX_BASE64_BYTES = parseInt(process.env.STT_MAX_BASE64_BYTES || '1200000', 10);
+const STT_MAX_AUDIO_SECONDS = parseInt(process.env.STT_MAX_AUDIO_SECONDS || '15', 10);
 
 export function estimateAudioDurationSec(base64Audio?: string) {
   if (!base64Audio) return 0;
   const bytes = Math.floor((base64Audio.length * 3) / 4);
-  const assumedVoiceBytesPerSecond = 3000; // approx compressed voice/webm opus
+  const assumedVoiceBytesPerSecond = 3000;
   return Math.round(bytes / assumedVoiceBytesPerSecond);
 }
 
 export function sttRateLimiter(req: Request, res: Response, next: NextFunction) {
   const tenantId = req.auth?.tenantId;
+  const userId = req.auth?.userId;
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
 
-  if (!tenantId) {
+  if (!tenantId || !userId) {
     return res.status(401).json({ error: 'No autorizado', code: 'AUTH_REQUIRED' });
   }
 
+  const key = `${tenantId}:${userId}:${ip}`;
   const now = Date.now();
-  const windowMs = 60 * 1000;
+  const windowMs = 60_000;
 
-  if (!rateLimitStore.has(tenantId)) {
-    rateLimitStore.set(tenantId, { requests: [] });
-  }
+  if (!rateLimitStore.has(key)) rateLimitStore.set(key, { requests: [] });
 
-  const store = rateLimitStore.get(tenantId)!;
+  const store = rateLimitStore.get(key)!;
   store.requests = store.requests.filter((timestamp) => now - timestamp < windowMs);
 
   if (store.requests.length >= STT_RATE_LIMIT_PER_MIN) {
     return res.status(429).json({
-      error: `Límite de transcripciones alcanzado. Máximo ${STT_RATE_LIMIT_PER_MIN} por minuto.`,
+      error: `Límite de STT alcanzado. Máximo ${STT_RATE_LIMIT_PER_MIN} por minuto.`,
       code: 'RATE_LIMIT_EXCEEDED',
       retryAfter: Math.ceil((store.requests[0] + windowMs - now) / 1000),
     });
@@ -53,9 +56,7 @@ export function sttConcurrencyGuard(req: Request, res: Response, next: NextFunct
     return res.status(401).json({ error: 'No autorizado', code: 'AUTH_REQUIRED' });
   }
 
-  if (STT_CONCURRENCY_PER_TENANT === 0) {
-    return next();
-  }
+  if (STT_CONCURRENCY_PER_TENANT === 0) return next();
 
   if (concurrencyTracker.get(tenantId)) {
     return res.status(429).json({
@@ -65,43 +66,39 @@ export function sttConcurrencyGuard(req: Request, res: Response, next: NextFunct
   }
 
   concurrencyTracker.set(tenantId, true);
-
-  res.on('finish', () => {
-    concurrencyTracker.delete(tenantId);
-  });
-
-  res.on('close', () => {
-    concurrencyTracker.delete(tenantId);
-  });
-
+  res.on('finish', () => concurrencyTracker.delete(tenantId));
+  res.on('close', () => concurrencyTracker.delete(tenantId));
   next();
 }
 
 export function validateSttPayload(req: Request, res: Response, next: NextFunction) {
-  const { audio, context } = req.body;
+  const text = req.body?.text as string | undefined;
+  let audioBase64: string | undefined;
 
-  if (!audio || typeof audio !== 'string') {
-    return res.status(400).json({ error: 'Audio base64 requerido', code: 'STT_PAYLOAD_INVALID' });
+  if (req.file) {
+    audioBase64 = req.file.buffer.toString('base64');
+    req.body.audio = audioBase64;
+  } else if (typeof req.body?.audio === 'string') {
+    audioBase64 = req.body.audio;
   }
 
-  const MAX_AUDIO_SIZE = parseInt(process.env.STT_MAX_BASE64_BYTES || '2000000');
-
-  if (audio.length > MAX_AUDIO_SIZE) {
-    const maxSizeMB = (MAX_AUDIO_SIZE / 1024 / 1024).toFixed(1);
-    return res.status(413).json({
-      error: `Audio demasiado largo. Máximo ${maxSizeMB}MB (aproximadamente 30 segundos).`,
-      code: 'PAYLOAD_TOO_LARGE',
-      maxSizeBytes: MAX_AUDIO_SIZE,
-    });
+  if (!audioBase64 && !text) {
+    return res.status(400).json({ error: 'Audio o texto requerido', code: 'STT_PAYLOAD_INVALID' });
   }
 
-  const validContexts = ['orders', 'cash', 'products'];
-  if (!context || !validContexts.includes(context)) {
-    return res.status(400).json({
-      error: 'Contexto inválido',
-      code: 'STT_CONTEXT_INVALID',
-      validContexts,
-    });
+  if (audioBase64) {
+    const estimatedDurationSec = estimateAudioDurationSec(audioBase64);
+    // Enforce 20s max audio duration
+    if (estimatedDurationSec > 20) {
+      return res.status(413).json({
+        error: `Audio demasiado largo. Máximo 20s por comando.`,
+        code: 'AUDIO_TOO_LONG',
+      });
+    }
+  }
+
+  if (text && (typeof text !== 'string' || text.trim().length > 500)) {
+    return res.status(400).json({ error: 'Texto inválido', code: 'STT_TEXT_INVALID' });
   }
 
   next();
