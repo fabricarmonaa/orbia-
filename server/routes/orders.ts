@@ -380,7 +380,7 @@ export function registerOrderRoutes(app: Express) {
         orderId,
         userId: req.auth!.userId,
         content: payload.content,
-        isPublic: payload.isPublic || false,
+        isPublic: payload.isPublic ?? true,
       });
       res.status(201).json({ data });
     } catch (err: any) {

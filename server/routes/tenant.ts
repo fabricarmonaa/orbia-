@@ -598,12 +598,6 @@ export function registerTenantRoutes(app: Express) {
       const validPassword = await comparePassword(payload.password, user.password);
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
-      const admins = await storage.getTenantAdmins(req.auth!.tenantId!);
-      const activeAdmins = admins.filter((a) => a.isActive && !a.deletedAt);
-      if (activeAdmins.length <= 1 && activeAdmins[0]?.id === req.auth!.userId) {
-        return res.status(409).json({ error: "No podés eliminar el último administrador del negocio", code: "LAST_ADMIN_DELETE_FORBIDDEN" });
-      }
-
       let exportToken: string | undefined;
       if (payload.exportBeforeDelete) {
         const exportData = await generateTenantExportZip(req.auth!.tenantId!, req.auth!.userId);

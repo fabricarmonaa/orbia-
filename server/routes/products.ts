@@ -15,8 +15,11 @@ import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateQuery } from "../middleware/validate";
 import { resolveProductUnitPrice } from "../services/pricing";
 import { requireAddon } from "../middleware/require-addon";
-import { ensureStatusExists, getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
+import { ensureStatusExists, getStatuses, normalizeStatusCode } from "../services/statuses";
 import { normalizeProductCode } from "../storage/products";
+import { db } from "../db";
+import { statusDefinitions } from "@shared/schema";
+import { and, eq } from "drizzle-orm";
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -82,6 +85,35 @@ function toNumber(value: string | number | null | undefined) {
   return Number(value);
 }
 
+async function ensureProductStatusForCreate(tenantId: number, rawStatusCode?: string | null) {
+  if (rawStatusCode) {
+    const normalized = normalizeStatusCode(rawStatusCode);
+    await ensureStatusExists(tenantId, "PRODUCT", normalized);
+    return normalized;
+  }
+
+  const activeStatuses = await getStatuses(tenantId, "PRODUCT", false);
+  if (activeStatuses.length > 0) {
+    const defaultStatus = activeStatuses.find((s) => s.isDefault) || activeStatuses[0];
+    return defaultStatus.code;
+  }
+
+  const [created] = await db.insert(statusDefinitions).values({
+    tenantId,
+    entityType: "PRODUCT",
+    code: "ACTIVE",
+    label: "Activo",
+    color: "#10B981",
+    isDefault: true,
+    isActive: true,
+    sortOrder: 1,
+  }).onConflictDoNothing().returning();
+
+  if (created?.code) return created.code;
+
+  const [existing] = await db.select().from(statusDefinitions).where(and(eq(statusDefinitions.tenantId, tenantId), eq(statusDefinitions.entityType, "PRODUCT"), eq(statusDefinitions.code, "ACTIVE"))).limit(1);
+  return existing?.code || "ACTIVE";
+}
 
 async function resolveTenantStockMode(tenantId: number): Promise<{ stockMode: "global" | "by_branch"; branchesCount: number }> {
   const branchesCount = Number(await storage.countBranchesByTenant(tenantId) || 0);
@@ -219,8 +251,7 @@ export function registerProductRoutes(app: Express) {
       const byBranchMode = stockMode === "by_branch";
       const payload = req.body as z.infer<typeof productInputSchema>;
 
-      const statusCode = payload.statusCode ? normalizeStatusCode(payload.statusCode) : (await getDefaultStatus(tenantId, "PRODUCT"))?.code || "ACTIVE";
-      await ensureStatusExists(tenantId, "PRODUCT", statusCode);
+      const statusCode = await ensureProductStatusForCreate(tenantId, payload.statusCode || null);
       const data = await storage.createProduct({
         tenantId,
         name: payload.name,
