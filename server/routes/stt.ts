@@ -44,6 +44,15 @@ const executeSchema = z.object({
   clientConfirmation: z.literal(true),
 });
 
+class AiInterpretError extends Error {
+  statusCode: number;
+  constructor(message: string, statusCode: number) {
+    super(message);
+    this.name = "AiInterpretError";
+    this.statusCode = statusCode;
+  }
+}
+
 function n(value: unknown) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -60,7 +69,8 @@ async function callAiInterpret(payload: Record<string, unknown>, signal: AbortSi
 
   if (!aiRes.ok) {
     const body = await aiRes.json().catch(() => ({}));
-    throw new Error(body?.detail || `AI service error ${aiRes.status}`);
+    const message = body?.detail || `AI service error ${aiRes.status}`;
+    throw new AiInterpretError(message, aiRes.status);
   }
 
   return aiRes.json() as Promise<{ transcript: string; intent: string; entities: Record<string, unknown>; confidence: number; summary: string }>;
@@ -113,14 +123,23 @@ export function registerSttRoutes(app: Express) {
         },
       });
     } catch (err: any) {
-      console.error(`[STT_ERROR] RequestId: ${requestId}`, err?.stack || err);
+      console.error("[STT_INTERPRET_ERROR]", {
+        requestId,
+        message: err?.message,
+        code: err?.code,
+        statusCode: err?.statusCode,
+        stack: err?.stack,
+      });
       if (err?.name === "AbortError") {
-        return res.status(504).json({ error: "Timeout de STT", code: "AI_TIMEOUT" });
+        return res.status(504).json({ error: "AI_SERVICE_TIMEOUT", requestId });
+      }
+      if (err instanceof AiInterpretError) {
+        return res.status(502).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
       }
       if (err?.message?.includes("fetch failed") || err?.message?.includes("ECONNREFUSED")) {
-        return res.status(502).json({ error: "Servicio AI no disponible", code: "AI_UNAVAILABLE" });
+        return res.status(502).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
       }
-      return res.status(500).json({ error: "No se pudo interpretar el comando", code: "STT_INTERPRET_FAILED" });
+      return res.status(500).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
     } finally {
       clearTimeout(timeout);
     }
