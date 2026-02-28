@@ -17,7 +17,6 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from faster_whisper import WhisperModel
 
 app = FastAPI(title="ORBIA AI Service", version="2.1.0")
 
@@ -52,12 +51,15 @@ class STTInterpretResponse(BaseModel):
     intent: dict[str, Any]
 
 
-whisper_model: WhisperModel | None = None
+from typing import Any as _Any
+
+whisper_model: _Any | None = None
 
 
-def get_whisper_model() -> WhisperModel:
+def get_whisper_model():
     global whisper_model
     if whisper_model is None:
+        from faster_whisper import WhisperModel
         model_size = os.environ.get("WHISPER_MODEL", "base")
         whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
     return whisper_model
@@ -205,19 +207,19 @@ async def transcribe_wav(wav_path: str) -> tuple[str, str | None]:
 @app.get("/health")
 async def health():
     worker_path = Path(__file__).parent / "worker_transcribe.py"
-    return {"status": "ok", "worker_available": worker_path.exists()}
+    return {"ok": True, "service": "ai", "status": "ok", "worker_available": worker_path.exists()}
 
 
-@app.post("/api/stt/interpret", response_model=STTInterpretResponse)
-async def stt_interpret(
-    audio: UploadFile | None = File(default=None),
-    text: str | None = Form(default=None),
-    history: str | None = Form(default="[]"),
-    x_request_id: str | None = Header(default=None),
+
+
+async def _stt_interpret_internal(
+    audio: UploadFile | None,
+    text: str | None,
+    history: str | None,
+    request_id: str,
 ):
-    request_id = x_request_id or str(uuid.uuid4())
-
     try:
+        print(json.dumps({"event":"stt_request","requestId":request_id,"hasAudio":bool(audio),"hasText":bool((text or "").strip())}))
         parsed_history_raw = json.loads(history or "[]")
         parsed_history = [Example(**item) for item in parsed_history_raw if isinstance(item, dict)]
     except Exception:
@@ -289,7 +291,8 @@ async def stt_interpret(
         )
     except HTTPException:
         raise
-    except Exception:
+    except Exception as err:
+        print(json.dumps({"event":"stt_error","requestId":request_id,"message":str(err)}))
         fail(500, "AI_SERVICE_UNAVAILABLE", request_id)
     finally:
         for tmp in [temp_input, temp_wav]:
@@ -298,6 +301,27 @@ async def stt_interpret(
                     os.unlink(tmp)
                 except Exception:
                     pass
+
+@app.post("/api/stt/interpret", response_model=STTInterpretResponse)
+async def stt_interpret(
+    audio: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    history: str | None = Form(default="[]"),
+    x_request_id: str | None = Header(default=None),
+):
+    request_id = x_request_id or str(uuid.uuid4())
+    return await _stt_interpret_internal(audio, text, history, request_id)
+
+
+@app.post("/stt", response_model=STTInterpretResponse)
+async def stt_alias(
+    audio: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    history: str | None = Form(default="[]"),
+    x_request_id: str | None = Header(default=None),
+):
+    request_id = x_request_id or str(uuid.uuid4())
+    return await _stt_interpret_internal(audio, text, history, request_id)
 
 
 if __name__ == "__main__":

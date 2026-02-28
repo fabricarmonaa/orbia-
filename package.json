@@ -29,7 +29,9 @@
     "check:customers-api": "tsx script/customers-api-check.ts",
     "check:products-create": "tsx script/products-create-check.ts",
     "check:validators": "tsx script/validators-check.ts",
-    "check:tenant-delete": "tsx script/tenant-delete-check.ts"
+    "check:tenant-delete": "tsx script/tenant-delete-check.ts",
+    "check:ai-health": "tsx script/ai-health-check.ts",
+    "check:ai-stt": "tsx script/ai-stt-check.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

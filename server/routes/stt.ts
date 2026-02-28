@@ -11,6 +11,7 @@ import { customers, products } from "@shared/schema";
 import { sanitizeShortText } from "../security/sanitize";
 import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-ticket";
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
+import { aiPostForm, AiClientError } from "../services/ai-client";
 
 const upload = multer({ limits: { fileSize: 15 * 1024 * 1024 } });
 const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
@@ -25,7 +26,6 @@ const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
   });
 };
 
-const STT_TIMEOUT_MS = parseInt(process.env.STT_TIMEOUT_MS || "15000", 10);
 const ALLOWED_INTENTS = new Set([
   "customer.create",
   "customer.search",
@@ -44,22 +44,12 @@ const executeSchema = z.object({
   clientConfirmation: z.literal(true),
 });
 
-class AiInterpretError extends Error {
-  statusCode: number;
-  constructor(message: string, statusCode: number) {
-    super(message);
-    this.name = "AiInterpretError";
-    this.statusCode = statusCode;
-  }
-}
-
 function n(value: unknown) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 }
 
-async function callAiInterpret(payload: { text?: string; history: Array<{ transcript: string; intent: string; entities: Record<string, unknown> }>; requestId: string; file?: Express.Multer.File }, signal: AbortSignal) {
-  const aiServiceUrl = process.env.AI_SERVICE_URL || "http://ai:8000";
+async function callAiInterpret(payload: { text?: string; history: Array<{ transcript: string; intent: string; entities: Record<string, unknown> }>; requestId: string; file?: Express.Multer.File }) {
   const form = new FormData();
   if (payload.file) {
     const fileBlob = new Blob([payload.file.buffer], { type: payload.file.mimetype || "audio/webm" });
@@ -68,20 +58,9 @@ async function callAiInterpret(payload: { text?: string; history: Array<{ transc
   if (payload.text) form.append("text", payload.text);
   form.append("history", JSON.stringify(payload.history || []));
 
-  const aiRes = await fetch(`${aiServiceUrl}/api/stt/interpret`, {
-    method: "POST",
-    headers: { "x-request-id": payload.requestId },
-    body: form,
-    signal,
-  });
-
-  const body = await aiRes.json().catch(() => ({}));
-  if (!aiRes.ok || body?.success === false) {
-    const message = body?.error || body?.detail || `AI service error ${aiRes.status}`;
-    throw new AiInterpretError(message, aiRes.status);
-  }
-
+  const body = await aiPostForm("/stt", form, { "x-request-id": payload.requestId });
   const intentPayload = body?.intent || {};
+
   return {
     transcript: String(body?.transcript || ""),
     intent: String(intentPayload?.name || "customer.search"),
@@ -93,8 +72,6 @@ async function callAiInterpret(payload: { text?: string; history: Array<{ transc
 
 export function registerSttRoutes(app: Express) {
   app.post("/api/stt/interpret", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), uploadAudio, sttRateLimiter, sttConcurrencyGuard, validateSttPayload, async (req, res) => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), STT_TIMEOUT_MS);
     const requestId = req.headers['x-request-id'] || crypto.randomUUID();
 
     try {
@@ -112,7 +89,7 @@ export function registerSttRoutes(app: Express) {
         text: transcript,
         requestId: String(requestId),
         history: history.map((h) => ({ transcript: h.transcript, intent: h.intentConfirmed, entities: (h.entitiesConfirmed || {}) as Record<string, unknown> })),
-      }, controller.signal);
+      });
 
       if (!ALLOWED_INTENTS.has(response.intent)) {
         return res.status(400).json({ error: "Intent no permitido", code: "INTENT_NOT_ALLOWED" });
@@ -150,18 +127,13 @@ export function registerSttRoutes(app: Express) {
         statusCode: err?.statusCode,
         stack: err?.stack,
       });
-      if (err?.name === "AbortError") {
-        return res.status(504).json({ error: "AI_SERVICE_TIMEOUT", requestId });
-      }
-      if (err instanceof AiInterpretError) {
-        return res.status(502).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
-      }
-      if (err?.message?.includes("fetch failed") || err?.message?.includes("ECONNREFUSED")) {
+      if (err instanceof AiClientError) {
+        if (err.code === "AI_TIMEOUT") {
+          return res.status(504).json({ error: "AI_SERVICE_TIMEOUT", requestId });
+        }
         return res.status(502).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
       }
       return res.status(500).json({ error: "AI_SERVICE_UNAVAILABLE", requestId });
-    } finally {
-      clearTimeout(timeout);
     }
   });
 
