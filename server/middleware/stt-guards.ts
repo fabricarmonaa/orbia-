@@ -9,16 +9,6 @@ const concurrencyTracker = new Map<number, boolean>();
 
 const STT_RATE_LIMIT_PER_MIN = parseInt(process.env.STT_RATE_LIMIT_PER_MIN || '12', 10);
 const STT_CONCURRENCY_PER_TENANT = parseInt(process.env.STT_CONCURRENCY_PER_TENANT || '1', 10);
-const STT_MAX_BASE64_BYTES = parseInt(process.env.STT_MAX_BASE64_BYTES || '1200000', 10);
-const STT_MAX_AUDIO_SECONDS = parseInt(process.env.STT_MAX_AUDIO_SECONDS || '15', 10);
-
-export function estimateAudioDurationSec(base64Audio?: string) {
-  if (!base64Audio) return 0;
-  const bytes = Math.floor((base64Audio.length * 3) / 4);
-  const assumedVoiceBytesPerSecond = 3000;
-  return Math.round(bytes / assumedVoiceBytesPerSecond);
-}
-
 export function sttRateLimiter(req: Request, res: Response, next: NextFunction) {
   const tenantId = req.auth?.tenantId;
   const userId = req.auth?.userId;
@@ -73,28 +63,10 @@ export function sttConcurrencyGuard(req: Request, res: Response, next: NextFunct
 
 export function validateSttPayload(req: Request, res: Response, next: NextFunction) {
   const text = req.body?.text as string | undefined;
-  let audioBase64: string | undefined;
+  const hasAudioFile = Boolean(req.file && req.file.size > 0);
 
-  if (req.file) {
-    audioBase64 = req.file.buffer.toString('base64');
-    req.body.audio = audioBase64;
-  } else if (typeof req.body?.audio === 'string') {
-    audioBase64 = req.body.audio;
-  }
-
-  if (!audioBase64 && !text) {
+  if (!hasAudioFile && !text) {
     return res.status(400).json({ error: 'Audio o texto requerido', code: 'STT_PAYLOAD_INVALID' });
-  }
-
-  if (audioBase64) {
-    const estimatedDurationSec = estimateAudioDurationSec(audioBase64);
-    // Enforce 20s max audio duration
-    if (estimatedDurationSec > 20) {
-      return res.status(413).json({
-        error: `Audio demasiado largo. Máximo 20s por comando.`,
-        code: 'AUDIO_TOO_LONG',
-      });
-    }
   }
 
   if (text && (typeof text !== 'string' || text.trim().length > 500)) {

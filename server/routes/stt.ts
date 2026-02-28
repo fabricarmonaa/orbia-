@@ -12,7 +12,7 @@ import { sanitizeShortText } from "../security/sanitize";
 import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-ticket";
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
 
-const upload = multer({ limits: { fileSize: 12 * 1024 * 1024 } });
+const upload = multer({ limits: { fileSize: 15 * 1024 * 1024 } });
 const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
   upload.single("audio")(req, res, (err) => {
     if (err) {
@@ -58,22 +58,37 @@ function n(value: unknown) {
   return Number.isFinite(num) ? num : null;
 }
 
-async function callAiInterpret(payload: Record<string, unknown>, signal: AbortSignal) {
+async function callAiInterpret(payload: { text?: string; history: Array<{ transcript: string; intent: string; entities: Record<string, unknown> }>; requestId: string; file?: Express.Multer.File }, signal: AbortSignal) {
   const aiServiceUrl = process.env.AI_SERVICE_URL || "http://ai:8000";
+  const form = new FormData();
+  if (payload.file) {
+    const fileBlob = new Blob([payload.file.buffer], { type: payload.file.mimetype || "audio/webm" });
+    form.append("audio", fileBlob, payload.file.originalname || "voice.webm");
+  }
+  if (payload.text) form.append("text", payload.text);
+  form.append("history", JSON.stringify(payload.history || []));
+
   const aiRes = await fetch(`${aiServiceUrl}/api/stt/interpret`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    headers: { "x-request-id": payload.requestId },
+    body: form,
     signal,
   });
 
-  if (!aiRes.ok) {
-    const body = await aiRes.json().catch(() => ({}));
-    const message = body?.detail || `AI service error ${aiRes.status}`;
+  const body = await aiRes.json().catch(() => ({}));
+  if (!aiRes.ok || body?.success === false) {
+    const message = body?.error || body?.detail || `AI service error ${aiRes.status}`;
     throw new AiInterpretError(message, aiRes.status);
   }
 
-  return aiRes.json() as Promise<{ transcript: string; intent: string; entities: Record<string, unknown>; confidence: number; summary: string }>;
+  const intentPayload = body?.intent || {};
+  return {
+    transcript: String(body?.transcript || ""),
+    intent: String(intentPayload?.name || "customer.search"),
+    entities: (intentPayload?.entities || {}) as Record<string, unknown>,
+    confidence: Number(intentPayload?.confidence || 0.7),
+    summary: String(intentPayload?.summary || ""),
+  };
 }
 
 export function registerSttRoutes(app: Express) {
@@ -88,10 +103,15 @@ export function registerSttRoutes(app: Express) {
       const transcript = typeof req.body.text === "string" ? sanitizeShortText(req.body.text, 500) : undefined;
       const history = await storage.getSttInteractionsByTenant(tenantId, userId, 25);
 
+      if (req.file) {
+        console.log("[stt] audio_upload", { requestId, sizeBytes: req.file.size, mimetype: req.file.mimetype });
+      }
+
       const response = await callAiInterpret({
-        audio: req.body.audio,
+        file: req.file || undefined,
         text: transcript,
-        history: history.map((h) => ({ transcript: h.transcript, intent: h.intentConfirmed, entities: h.entitiesConfirmed })),
+        requestId: String(requestId),
+        history: history.map((h) => ({ transcript: h.transcript, intent: h.intentConfirmed, entities: (h.entitiesConfirmed || {}) as Record<string, unknown> })),
       }, controller.signal);
 
       if (!ALLOWED_INTENTS.has(response.intent)) {
