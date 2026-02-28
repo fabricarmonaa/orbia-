@@ -5,10 +5,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     build-essential \
+    libgomp1 \
+    libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY ai-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+RUN python -c "import requests, numpy, soundfile, ctranslate2; from faster_whisper import WhisperModel; print('ai-deps-ok')"
 
 COPY ai-service/ .
 
