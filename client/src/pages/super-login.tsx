@@ -37,7 +37,7 @@ export default function SuperLogin() {
       const res = await fetch("/api/auth/super/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password, totpCode: totpCode || undefined }),
+        body: JSON.stringify({ email: email.trim().toLowerCase(), password, totpCode: totpCode || undefined }),
       });
       if (!res.ok) {
         const info = await parseApiError(res);
@@ -123,7 +123,7 @@ export default function SuperLogin() {
                   inputMode="numeric"
                   placeholder="000000"
                   value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
+                  onChange={(e) => setTotpCode(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))}
                   data-testid="input-totp"
                 />
               </div>

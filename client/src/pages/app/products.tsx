@@ -136,6 +136,9 @@ export default function ProductsPage() {
   const [scanEnabled, setScanEnabled] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
   const [editForm, setEditForm] = useState(emptyProduct);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<any>(null);
+  const [importMapping, setImportMapping] = useState<Record<string, string>>({});
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
 
@@ -207,6 +210,40 @@ export default function ProductsPage() {
     }
   }
 
+
+
+  async function previewProductImport() {
+    try {
+      if (!importFile) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData();
+      fd.append("file", importFile);
+      const res = await apiRequest("POST", "/api/products/import/preview", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo previsualizar");
+      setImportPreview(json);
+      setImportMapping(json.suggestedMapping || {});
+    } catch (err: any) {
+      toast({ title: "Error de importación", description: err?.message || "No se pudo previsualizar", variant: "destructive" });
+    }
+  }
+
+  async function commitProductImport() {
+    try {
+      if (!importFile) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData();
+      fd.append("file", importFile);
+      fd.append("mapping", JSON.stringify(importMapping));
+      const res = await apiRequest("POST", "/api/products/import/commit", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo importar");
+      toast({ title: "Productos importados", description: `Procesados: ${json?.summary?.imported_count || 0}` });
+      setImportPreview(null);
+      setImportFile(null);
+      await fetchProducts(filters);
+    } catch (err: any) {
+      toast({ title: "Error de importación", description: err?.message || "No se pudo importar", variant: "destructive" });
+    }
+  }
 
   async function scanIntoProductForm(rawCode: string) {
     setScanEnabled(false);
@@ -453,6 +490,24 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Importar productos desde Excel</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col md:flex-row gap-2 md:items-center">
+            <Input type="file" accept=".xlsx" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
+            <Button variant="outline" onClick={previewProductImport}>Previsualizar</Button>
+            <Button onClick={commitProductImport} disabled={!importPreview}>Importar</Button>
+          </div>
+          {importPreview ? (
+            <div className="rounded-md border p-3 text-xs space-y-2">
+              <p>Columnas detectadas: {importPreview.detectedHeaders?.join(", ") || "-"}</p>
+              <pre className="overflow-auto">{JSON.stringify(importPreview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold tracking-tight">Productos</h1>
         <Button variant="outline" className="md:hidden" onClick={() => setFiltersOpenMobile((v) => !v)}>

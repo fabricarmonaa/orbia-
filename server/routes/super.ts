@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 import { z } from "zod";
-import { superAuth, hashPassword, comparePassword } from "../auth";
+import { superAuth, hashPassword, comparePassword, generateToken } from "../auth";
 import { profileUpload } from "./uploads";
 import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
@@ -9,10 +9,11 @@ import crypto from "crypto";
 import { db } from "../db";
 import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs } from "@shared/schema";
 import { orderTypeDefinitions, orderTypePresets } from "@shared/schema/order-presets";
-import { eq, and, isNull } from "drizzle-orm";
+import { eq, and, isNull, ilike } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
+import { evaluatePassword } from "../services/password-policy";
 import { getTenantAddons as getTenantAddonsFlags, setTenantAddon } from "../services/tenant-addons";
 
 const createTenantSchema = z.object({
@@ -147,6 +148,18 @@ function generateStrongTempPassword() {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+
+function normalizeTotpToken(value: unknown): string {
+  return String(value || "").replace(/\s+/g, "").replace(/-/g, "").trim();
+}
+
+async function verifySuperTotpToken(secret: string, token: string): Promise<boolean> {
+  const normalized = normalizeTotpToken(token);
+  if (!/^\d{6,8}$/.test(normalized)) return false;
+  const result: any = await verifyTotp({ token: normalized, secret, strategy: "totp", window: [1, 1] } as any);
+  return result === true || result?.isValid === true;
 }
 
 export function registerSuperRoutes(app: Express) {
@@ -693,7 +706,7 @@ export function registerSuperRoutes(app: Express) {
   app.get("/api/super/security", superAuth, async (req, res) => {
     try {
       const [totp] = await db.select().from(superAdminTotp).where(eq(superAdminTotp.superAdminId, req.auth!.userId)).limit(1);
-      const user = await storage.getSuperAdminByEmail(req.auth!.email);
+      const user = await storage.getSuperAdminById(req.auth!.userId);
       return res.json({
         data: {
           email: user?.email || req.auth!.email,
@@ -709,7 +722,7 @@ export function registerSuperRoutes(app: Express) {
   app.put("/api/super/credentials", superAuth, async (req, res) => {
     try {
       const { currentPassword, newEmail, newPassword } = updateSuperCredentialsSchema.parse(req.body || {});
-      const user = await storage.getSuperAdminByEmail(req.auth!.email);
+      const user = await storage.getSuperAdminById(req.auth!.userId);
       if (!user) {
         return res.status(404).json({ error: "Super admin no encontrado", code: "SUPERADMIN_NOT_FOUND" });
       }
@@ -719,10 +732,34 @@ export function registerSuperRoutes(app: Express) {
       }
 
       const payload: any = {};
-      if (newEmail && newEmail !== user.email) {
-        payload.email = newEmail;
+      const normalizedEmail = newEmail?.trim().toLowerCase();
+      if (normalizedEmail && normalizedEmail !== user.email.toLowerCase()) {
+        const [existingUser] = await db
+          .select({ id: users.id })
+          .from(users)
+          .where(and(ilike(users.email, normalizedEmail), isNull(users.deletedAt)))
+          .limit(1);
+        if (existingUser && existingUser.id !== user.id) {
+          return res.status(409).json({ error: "El email ya está en uso", code: "SUPERADMIN_EMAIL_TAKEN" });
+        }
+        payload.email = normalizedEmail;
       }
       if (newPassword) {
+        const policy = evaluatePassword(newPassword, { email: user.email, tenantCode: "root", tenantName: "root" });
+        const hasUpper = /[A-Z]/.test(newPassword);
+        const hasNumber = /\d/.test(newPassword);
+        if (!policy.isValid || newPassword.length < 10 || !hasUpper || !hasNumber) {
+          return res.status(400).json({
+            error: "La nueva contraseña no cumple política de seguridad",
+            code: "SUPERADMIN_PASSWORD_WEAK",
+            details: {
+              minLength10: newPassword.length >= 10,
+              upper: hasUpper,
+              number: hasNumber,
+              warnings: policy.warnings,
+            },
+          });
+        }
         payload.password = await hashPassword(newPassword);
       }
 
@@ -737,7 +774,26 @@ export function registerSuperRoutes(app: Express) {
         metadata: { changedEmail: !!payload.email, changedPassword: !!payload.password },
       });
 
-      return res.json({ ok: true, code: "SUPERADMIN_CREDENTIALS_UPDATED" });
+      const refreshedUser = {
+        id: user.id,
+        email: payload.email || user.email,
+        fullName: user.fullName,
+        role: "super_admin",
+        tenantId: user.tenantId ?? null,
+        isSuperAdmin: true,
+        branchId: null,
+        avatarUrl: user.avatarUrl || null,
+      };
+      const token = generateToken({
+        userId: refreshedUser.id,
+        email: refreshedUser.email,
+        role: refreshedUser.role,
+        tenantId: refreshedUser.tenantId,
+        isSuperAdmin: true,
+        branchId: null,
+      });
+
+      return res.json({ ok: true, code: "SUPERADMIN_CREDENTIALS_UPDATED", token, user: refreshedUser });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "SUPERADMIN_CREDENTIALS_INVALID", details: err.errors });
@@ -749,7 +805,7 @@ export function registerSuperRoutes(app: Express) {
   app.post("/api/super/2fa/setup", superAuth, async (req, res) => {
     try {
       const { accountLabel } = setup2faSchema.parse(req.body || {});
-      const user = await storage.getSuperAdminByEmail(req.auth!.email);
+      const user = await storage.getSuperAdminById(req.auth!.userId);
       if (!user) return res.status(404).json({ error: "Super admin no encontrado", code: "SUPERADMIN_NOT_FOUND" });
 
       const secret = generateSecret();
@@ -800,11 +856,7 @@ export function registerSuperRoutes(app: Express) {
       if (!totp.secret || !totp.secret.trim()) {
         return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
       }
-      const normalizedToken = String(token || "").trim();
-      if (!/^\d{6,8}$/.test(normalizedToken)) {
-        return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
-      }
-      if (!(await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any))) {
+            if (!(await verifySuperTotpToken(totp.secret, token))) {
         return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
       await db.update(superAdminTotp).set({ enabled: true, verifiedAt: new Date(), updatedAt: new Date() }).where(eq(superAdminTotp.superAdminId, req.auth!.userId));
@@ -821,7 +873,7 @@ export function registerSuperRoutes(app: Express) {
   app.post("/api/super/2fa/disable", superAuth, async (req, res) => {
     try {
       const { currentPassword, token } = disable2faSchema.parse(req.body || {});
-      const user = await storage.getSuperAdminByEmail(req.auth!.email);
+      const user = await storage.getSuperAdminById(req.auth!.userId);
       if (!user) return res.status(404).json({ error: "Super admin no encontrado", code: "SUPERADMIN_NOT_FOUND" });
       const passwordOk = await comparePassword(currentPassword, user.password);
       if (!passwordOk) {
@@ -835,11 +887,7 @@ export function registerSuperRoutes(app: Express) {
       if (!totp.secret || !totp.secret.trim()) {
         return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
       }
-      const normalizedToken = String(token || "").trim();
-      if (!/^\d{6,8}$/.test(normalizedToken)) {
-        return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
-      }
-      if (!(await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any))) {
+            if (!(await verifySuperTotpToken(totp.secret, token))) {
         return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
 

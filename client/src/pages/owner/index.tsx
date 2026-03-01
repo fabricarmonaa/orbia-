@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { useAuth, apiRequest, getToken } from "@/lib/auth";
+import { useAuth, apiRequest, getToken, login } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -692,13 +692,17 @@ export default function OwnerDashboard() {
     }
     setSavingSecurity(true);
     try {
-      await apiRequest("PUT", "/api/super/credentials", {
+      const res = await apiRequest("PUT", "/api/super/credentials", {
         currentPassword,
         newEmail: newSecurityEmail !== securityEmail ? newSecurityEmail : undefined,
         newPassword: newSecurityPassword || undefined,
       });
+      const data = await res.json();
+      if (data?.token && data?.user) {
+        login(data.token, data.user);
+      }
       toast({ title: "Seguridad actualizada" });
-      setSecurityEmail(newSecurityEmail);
+      setSecurityEmail(data?.user?.email || newSecurityEmail);
       setCurrentPassword("");
       setNewSecurityPassword("");
       setConfirmSecurityPassword("");
@@ -1711,7 +1715,7 @@ export default function OwnerDashboard() {
                 ) : null}
                 <div className="space-y-1">
                   <Label>Código 2FA</Label>
-                  <Input value={twoFactorToken} onChange={(e) => setTwoFactorToken(e.target.value)} placeholder="123456" />
+                  <Input value={twoFactorToken} onChange={(e) => setTwoFactorToken(e.target.value.replace(/[^0-9]/g, "").slice(0, 8))} placeholder="123456" />
                 </div>
                 {!twoFactorEnabled ? (
                   <Button onClick={verifyTwoFactor}>Verificar y habilitar</Button>

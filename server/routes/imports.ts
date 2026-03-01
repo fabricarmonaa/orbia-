@@ -45,6 +45,12 @@ const commitCustomerBody = z.object({
   selectedExtraColumns: z.array(z.string()).optional().default([]),
 });
 
+const commitProductBody = z.object({
+  mapping: z.record(z.string()),
+  includeExtraColumns: z.coerce.boolean().optional().default(false),
+  selectedExtraColumns: z.array(z.string()).optional().default([]),
+});
+
 function parseJsonField(value: unknown, fallback: any) {
   if (typeof value !== "string") return fallback;
   try {
@@ -79,6 +85,18 @@ export function registerImportRoutes(app: Express) {
     try {
       if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
       const data = buildPreview("customers", req.file.path);
+      return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
+    } catch (err: any) {
+      return res.status(400).json({ error: err?.message || "No se pudo leer el archivo", code: "IMPORT_PREVIEW_ERROR" });
+    } finally {
+      cleanupUploadedFile(req);
+    }
+  });
+
+  app.post("/api/products/import/preview", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, excelUpload.single("file"), async (req, res) => {
+    try {
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
+      const data = buildPreview("products", req.file.path);
       return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "No se pudo leer el archivo", code: "IMPORT_PREVIEW_ERROR" });
@@ -259,6 +277,101 @@ export function registerImportRoutes(app: Express) {
       if (err?.message === "IMPORT_NO_VALID_ROWS") {
         return res.status(400).json({ error: "No hay filas válidas para importar", code: "IMPORT_NO_VALID_ROWS" });
       }
+      return res.status(500).json({ error: "No se pudo completar la importación", code: "IMPORT_COMMIT_ERROR" });
+    } finally {
+      cleanupUploadedFile(req);
+    }
+  });
+
+  app.post("/api/products/import/commit", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, excelUpload.single("file"), async (req, _res, next) => {
+    req.body.mapping = parseJsonField(req.body.mapping, {});
+    req.body.selectedExtraColumns = parseJsonField(req.body.selectedExtraColumns, []);
+    return next();
+  }, validateBody(commitProductBody), async (req, res) => {
+    try {
+      if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
+      const tenantId = req.auth!.tenantId!;
+      const userId = req.auth!.userId;
+      const payload = req.body as z.infer<typeof commitProductBody>;
+      const rows = normalizeRowsForCommit("products", req.file.path, payload.mapping);
+
+      const summary = {
+        imported_count: 0,
+        created_count: 0,
+        updated_count: 0,
+        skipped_count: 0,
+        errors_count: 0,
+      };
+      const rowErrors: Array<{ rowNumber: number; errors: string[] }> = [];
+
+      await db.transaction(async (tx) => {
+        for (const row of rows) {
+          if (row.errors.length) {
+            summary.skipped_count += 1;
+            summary.errors_count += 1;
+            rowErrors.push({ rowNumber: row.rowNumber, errors: row.errors });
+            continue;
+          }
+
+          const normalized = row.normalized;
+          const sku = String(normalized.sku || "").trim();
+          const name = sanitizeShortText(String(normalized.name || ""), 200);
+          const description = normalizeNullable(normalized.description, 2000);
+          const price = Number(normalized.price || 0);
+          const stockValue = normalized.stock == null ? null : Number(normalized.stock);
+
+          let existing: any;
+          if (sku) {
+            [existing] = await tx.select().from(products).where(and(eq(products.tenantId, tenantId), eq(products.sku, sku))).limit(1);
+          }
+          if (!existing) {
+            [existing] = await tx.select().from(products).where(and(eq(products.tenantId, tenantId), ilike(products.name, name))).limit(1);
+          }
+
+          if (existing) {
+            await tx.update(products).set({
+              name,
+              description,
+              price: String(price.toFixed(2)),
+              sku: sku || existing.sku,
+              stock: stockValue === null ? existing.stock : Math.max(0, Math.round(stockValue)),
+              isActive: true,
+            }).where(eq(products.id, existing.id));
+            summary.updated_count += 1;
+          } else {
+            await tx.insert(products).values({
+              tenantId,
+              name,
+              description,
+              price: String(price.toFixed(2)),
+              cost: null,
+              pricingMode: "MANUAL",
+              costAmount: null,
+              costCurrency: null,
+              marginPct: null,
+              stock: stockValue === null ? 0 : Math.max(0, Math.round(stockValue)),
+              sku: sku || null,
+              categoryId: null,
+              isActive: true,
+            });
+            summary.created_count += 1;
+          }
+          summary.imported_count += 1;
+        }
+
+        await tx.insert(importJobs).values({
+          tenantId,
+          entity: "products",
+          fileName: req.file!.originalname,
+          processedRows: rows.length,
+          successRows: summary.imported_count,
+          errorRows: summary.errors_count,
+          createdByUserId: userId,
+        });
+      });
+
+      return res.json({ summary, errors: rowErrors });
+    } catch {
       return res.status(500).json({ error: "No se pudo completar la importación", code: "IMPORT_COMMIT_ERROR" });
     } finally {
       cleanupUploadedFile(req);

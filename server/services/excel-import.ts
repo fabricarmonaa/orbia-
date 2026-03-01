@@ -5,7 +5,7 @@ import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
 export const MAX_IMPORT_FILE_BYTES = 5 * 1024 * 1024;
 
-export type ImportEntity = "purchases" | "customers";
+export type ImportEntity = "purchases" | "customers" | "products";
 
 export interface PreviewRow {
   raw: Record<string, string>;
@@ -38,6 +38,15 @@ const customerAliases: Record<string, string[]> = {
   doc: ["dni", "cuit", "documento"],
   address: ["direccion", "domicilio"],
   notes: ["nota", "observacion"],
+};
+
+const productAliases: Record<string, string[]> = {
+  name: ["nombre", "producto", "name", "nombre_producto", "articulo"],
+  description: ["descripcion", "description", "detalle"],
+  price: ["precio", "price", "precio_venta", "venta"],
+  sku: ["codigo", "sku", "code", "cod_producto"],
+  stock: ["stock", "cantidad", "existencia", "inventario"],
+  category: ["categoria", "category", "rubro"],
 };
 
 function decodeXmlEntities(value: string): string {
@@ -109,7 +118,11 @@ function parseSheet(xml: string, sharedStrings: string[]): string[][] {
 }
 
 function unzipEntry(filePath: string, entryPath: string): string {
-  return execFileSync("unzip", ["-p", filePath, entryPath], { encoding: "utf8" });
+  try {
+    return execFileSync("unzip", ["-p", filePath, entryPath], { encoding: "utf8" });
+  } catch {
+    return "";
+  }
 }
 
 function findFirstSheetPath(filePath: string): string {
@@ -180,6 +193,28 @@ function normalizeCustomerRow(raw: Record<string, string>, mapping: Record<strin
   return { normalized, errors };
 }
 
+function normalizeProductRow(raw: Record<string, string>, mapping: Record<string, string>) {
+  const priceRaw = raw[mapping.price || ""] || "";
+  const stockRaw = raw[mapping.stock || ""] || "";
+  const price = Number(priceRaw);
+  const stock = Number(stockRaw);
+  const normalized = {
+    name: safeText(raw[mapping.name || ""] || "", 200),
+    description: safeText(raw[mapping.description || ""] || "", 2000),
+    price: Number.isFinite(price) ? price : null,
+    sku: safeText(raw[mapping.sku || ""] || "", 120),
+    stock: stockRaw.trim() === "" ? null : (Number.isFinite(stock) ? stock : null),
+    category: safeText(raw[mapping.category || ""] || "", 200),
+  } as Record<string, string | number | null>;
+  const errors: string[] = [];
+  if (!normalized.name) errors.push("Falta nombre");
+  const normalizedPrice = normalized.price as number | null;
+  const normalizedStock = normalized.stock as number | null;
+  if (normalizedPrice === null || normalizedPrice < 0 || normalizedPrice > 1e9) errors.push("Precio inválido");
+  if (normalizedStock !== null && (normalizedStock < 0 || normalizedStock > 1e6)) errors.push("Stock inválido");
+  return { normalized, errors };
+}
+
 export function parseXlsxRows(filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext !== ".xlsx") throw new Error("IMPORT_INVALID_EXTENSION");
@@ -211,9 +246,9 @@ export function parseXlsxRows(filePath: string) {
 
 export function buildPreview(entity: ImportEntity, filePath: string): PreviewResult {
   const { headers, rows } = parseXlsxRows(filePath);
-  const aliases = entity === "purchases" ? purchaseAliases : customerAliases;
+  const aliases = entity === "purchases" ? purchaseAliases : entity === "customers" ? customerAliases : productAliases;
   const mapping = pickSuggestedMapping(headers, aliases);
-  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : ["name"];
+  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : entity === "products" ? ["name", "price"] : ["name"];
   const warnings: string[] = [];
   const missingRequired = requiredFields.filter((f) => !mapping[f]);
   if (missingRequired.length) {
@@ -225,10 +260,14 @@ export function buildPreview(entity: ImportEntity, filePath: string): PreviewRes
   const previewRows = rows.slice(0, 25).map((raw) => {
     const normalized = entity === "purchases"
       ? normalizePurchaseRow(raw, mapping).normalized
-      : normalizeCustomerRow(raw, mapping).normalized;
+      : entity === "customers"
+        ? normalizeCustomerRow(raw, mapping).normalized
+        : normalizeProductRow(raw, mapping).normalized;
     const errors = entity === "purchases"
       ? normalizePurchaseRow(raw, mapping).errors
-      : normalizeCustomerRow(raw, mapping).errors;
+      : entity === "customers"
+        ? normalizeCustomerRow(raw, mapping).errors
+        : normalizeProductRow(raw, mapping).errors;
     return { raw, normalized, errors };
   });
 
@@ -242,10 +281,10 @@ export function buildPreview(entity: ImportEntity, filePath: string): PreviewRes
 }
 
 export function normalizeRowsForCommit(entity: ImportEntity, filePath: string, mapping: Record<string, string>) {
-  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : ["name"];
+  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : entity === "products" ? ["name", "price"] : ["name"];
   const missingRequired = requiredFields.filter((f) => !mapping[f]);
   if (missingRequired.length) {
-    const labels: Record<string, string> = { name: "Nombre producto", quantity: "Cantidad", unit_price: "Precio" };
+    const labels: Record<string, string> = { name: "Nombre", quantity: "Cantidad", unit_price: "Precio", price: "Precio" };
     const missingLabels = missingRequired.map(f => labels[f] || f);
     throw new Error(`EXCEL_IMPORT_MISSING_COLUMNS|Debe mapear la columna '${missingLabels.join(", ")}' antes de continuar.`);
   }
@@ -254,7 +293,9 @@ export function normalizeRowsForCommit(entity: ImportEntity, filePath: string, m
   return rows.map((raw, idx) => {
     const normalizedPack = entity === "purchases"
       ? normalizePurchaseRow(raw, mapping)
-      : normalizeCustomerRow(raw, mapping);
+      : entity === "customers"
+        ? normalizeCustomerRow(raw, mapping)
+        : normalizeProductRow(raw, mapping);
     return {
       rowNumber: idx + 2,
       raw,

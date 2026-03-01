@@ -31,6 +31,13 @@ export const userStorage = {
       .where(and(eq(users.email, email), eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
     return user;
   },
+  async getSuperAdminById(id: number) {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.id, id), eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+    return user;
+  },
   async createUser(data: InsertUser) {
     const [user] = await db.insert(users).values(data).returning();
     return user;
