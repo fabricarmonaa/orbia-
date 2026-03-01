@@ -106,6 +106,18 @@ function isLocked(map: Map<string, LockState>, key: string) {
   return true;
 }
 
+
+function normalizeTotpToken(value: unknown): string {
+  return String(value || "").replace(/\s+/g, "").replace(/-/g, "").trim();
+}
+
+async function verifySuperTotpToken(secret: string, token: string): Promise<boolean> {
+  const normalized = normalizeTotpToken(token);
+  if (!/^\d{6,8}$/.test(normalized)) return false;
+  const result: any = await verifyTotp({ token: normalized, secret, strategy: "totp", window: [1, 1] } as any);
+  return result === true || result?.isValid === true;
+}
+
 async function logSuperSecurity(superAdminId: number | null, action: string, metadata: Record<string, unknown>) {
   await db.insert(superAdminAuditLogs).values({
     superAdminId,
@@ -173,10 +185,13 @@ export function registerAuthRoutes(app: Express) {
         return res.status(403).json({ error: "Acceso restringido", code: "SUPERADMIN_IP_BLOCKED" });
       }
 
-      const { email, password, totpCode } = superLoginSchema.parse(req.body);
+      const parsed = superLoginSchema.parse(req.body);
+      const email = parsed.email.trim().toLowerCase();
+      const password = parsed.password;
+      const totpCode = parsed.totpCode;
       const ip = getClientIp(req);
       const ipKey = `ip:${ip}`;
-      const emailKey = `email:${email.toLowerCase()}`;
+      const emailKey = `email:${email}`;
 
       if (isLocked(superLoginByIp, ipKey) || isLocked(superLoginByEmail, emailKey)) {
         const remaining = Math.max(getRemainingLockSeconds(superLoginByIp, ipKey), getRemainingLockSeconds(superLoginByEmail, emailKey));
@@ -221,11 +236,7 @@ export function registerAuthRoutes(app: Express) {
         if (!totp.secret || !totp.secret.trim()) {
           return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
         }
-        const normalizedToken = String(totpCode || "").trim();
-        if (!/^\d{6,8}$/.test(normalizedToken)) {
-          return res.status(401).json({ error: "Código de verificación inválido", code: "SUPERADMIN_2FA_INVALID" });
-        }
-        const ok = await verifyTotp({ token: normalizedToken, secret: totp.secret, strategy: "totp", window: 1 } as any);
+        const ok = await verifySuperTotpToken(totp.secret, totpCode);
         if (!ok) {
           markFailure(superLoginByIp, ipKey);
           markFailure(superLoginByEmail, emailKey);
@@ -241,7 +252,7 @@ export function registerAuthRoutes(app: Express) {
         userId: user.id,
         email: user.email,
         role: "super_admin",
-        tenantId: null,
+        tenantId: user.tenantId ?? null,
         isSuperAdmin: true,
         branchId: null,
       });
@@ -252,7 +263,7 @@ export function registerAuthRoutes(app: Express) {
           email: user.email,
           fullName: user.fullName,
           role: "super_admin",
-          tenantId: null,
+          tenantId: user.tenantId ?? null,
           isSuperAdmin: true,
           branchId: null,
           avatarUrl: user.avatarUrl || null,

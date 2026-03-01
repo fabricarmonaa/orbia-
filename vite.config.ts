@@ -8,19 +8,7 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
-      manifest: {
-        name: "Orbia",
-        short_name: "Orbia",
-        display: "standalone",
-        start_url: "/app",
-        scope: "/",
-        background_color: "#ffffff",
-        theme_color: "#000000",
-        icons: [
-          { src: "/icons/tenant/icon-192.png", sizes: "192x192", type: "image/png" },
-          { src: "/icons/tenant/icon-512.png", sizes: "512x512", type: "image/png" },
-        ],
-      },
+      manifest: false,
       includeAssets: ["manifest-tenant.json", "manifest-delivery.json", "manifest-owner.json", "icons/**"],
       workbox: {
         navigateFallbackDenylist: [/^\/api\//],

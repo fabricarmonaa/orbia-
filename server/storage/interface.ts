@@ -54,6 +54,7 @@ export interface IStorage {
   getUserById(id: number, tenantId: number): Promise<User | undefined>;
   getUserByEmail(email: string, tenantId?: number | null): Promise<User | undefined>;
   getSuperAdminByEmail(email: string): Promise<User | undefined>;
+  getSuperAdminById(id: number): Promise<User | undefined>;
   createUser(data: InsertUser): Promise<User>;
   getTenantAdmins(tenantId: number): Promise<User[]>;
   getPrimaryTenantAdmin(tenantId: number): Promise<User | undefined>;

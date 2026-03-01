@@ -45,6 +45,9 @@ export default function CustomersPage() {
   const [saving, setSaving] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState(emptyForm);
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPreview, setImportPreview] = useState<any>(null);
+  const [importMapping, setImportMapping] = useState<Record<string, string>>({});
 
   const selected = useMemo(() => list.find((c) => c.id === selectedId) || null, [list, selectedId]);
 
@@ -206,6 +209,40 @@ export default function CustomersPage() {
     }
   }
 
+
+  async function previewExcelImport() {
+    try {
+      if (!importFile) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData();
+      fd.append("file", importFile);
+      const res = await apiRequest("POST", "/api/customers/import/preview", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo previsualizar");
+      setImportPreview(json);
+      setImportMapping(json.suggestedMapping || {});
+    } catch (err: any) {
+      toast({ title: "Error de importación", description: err?.message || "No se pudo previsualizar", variant: "destructive" });
+    }
+  }
+
+  async function commitExcelImport() {
+    try {
+      if (!importFile) throw new Error("Seleccioná archivo .xlsx");
+      const fd = new FormData();
+      fd.append("file", importFile);
+      fd.append("mapping", JSON.stringify(importMapping));
+      const res = await apiRequest("POST", "/api/customers/import/commit", fd);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || "No se pudo importar");
+      toast({ title: "Clientes importados", description: `Procesados: ${json?.summary?.imported_count || 0}` });
+      setImportPreview(null);
+      setImportFile(null);
+      await load();
+    } catch (err: any) {
+      toast({ title: "Error de importación", description: err?.message || "No se pudo importar", variant: "destructive" });
+    }
+  }
+
   async function removeCustomer(customer: Customer) {
     try {
       const res = await apiRequest("DELETE", `/api/customers/${customer.id}`);
@@ -223,6 +260,24 @@ export default function CustomersPage() {
 
   return (
     <div className="max-w-7xl mx-auto space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Importar clientes desde Excel</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-col md:flex-row gap-2 md:items-center">
+            <Input type="file" accept=".xlsx" onChange={(e) => setImportFile(e.target.files?.[0] || null)} />
+            <Button variant="outline" onClick={previewExcelImport}>Previsualizar</Button>
+            <Button onClick={commitExcelImport} disabled={!importPreview}>Importar</Button>
+          </div>
+          {importPreview ? (
+            <div className="rounded-md border p-3 text-xs space-y-2">
+              <p>Columnas detectadas: {importPreview.detectedHeaders?.join(", ") || "-"}</p>
+              <pre className="overflow-auto">{JSON.stringify(importPreview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre>
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
         <Card className="lg:col-span-2">
           <CardHeader>

@@ -56,6 +56,7 @@ export class DatabaseStorage implements IStorage {
   getUserById = userStorage.getUserById;
   getUserByEmail = userStorage.getUserByEmail;
   getSuperAdminByEmail = userStorage.getSuperAdminByEmail;
+  getSuperAdminById = userStorage.getSuperAdminById;
   createUser = userStorage.createUser;
   getTenantAdmins = userStorage.getTenantAdmins;
   getPrimaryTenantAdmin = userStorage.getPrimaryTenantAdmin;

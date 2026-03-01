@@ -185,7 +185,7 @@ export function superAuth(req: Request, res: Response, next: NextFunction) {
       return res.status(403).json({ error: "Acceso denegado" });
     }
 
-    storage.getSuperAdminByEmail(payload.email)
+    storage.getSuperAdminById(payload.userId)
       .then((user) => {
         if (!user || user.deletedAt || !user.isActive) {
           return unauthorizedResponse(res, "invalid");
@@ -193,7 +193,11 @@ export function superAuth(req: Request, res: Response, next: NextFunction) {
         if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
           return unauthorizedResponse(res, "expired");
         }
-        req.auth = payload;
+        req.auth = {
+          ...payload,
+          email: user.email,
+          tenantId: user.tenantId,
+        };
         next();
       })
       .catch(() => res.status(500).json({ error: "Error de autenticación" }));
