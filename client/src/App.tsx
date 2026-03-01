@@ -16,6 +16,7 @@ import DeliveryPanel from "@/pages/delivery-panel";
 import PublicTosPage from "@/pages/public-tos";
 import { SessionLifecycleManager } from "@/components/session-lifecycle-manager";
 import { PwaRuntime } from "@/components/pwa-runtime";
+import { AuthGuard } from "@/components/auth-guard";
 
 function Router() {
   return (
@@ -46,6 +47,7 @@ function App() {
             <Toaster />
             <SessionLifecycleManager />
             <PwaRuntime />
+            <AuthGuard />
             <Router />
           </BrandingProvider>
         </ThemeProvider>

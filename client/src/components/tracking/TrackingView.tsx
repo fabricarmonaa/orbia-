@@ -26,6 +26,8 @@ export interface TrackingOrderData {
     label: string;
     value: string | null;
     fieldType: string;
+    updatedAt?: string | null;
+    downloadUrl?: string | null;
   }>;
   trackingLayout: string;
   trackingTosText?: string | null;
@@ -155,9 +157,12 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
             </div>
           )}
           {order.customFields?.map((field, idx) => (
-            <div key={idx}>
-              <p className="text-muted-foreground">{field.label}</p>
-              <p className="font-medium">{field.value || "-"}</p>
+            <div key={idx} className="col-span-2">
+              <p className="text-muted-foreground">{field.label}: <span className="font-medium text-foreground">{field.value || "-"}</span></p>
+              {field.downloadUrl ? (
+                <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a>
+              ) : null}
+              <p className="text-xs text-muted-foreground">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p>
             </div>
           ))}
         </div>

@@ -1,10 +1,40 @@
 FROM python:3.11-slim
+
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    build-essential \
+    libgomp1 \
+    libsndfile1 \
+    patchelf \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY ai-service/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Some ctranslate2 wheels may carry executable-stack flags that fail on hardened kernels.
+# Clear that flag proactively so container startup/import does not crash at runtime.
+RUN python - <<'PY'
+import glob
+import os
+import site
+import subprocess
+
+paths = []
+for root in site.getsitepackages():
+    paths.extend(glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True))
+
+for so_path in paths:
+    subprocess.run(["patchelf", "--clear-execstack", so_path], check=False)
+
+print(f"patched_ctranslate2_libs={len(paths)}")
+PY
+
+# Keep a lightweight smoke check that avoids importing ctranslate2 at build time.
+RUN python -c "import requests, numpy, soundfile; print('ai-deps-ok')"
+
 COPY ai-service/ .
 
-EXPOSE 8001
+EXPOSE 8000
 CMD ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

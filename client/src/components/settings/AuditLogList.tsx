@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { apiRequest } from "@/lib/auth";
+import { Badge } from "@/components/ui/badge";
+import { resolveAuditEvent } from "@/lib/audit-catalog";
 
 interface AuditLog {
   id: number;
@@ -39,12 +41,15 @@ export function AuditLogList() {
             {logs.map((log) => (
               <div key={log.id} className="flex items-center justify-between border rounded-md px-3 py-2">
                 <div>
-                  <p className="text-sm font-medium">
-                    {log.action} · {log.entityType} {log.entityId ? `#${log.entityId}` : ""}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {log.user?.fullName || log.user?.email || "Sistema"}
-                  </p>
+                  {(() => { const event = resolveAuditEvent(log.action, log.entityType); return (<>
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium">{event.title}</p>
+                    <Badge variant={event.severity === "error" ? "destructive" : "secondary"}>{event.severity}</Badge>
+                    <Badge variant="outline">{event.category}</Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">{event.description}</p>
+                  <p className="text-xs text-muted-foreground">{log.user?.fullName || "Sistema"}</p>
+                  </>); })()}
                 </div>
                 <span className="text-xs text-muted-foreground">
                   {new Date(log.createdAt).toLocaleString("es-AR")}

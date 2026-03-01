@@ -21,9 +21,10 @@ export function Navbar() {
     { name: "Características", href: "#features" },
     { name: "Módulos", href: "#showcase" },
     { name: "Planes", href: "#pricing" },
+    { name: "FAQ", href: "#faq" },
   ];
 
-  const whatsappLink = "https://wa.me/5492236979026?text=Hola,%20vengo%20de%20la%20web%20y%20quiero%20más%20información%20sobre%20Orbia.";
+  const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Hola,%20vengo%20de%20la%20web%20y%20quiero%20más%20información%20sobre%20Orbia.";
 
   return (
     <header 
@@ -57,7 +58,7 @@ export function Navbar() {
           <div className="hidden md:flex">
             <Button asChild className="rounded-full px-6 shadow-md shadow-primary/20 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
               <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
-                Hablar con un asesor
+                Solicitar demo
               </a>
             </Button>
           </div>
@@ -97,7 +98,7 @@ export function Navbar() {
               <div className="pt-4">
                 <Button asChild className="w-full rounded-full">
                   <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
-                    Hablar con un asesor
+                    Solicitar demo
                   </a>
                 </Button>
               </div>

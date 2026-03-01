@@ -90,8 +90,7 @@ export function AppSidebar() {
   }
 
   function handleLogout() {
-    logout();
-    window.location.href = "/login";
+    logout("manual");
   }
 
   const initials = user?.fullName

@@ -28,7 +28,12 @@ export default function TenantLogin() {
     const user = getUser();
     if (token && user && !user.isSuperAdmin) {
       setLocation("/app");
+      return;
     }
+
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("tenantCode") || params.get("tenant_code");
+    if (fromQuery) setTenantCode(fromQuery);
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
