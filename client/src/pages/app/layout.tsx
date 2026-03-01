@@ -25,6 +25,8 @@ import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -53,7 +55,21 @@ function SubscriptionBanner() {
 
 export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const key = `orbia:onboarding:dismissed:${user.id}`;
+    const dismissed = localStorage.getItem(key) === "1";
+    const ownerLike = ["admin", "owner"].includes(String((user as any).role || "").toLowerCase());
+    if (ownerLike && !dismissed) setOnboardingOpen(true);
+  }, [user?.id]);
+
+  const dismissOnboarding = () => {
+    if (user?.id) localStorage.setItem(`orbia:onboarding:dismissed:${user.id}`, "1");
+    setOnboardingOpen(false);
+  };
 
   useEffect(() => {
     if (!isAuthenticated || user?.isSuperAdmin) {
@@ -65,6 +81,19 @@ export default function AppLayout() {
   }, [isAuthenticated, user]);
 
   if (!isAuthenticated || user?.isSuperAdmin) return null;
+
+  const isPrintRoute = location.startsWith("/app/print/");
+
+  if (isPrintRoute) {
+    return (
+      <main className="min-h-screen bg-white">
+        <Switch>
+          {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
+          <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
+        </Switch>
+      </main>
+    );
+  }
 
   const style = {
     "--sidebar-width": "16rem",
@@ -99,16 +128,57 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
               <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
-                            {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/sales">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/products">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/customers">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/cash">{() => { window.location.replace('/app/cash?tab=movements'); return null; }}</Route>}
-                                                                                    {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
+              {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
+          <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
+            <DialogContent className="sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle className="text-2xl font-bold font-display tracking-tight">
+                  Hola {user?.fullName?.split(' ')[0] || 'comerciante'}, bienvenido a Orbia
+                </DialogTitle>
+                <DialogDescription className="text-base mt-2">
+                  Es un gusto tenerte acá. Completá estos 3 pasos rápidos para poner en marcha tu negocio.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                  <div className="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">1</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Perfil del negocio</h4>
+                    <p className="text-sm text-muted-foreground">Configurá el nombre, logo y datos de tu empresa en los ajustes.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-border">
+                  <div className="h-8 w-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold">2</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Tu primer producto</h4>
+                    <p className="text-sm text-muted-foreground">Agregá tu producto estrella al catálogo con su precio y stock inicial.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-border">
+                  <div className="h-8 w-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold">3</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Venta inaugural</h4>
+                    <p className="text-sm text-muted-foreground">Abrí el Punto de Venta (POS) y registrá tu primera venta de prueba.</p>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+                <Button variant="ghost" onClick={dismissOnboarding} className="sm:mr-auto">Saltar por ahora</Button>
+                <Button onClick={() => { setOnboardingOpen(false); setLocation("/app/settings"); }} className="font-semibold">
+                  Vamos a empezar
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <GlobalVoiceFab />
         </div>
       </div>

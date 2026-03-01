@@ -84,7 +84,7 @@ export function registerBranchRoutes(app: Express) {
       }
       const branch = await storage.getBranchById(branchId, tenantId);
       if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
-      const data = await storage.getOrdersByBranch(tenantId, branchId);
+      const data = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
       res.json({ data });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -138,7 +138,7 @@ export function registerBranchRoutes(app: Express) {
           return res.status(400).json({ error: "No se puede eliminar: la sucursal tiene movimientos de caja." });
         }
 
-        const orders = await storage.getOrdersByBranch(tenantId, branchId);
+        const orders = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
         const statuses = await storage.getOrderStatuses(tenantId);
         const finalStatusIds = new Set(statuses.filter((s) => s.isFinal).map((s) => s.id));
         const activeOrders = orders.filter((o) => !finalStatusIds.has(o.statusId ?? -1));

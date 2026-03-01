@@ -5,12 +5,12 @@ export function Features() {
   const features = [
     {
       icon: <Smartphone className="h-6 w-6 text-primary" />,
-      title: "Instalable (PWA)",
+      title: "Aplicación instalable",
       description: "Descargá Orbia en cualquier dispositivo. Funciona como una App nativa en PC, Tablet o Celular."
     },
     {
       icon: <Truck className="h-6 w-6 text-primary" />,
-      title: "Add-on de Deliverys",
+      title: "Aplicación de delivery",
       description: "Establecé rutas óptimas para tus repartidores y enlistá pedidos por zonas de entrega al instante."
     },
     {
@@ -51,7 +51,7 @@ export function Features() {
             transition={{ delay: 0.1 }}
             className="text-xl text-muted-foreground font-medium"
           >
-            Hecho en Mar del Plata para comerciantes que valoran su tiempo y buscan profesionalizar su marca.
+            Sistemas lentos que te hacen perder tiempo frente al cliente son cosa del pasado. Orbia responde a la velocidad de tu comercio.
           </motion.p>
         </div>
 

@@ -28,7 +28,12 @@ export default function TenantLogin() {
     const user = getUser();
     if (token && user && !user.isSuperAdmin) {
       setLocation("/app");
+      return;
     }
+
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get("tenantCode") || params.get("tenant_code");
+    if (fromQuery) setTenantCode(fromQuery);
   }, []);
 
   async function handleSubmit(e: React.FormEvent) {
@@ -74,9 +79,9 @@ export default function TenantLogin() {
         </div>
         <Card>
           <CardHeader className="pb-4">
-            <h2 className="text-lg font-semibold">Iniciar sesión</h2>
+            <h2 className="text-lg font-semibold">Te damos la bienvenida al sistema</h2>
             <p className="text-sm text-muted-foreground">
-              Ingresá con tu código de negocio y credenciales
+              Ingresá los datos de tu comercio y abrí la caja para empezar.
             </p>
           </CardHeader>
           <CardContent>

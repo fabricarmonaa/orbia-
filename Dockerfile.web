@@ -24,7 +24,6 @@ COPY --from=build /app/uploads ./uploads
 # drizzle-kit config + schema files (needed for db:push at runtime)
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build /app/shared ./shared
-COPY --from=build /app/script ./script
 
 EXPOSE 5000
-CMD ["sh", "script/docker-entrypoint-web.sh"]
+CMD ["npm", "run", "start"]

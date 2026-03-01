@@ -41,7 +41,7 @@ export function Showcase() {
             viewport={{ once: true }}
             className="text-4xl md:text-6xl font-extrabold text-foreground font-display tracking-tight"
           >
-            Potencia sin fricción.
+            Diseñado para fluir con tu día.
           </motion.h3>
         </div>
 

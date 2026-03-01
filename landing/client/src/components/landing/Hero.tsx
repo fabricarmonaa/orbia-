@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import imgDashboard from "@assets/image_1772153971674.png";
 
 export function Hero() {
-  const whatsappLink = "https://wa.me/5492236979026?text=Hola,%20quiero%20empezar%20con%20Orbia%20en%20mi%20negocio.";
+  const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Hola,%20quiero%20una%20demo%20de%20Orbia.";
 
   return (
     <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
@@ -26,25 +26,25 @@ export function Hero() {
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-7xl font-extrabold text-foreground tracking-tighter leading-[1.05] mb-6 text-balance font-display">
-              Controlá tu negocio <br className="hidden lg:block" />
-              <span className="gradient-text">sin vueltas.</span>
+              Poné tu negocio <br className="hidden lg:block" />
+              <span className="gradient-text">en marcha.</span>
             </h1>
 
             <p className="text-lg sm:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto lg:mx-0 text-balance leading-relaxed font-medium">
-              Gestioná pedidos, caja, ventas y clientes. <span className="text-foreground">Orbia</span> es un sistema descargable que te da el control total en cualquier dispositivo.
+              Olvidate de los cuadernos y el desorden. <span className="text-foreground">Orbia</span> te brinda el control absoluto de tus ventas, stock y clientes, de forma simple y en cualquier dispositivo.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
               <Button asChild size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold shadow-2xl shadow-primary/30 hover:shadow-primary/40 hover:-translate-y-1 transition-all duration-300 bg-primary">
-                <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
-                  Empezar ahora
+                <a href="#signup">
+                  Iniciá tu prueba gratis
                   <ArrowRight className="ml-2 h-6 w-6" />
                 </a>
               </Button>
               <Button asChild variant="outline" size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold border-2 border-border hover:bg-muted transition-all duration-300">
-                <a href="https://wa.me/5492236979026?text=Hola,%20soy%20comerciante%20de%20MDP%20y%20tengo%20dudas%20sobre%20Orbia." target="_blank" rel="noopener noreferrer">
+                <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
                   <MessageCircle className="mr-2 h-6 w-6 text-primary" />
-                  WhatsApp Directo
+                  Solicitar demo
                 </a>
               </Button>
             </div>
@@ -85,8 +85,8 @@ export function Hero() {
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
               <div>
-                <p className="text-sm font-bold text-foreground">Venta registrada</p>
-                <p className="text-xs text-muted-foreground">Hace unos segundos</p>
+                <p className="text-sm font-bold text-foreground">Venta procesada</p>
+                <p className="text-xs text-muted-foreground">Caja actualizada</p>
               </div>
             </div>
           </motion.div>

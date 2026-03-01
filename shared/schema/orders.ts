@@ -21,7 +21,7 @@ export const orderStatuses = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     name: varchar("name", { length: 100 }).notNull(),
     color: varchar("color", { length: 20 }).default("#6B7280"),
@@ -42,23 +42,23 @@ export const orders = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
-    branchId: integer("branch_id").references(() => branches.id),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     orderNumber: integer("order_number").notNull(),
     type: varchar("type", { length: 50 }).notNull().default("PEDIDO"),
     customerName: varchar("customer_name", { length: 200 }),
     customerPhone: varchar("customer_phone", { length: 50 }),
     customerEmail: varchar("customer_email", { length: 255 }),
     description: text("description"),
-    statusId: integer("status_id").references(() => orderStatuses.id),
+    statusId: integer("status_id").references(() => orderStatuses.id, { onDelete: "set null" }),
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
     scheduledAt: timestamp("scheduled_at"),
     closedAt: timestamp("closed_at"),
     publicTrackingId: varchar("public_tracking_id", { length: 100 }).unique(),
     trackingExpiresAt: timestamp("tracking_expires_at"),
     trackingRevoked: boolean("tracking_revoked").default(false),
-    saleId: integer("sale_id").references(() => sales.id),
+    saleId: integer("sale_id").references(() => sales.id, { onDelete: "set null" }),
     salePublicToken: varchar("sale_public_token", { length: 120 }),
     requiresDelivery: boolean("requires_delivery").notNull().default(false),
     deliveryAddress: text("delivery_address"),
@@ -71,9 +71,9 @@ export const orders = pgTable(
     deliveryLng: numeric("delivery_lng", { precision: 10, scale: 7 }),
     deliveryStatus: varchar("delivery_status", { length: 50 }),
     assignedAgentId: integer("assigned_agent_id"),
-    createdById: integer("created_by_id").references(() => users.id),
+    createdById: integer("created_by_id").references(() => users.id, { onDelete: "set null" }),
     createdByScope: varchar("created_by_scope", { length: 20 }).default("TENANT"),
-    createdByBranchId: integer("created_by_branch_id").references(() => branches.id),
+    createdByBranchId: integer("created_by_branch_id").references(() => branches.id, { onDelete: "set null" }),
     // Etapa A: which preset was used when creating this order
     orderPresetId: integer("order_preset_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -100,13 +100,13 @@ export const orderStatusHistory = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     orderId: integer("order_id")
-      .references(() => orders.id)
+      .references(() => orders.id, { onDelete: "cascade" })
       .notNull(),
-    statusId: integer("status_id").references(() => orderStatuses.id),
-    changedById: integer("changed_by_id").references(() => users.id),
+    statusId: integer("status_id").references(() => orderStatuses.id, { onDelete: "set null" }),
+    changedById: integer("changed_by_id").references(() => users.id, { onDelete: "set null" }),
     note: text("note"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -126,10 +126,10 @@ export const orderComments = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     orderId: integer("order_id")
-      .references(() => orders.id)
+      .references(() => orders.id, { onDelete: "cascade" })
       .notNull(),
     userId: integer("user_id").references(() => users.id),
     content: text("content").notNull(),

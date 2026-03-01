@@ -2,3 +2,9 @@ fastapi==0.115.0
 uvicorn==0.29.0
 pydantic==2.9.2
 faster-whisper==1.1.0
+requests==2.32.3
+numpy==1.26.4
+soundfile==0.12.1
+ctranslate2==4.4.0
+
+python-multipart==0.0.9

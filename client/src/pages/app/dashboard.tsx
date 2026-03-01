@@ -97,11 +97,18 @@ export default function Dashboard() {
     [summary]
   );
 
+  const getGreeting = () => {
+    const hour = new Date().getHours();
+    if (hour < 12) return "Buen día";
+    if (hour < 19) return "Buenas tardes";
+    return "Buenas noches";
+  };
+
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight" data-testid="text-dashboard-title">Dashboard</h1>
-        <p className="text-muted-foreground">Bienvenido, {user?.fullName}</p>
+        <p className="text-muted-foreground">{getGreeting()}, {user?.fullName?.split(' ')[0] || 'comerciante'}. Listo para gestionar tu negocio.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

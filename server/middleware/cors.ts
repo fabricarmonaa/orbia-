@@ -11,14 +11,24 @@ const explicitOrigins = [
   .filter(Boolean);
 
 const allowedOrigins = new Set(explicitOrigins);
+const landingOrigins = [
+  process.env.LANDING_URL,
+  process.env.PUBLIC_WEB_URL,
+  "https://orbiapanel.com",
+  "https://www.orbiapanel.com",
+  "http://localhost:5001",
+].filter(Boolean) as string[];
+
 
 export function corsGuard(req: Request, res: Response, next: NextFunction) {
   const origin = req.headers.origin;
   const isPublicTracking = req.path.startsWith("/api/public/tracking");
+  const isPublicSignup = req.path === "/api/public/signup";
 
   if (origin) {
     const isAllowed = allowedOrigins.has(origin);
-    if (isAllowed || isPublicTracking) {
+    const isAllowedPublicSignupOrigin = isPublicSignup && landingOrigins.includes(origin);
+    if (isAllowed || isPublicTracking || isAllowedPublicSignupOrigin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
