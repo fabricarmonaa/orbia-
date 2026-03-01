@@ -58,6 +58,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.landing
+      args:
+        VITE_APP_API_URL: "http://localhost:5000"
     container_name: orbia-landing
     ports:
       - "5001:80"

@@ -101,7 +101,7 @@ export function AppSidebar() {
     .toUpperCase() || "U";
 
   return (
-    <Sidebar>
+    <Sidebar className="joyride-sidebar">
       <SidebarHeader className="p-4">
         <div className="flex items-center gap-3">
           <BrandLogo
@@ -156,7 +156,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter className="p-4">
+      <SidebarFooter className="p-4 joyride-user-profile">
         <div className="flex items-center gap-3">
           <Avatar className="w-8 h-8 flex-shrink-0">
             <AvatarImage src={user?.avatarUrl || undefined} alt={user?.fullName || "Usuario"} />

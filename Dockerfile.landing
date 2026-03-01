@@ -7,9 +7,13 @@ COPY landing/package*.json ./
 RUN npm ci
 
 COPY landing/ ./
+
+ARG VITE_APP_API_URL
+ENV VITE_APP_API_URL=$VITE_APP_API_URL
+
 RUN npm run build
 
 # ---- runtime stage (nginx) ----
 FROM nginx:alpine
-COPY --from=build /app/dist /usr/share/nginx/html
+COPY --from=build /app/dist/public /usr/share/nginx/html
 EXPOSE 80
