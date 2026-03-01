@@ -20,7 +20,7 @@ export const tenantDailyMetrics = pgTable(
   "tenant_daily_metrics",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
     day: date("day").notNull(),
     ordersCount: integer("orders_count").notNull().default(0),
     revenueTotal: numeric("revenue_total", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -40,7 +40,7 @@ export const tenantMonthlyMetrics = pgTable(
   "tenant_monthly_metrics",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
     month: date("month").notNull(),
     ordersCount: integer("orders_count").notNull().default(0),
     revenueTotal: numeric("revenue_total", { precision: 14, scale: 2 }).notNull().default("0"),
@@ -60,8 +60,8 @@ export const idempotencyKeys = pgTable(
   "idempotency_keys",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
-    userId: integer("user_id").references(() => users.id).notNull(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
     key: varchar("idempotency_key", { length: 120 }).notNull(),
     route: varchar("route", { length: 120 }).notNull(),
     requestHash: text("request_hash").notNull(),

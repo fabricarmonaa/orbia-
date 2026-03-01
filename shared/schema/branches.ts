@@ -17,7 +17,7 @@ export const branches = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     name: varchar("name", { length: 200 }).notNull(),
     address: text("address"),

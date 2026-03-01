@@ -41,11 +41,14 @@ export function GlobalVoiceFab() {
     return "Comando por voz";
   }, [enabled, status, seconds]);
 
-  const interpret = async (payload: { audio?: string; text?: string }) => {
+  const interpret = async (payload: { audioBlob?: Blob; text?: string }) => {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 19000);
     try {
-      const res = await apiRequest("POST", "/api/stt/interpret", payload, { signal: controller.signal });
+      const form = new FormData();
+      if (payload.audioBlob) form.append("audio", payload.audioBlob, "voice.webm");
+      if (payload.text) form.append("text", payload.text);
+      const res = await apiRequest("POST", "/api/stt/interpret", form, { signal: controller.signal });
       const json = await res.json();
       setTranscript(json.data.transcript || "");
       setIntent(json.data.intent || "");
@@ -75,10 +78,7 @@ export function GlobalVoiceFab() {
         stream.getTracks().forEach((t) => t.stop());
         setStatus("processing");
         const blob = new Blob(chunks, { type: "audio/webm" });
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-        let binary = "";
-        bytes.forEach((b) => { binary += String.fromCharCode(b); });
-        await interpret({ audio: btoa(binary) });
+        await interpret({ audioBlob: blob });
       };
       recorder.start();
     } catch {

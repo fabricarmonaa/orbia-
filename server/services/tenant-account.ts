@@ -120,64 +120,105 @@ async function deleteCount(client: any, table: string, where: string, params: an
   return count;
 }
 
+async function tableExists(client: any, table: string) {
+  const res = await client.query(
+    `SELECT EXISTS (
+      SELECT 1
+      FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = $1
+    ) AS ok`,
+    [table]
+  );
+  return Boolean(res.rows[0]?.ok);
+}
+
+async function deleteByTenantIfExists(client: any, counts: Record<string, number>, table: string, tenantId: number) {
+  if (!(await tableExists(client, table))) {
+    counts[table] = 0;
+    return 0;
+  }
+  const c = await deleteCount(client, table, "where tenant_id = $1", [tenantId]);
+  counts[table] = c;
+  return c;
+}
+
 export async function deleteTenantAtomic(tenantId: number) {
   const client = await pool.connect();
   const counts: Record<string, number> = {};
   try {
     await client.query("BEGIN");
 
-    // FK-first deletions
-    counts.sale_items = await deleteCount(client, "sale_items", "where tenant_id = $1", [tenantId]);
-    counts.sales = await deleteCount(client, "sales", "where tenant_id = $1", [tenantId]);
-    counts.tenant_counters = await deleteCount(client, "tenant_counters", "where tenant_id = $1", [tenantId]);
+    const tenantRow = await client.query("SELECT code FROM tenants WHERE id = $1", [tenantId]);
+    const tenantCode = String(tenantRow.rows[0]?.code || "").trim();
 
-    counts.purchase_items = await deleteCount(client, "purchase_items", "where tenant_id = $1", [tenantId]);
-    counts.purchases = await deleteCount(client, "purchases", "where tenant_id = $1", [tenantId]);
+    // FK-first deletions (safe if optional tables/migrations are missing)
+    await deleteByTenantIfExists(client, counts, "sale_items", tenantId);
+    await deleteByTenantIfExists(client, counts, "sales", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_counters", tenantId);
 
-    counts.cash_movements = await deleteCount(client, "cash_movements", "where tenant_id = $1", [tenantId]);
-    counts.cash_sessions = await deleteCount(client, "cash_sessions", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "purchase_items", tenantId);
+    await deleteByTenantIfExists(client, counts, "purchases", tenantId);
 
-    counts.stock_movements = await deleteCount(client, "stock_movements", "where tenant_id = $1", [tenantId]);
-    counts.product_stock_by_branch = await deleteCount(client, "product_stock_by_branch", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "cash_movements", tenantId);
+    await deleteByTenantIfExists(client, counts, "cash_sessions", tenantId);
 
-    counts.import_jobs = await deleteCount(client, "import_jobs", "where tenant_id = $1", [tenantId]);
-    counts.customers = await deleteCount(client, "customers", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "stock_movements", tenantId);
+    await deleteByTenantIfExists(client, counts, "product_stock_by_branch", tenantId);
 
-    counts.order_comments = await deleteCount(client, "order_comments", "where tenant_id = $1", [tenantId]);
-    counts.order_status_history = await deleteCount(client, "order_status_history", "where tenant_id = $1", [tenantId]);
-    counts.orders = await deleteCount(client, "orders", "where tenant_id = $1", [tenantId]);
-    counts.order_statuses = await deleteCount(client, "order_statuses", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "order_attachments", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_field_values", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_field_definitions", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_type_presets", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_type_definitions", tenantId);
 
-    counts.expense_definitions = await deleteCount(client, "expense_definitions", "where tenant_id = $1", [tenantId]);
-    counts.expense_categories = await deleteCount(client, "expense_categories", "where tenant_id = $1", [tenantId]);
-    counts.fixed_expenses = await deleteCount(client, "fixed_expenses", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "import_jobs", tenantId);
+    await deleteByTenantIfExists(client, counts, "customers", tenantId);
 
-    counts.cashiers = await deleteCount(client, "cashiers", "where tenant_id = $1", [tenantId]);
-    counts.product_categories = await deleteCount(client, "product_categories", "where tenant_id = $1", [tenantId]);
-    counts.products = await deleteCount(client, "products", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "order_comments", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_status_history", tenantId);
+    await deleteByTenantIfExists(client, counts, "orders", tenantId);
+    await deleteByTenantIfExists(client, counts, "order_statuses", tenantId);
+    await deleteByTenantIfExists(client, counts, "status_definitions", tenantId);
 
-    counts.delivery_routes_stops = await deleteCount(client, "delivery_route_stops", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.delivery_routes = await deleteCount(client, "delivery_routes", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.delivery_agents = await deleteCount(client, "delivery_agents", "where tenant_id = $1", [tenantId]).catch(() => 0);
+    await deleteByTenantIfExists(client, counts, "expense_definitions", tenantId);
+    await deleteByTenantIfExists(client, counts, "expense_categories", tenantId);
+    await deleteByTenantIfExists(client, counts, "fixed_expenses", tenantId);
 
-    counts.message_templates = await deleteCount(client, "message_templates", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.stt_logs = await deleteCount(client, "stt_logs", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.audit_logs = await deleteCount(client, "audit_logs", "where tenant_id = $1", [tenantId]).catch(() => 0);
+    await deleteByTenantIfExists(client, counts, "cashiers", tenantId);
+    await deleteByTenantIfExists(client, counts, "product_categories", tenantId);
+    await deleteByTenantIfExists(client, counts, "products", tenantId);
 
-    counts.tenant_branding = await deleteCount(client, "tenant_branding", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.tenant_pdf_settings = await deleteCount(client, "tenant_pdf_settings", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.tenant_config = await deleteCount(client, "tenant_config", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.tenant_monthly_summary = await deleteCount(client, "tenant_monthly_summary", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.tenant_addons = await deleteCount(client, "tenant_addons", "where tenant_id = $1", [tenantId]).catch(() => 0);
-    counts.tenant_subscriptions = await deleteCount(client, "tenant_subscriptions", "where tenant_id = $1", [tenantId]).catch(() => 0);
+    await deleteByTenantIfExists(client, counts, "delivery_route_stops", tenantId);
+    await deleteByTenantIfExists(client, counts, "delivery_routes", tenantId);
+    await deleteByTenantIfExists(client, counts, "delivery_agents", tenantId);
 
-    counts.branch_users = await deleteCount(client, "users", "where tenant_id = $1", [tenantId]);
-    counts.branches = await deleteCount(client, "branches", "where tenant_id = $1", [tenantId]);
+    await deleteByTenantIfExists(client, counts, "message_templates", tenantId);
+    await deleteByTenantIfExists(client, counts, "stt_logs", tenantId);
+    await deleteByTenantIfExists(client, counts, "stt_interactions", tenantId);
+    await deleteByTenantIfExists(client, counts, "audit_logs", tenantId);
 
-    const tcount = await deleteCount(client, "tenants", "where id = $1", [tenantId]);
-    counts.tenants = tcount;
+    await deleteByTenantIfExists(client, counts, "tenant_branding", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_pdf_settings", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_config", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_monthly_summary", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_dashboard_settings", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_addons", tenantId);
+    await deleteByTenantIfExists(client, counts, "tenant_subscriptions", tenantId);
+
+    counts.branch_users = await deleteByTenantIfExists(client, counts, "users", tenantId);
+    counts.branches = await deleteByTenantIfExists(client, counts, "branches", tenantId);
+
+    counts.tenants = await deleteCount(client, "tenants", "where id = $1", [tenantId]);
 
     await client.query("COMMIT");
+
+    if (tenantCode) {
+      const storageDir = path.join(process.cwd(), "storage", "tenants", tenantCode);
+      const uploadsDir = path.join(process.cwd(), "uploads", "tenants", tenantCode);
+      fs.rmSync(storageDir, { recursive: true, force: true });
+      fs.rmSync(uploadsDir, { recursive: true, force: true });
+    }
+
     return counts;
   } catch (err) {
     await client.query("ROLLBACK");

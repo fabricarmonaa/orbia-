@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, authFetch, useAuth } from "@/lib/auth";
 import { fetchAddons } from "@/lib/addons";
@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useToast } from "@/hooks/use-toast";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
+import { usePOSCart } from "@/hooks/usePOS";
 import CameraScanner from "@/components/addons/CameraScanner";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
@@ -25,11 +26,6 @@ interface ProductRow {
   estimatedSalePrice?: number;
   stockTotal?: number;
   branchStock?: Array<{ branchId: number; stock: number }>;
-}
-
-interface CartItem {
-  product: ProductRow;
-  quantity: number;
 }
 
 interface PendingSaleFromOrder {
@@ -48,11 +44,26 @@ export default function PosPage() {
   const { toast } = useToast();
   const [q, setQ] = useState("");
   const [products, setProducts] = useState<ProductRow[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [discountType, setDiscountType] = useState<"NONE" | "PERCENT" | "FIXED">("NONE");
-  const [discountValue, setDiscountValue] = useState(0);
-  const [surchargeType, setSurchargeType] = useState<"NONE" | "PERCENT" | "FIXED">("NONE");
-  const [surchargeValue, setSurchargeValue] = useState(0);
+  const {
+    cart,
+    setCart,
+    clearCart,
+    removeFromCart,
+    increaseQty,
+    decreaseQty,
+    discountType,
+    setDiscountType,
+    discountValue,
+    setDiscountValue,
+    surchargeType,
+    setSurchargeType,
+    surchargeValue,
+    setSurchargeValue,
+    subtotal,
+    discountAmount,
+    surchargeAmount,
+    total,
+  } = usePOSCart();
   const [payment, setPayment] = useState("EFECTIVO");
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
@@ -89,24 +100,20 @@ export default function PosPage() {
     }
   }, []);
 
-  const subtotal = useMemo(() => cart.reduce((sum, item) => sum + Number(item.product.estimatedSalePrice ?? item.product.price) * item.quantity, 0), [cart]);
-  const discountAmount = useMemo(() => {
-    if (discountType === "PERCENT") return Math.min(subtotal, (subtotal * discountValue) / 100);
-    if (discountType === "FIXED") return Math.min(subtotal, discountValue);
-    return 0;
-  }, [subtotal, discountType, discountValue]);
-  const surchargeAmount = useMemo(() => {
-    const base = subtotal - discountAmount;
-    if (surchargeType === "PERCENT") return (base * surchargeValue) / 100;
-    if (surchargeType === "FIXED") return surchargeValue;
-    return 0;
-  }, [subtotal, discountAmount, surchargeType, surchargeValue]);
-  const total = subtotal - discountAmount + surchargeAmount;
+  useEffect(() => {
+    void searchProducts();
+  }, []);
+
 
   async function searchProducts() {
-    const res = await apiRequest("GET", `/api/products?q=${encodeURIComponent(q)}&pageSize=20`);
-    const json = await res.json();
-    setProducts(json.data || []);
+    try {
+      const res = await apiRequest("GET", `/api/products?q=${encodeURIComponent(q)}&pageSize=50`);
+      const json = await res.json();
+      setProducts(json.data || []);
+    } catch (err: any) {
+      setProducts([]);
+      toast({ title: "No se pudieron cargar productos", description: err?.message || "Error", variant: "destructive" });
+    }
   }
 
   function addToCart(product: ProductRow) {
@@ -319,7 +326,7 @@ export default function PosPage() {
       }
 
       toast({ title: "Venta registrada", description: sale.sale_number });
-      setCart([]);
+      clearCart();
       setNotes("");
     } catch (err: any) {
       toast({
@@ -383,6 +390,11 @@ export default function PosPage() {
                   <Button size="sm" onClick={() => addToCart(product)}>Agregar</Button>
                 </div>
               ))}
+              {products.length === 0 ? (
+                <div className="text-sm text-muted-foreground border rounded p-3">
+                  No hay productos para mostrar. Cargá productos o buscá con otro término.
+                </div>
+              ) : null}
             </div>
           </CardContent>
         </Card>
@@ -397,10 +409,10 @@ export default function PosPage() {
                   <p className="text-xs text-muted-foreground">${Number(row.product.estimatedSalePrice ?? row.product.price).toFixed(2)} · Stock actual: {Number(row.product.stockTotal ?? 0)} · Stock post-venta: {Math.max(0, Number(row.product.stockTotal ?? 0) - row.quantity)}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button size="sm" variant="outline" onClick={() => setCart((prev) => prev.map((i) => i.product.id === row.product.id ? { ...i, quantity: Math.max(1, i.quantity - 1) } : i))}>-</Button>
+                  <Button size="sm" variant="outline" onClick={() => decreaseQty(row.product.id)}>-</Button>
                   <span>{row.quantity}</span>
-                  <Button size="sm" variant="outline" onClick={() => setCart((prev) => prev.map((i) => i.product.id === row.product.id ? { ...i, quantity: i.quantity + 1 } : i))}>+</Button>
-                  <Button size="sm" variant="destructive" onClick={() => setCart((prev) => prev.filter((i) => i.product.id !== row.product.id))}>x</Button>
+                  <Button size="sm" variant="outline" onClick={() => increaseQty(row.product.id)}>+</Button>
+                  <Button size="sm" variant="destructive" onClick={() => removeFromCart(row.product.id)}>x</Button>
                 </div>
               </div>
             ))}

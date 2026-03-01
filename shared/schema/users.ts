@@ -16,7 +16,7 @@ export const users = pgTable(
   "users",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
     email: varchar("email", { length: 255 }).notNull(),
     password: text("password").notNull(),
     fullName: varchar("full_name", { length: 200 }).notNull(),

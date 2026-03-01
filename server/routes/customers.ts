@@ -7,6 +7,8 @@ import { customers, orderStatuses, orders, sales } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { getCustomersSchemaInfo } from "../services/schema-introspection";
+import { isValidEmail, isValidPhone, normalizePhone as normalizePhoneGlobal, shouldUseStrictEmailValidation } from "@shared/validation/contact";
+import { resolvePagination } from "../utils/pagination";
 
 const customerSchema = z.object({
   name: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200).trim()),
@@ -20,8 +22,10 @@ const customerSchema = z.object({
 const listQuery = z.object({
   q: z.string().optional().default(""),
   includeInactive: z.union([z.string(), z.number(), z.boolean()]).optional().default(false),
-  limit: z.coerce.number().int().min(1).max(200).default(100),
-  offset: z.coerce.number().int().min(0).default(0),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  page: z.coerce.number().int().min(1).optional(),
+  offset: z.coerce.number().int().min(0).optional(),
+  cursor: z.string().optional(),
 });
 
 const byDniQuery = z.object({ dni: z.string().min(1).max(50) });
@@ -36,8 +40,7 @@ function normalizeDoc(raw: string | null | undefined) {
 }
 
 function normalizePhone(raw: string | null | undefined) {
-  const value = sanitizeShortText(raw || "", 50).trim();
-  return value || null;
+  return normalizePhoneGlobal(sanitizeShortText(raw || "", 50));
 }
 
 function parseIncludeInactive(raw: unknown) {
@@ -92,6 +95,12 @@ export function registerCustomerRoutes(app: Express) {
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
       }
+      if (!isValidPhone(body.phone)) {
+        return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });
+      }
+      if (!isValidEmail(body.email, shouldUseStrictEmailValidation())) {
+        return res.status(400).json({ error: "Ingresá un email válido (ej: nombre@dominio.com)", code: "CUSTOMER_EMAIL_INVALID" });
+      }
 
       let existing: any = null;
       let duplicateField: "dni" | "email" | null = null;
@@ -144,7 +153,6 @@ export function registerCustomerRoutes(app: Express) {
     } catch (err: any) {
       console.error("[customers] CUSTOMER_CREATE_ERROR", {
         tenantId,
-        body: { ...req.body, doc: String(req.body?.doc || "") },
         message: err?.message,
         code: err?.code,
         detail: err?.detail,
@@ -160,8 +168,7 @@ export function registerCustomerRoutes(app: Express) {
       tenantId = req.auth!.tenantId!;
       const info = await getCustomersSchemaInfo();
       const query = listQuery.parse(req.query || {});
-      const limit = Math.min(200, Math.max(1, Number(query.limit || 100)));
-      const offset = Math.max(0, Number(query.offset || 0));
+      const { limit, offset } = resolvePagination({ limit: query.limit, page: query.page, offset: query.offset, cursor: query.cursor });
       const includeInactive = parseIncludeInactive(query.includeInactive);
       const queryText = sanitizeShortText(String(query.q || ""), 80).trim();
 
@@ -369,6 +376,12 @@ export function registerCustomerRoutes(app: Express) {
 
       if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
         return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
+      }
+      if (!isValidPhone(body.phone)) {
+        return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });
+      }
+      if (!isValidEmail(body.email, shouldUseStrictEmailValidation())) {
+        return res.status(400).json({ error: "Ingresá un email válido (ej: nombre@dominio.com)", code: "CUSTOMER_EMAIL_INVALID" });
       }
 
       const [existing] = await db.select().from(customers).where(and(eq(customers.id, id), eq(customers.tenantId, tenantId))).limit(1);

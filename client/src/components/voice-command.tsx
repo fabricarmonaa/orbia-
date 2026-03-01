@@ -122,6 +122,11 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
       recorder.onstop = async () => {
         streamRef.current?.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
+        if (chunks.length === 0) {
+          setError("No se recibió audio del navegador");
+          setProcessing(false);
+          return;
+        }
         const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
         if (blob.size === 0) {
           setError("No se grabó audio");
@@ -130,35 +135,36 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
         }
 
         setProcessing(true);
-        const estimatedDurationSec = Math.max(1, Math.round(blob.size / 3000));
-        console.debug("[stt] audio_blob", { size: blob.size, type: blob.type, estimatedDurationSec });
+        console.debug("[stt] audio_blob", { size: blob.size, type: blob.type });
         try {
-          const arrayBuffer = await blob.arrayBuffer();
-          const base64 = btoa(
-            new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), "")
-          );
+          const form = new FormData();
+          form.append("audio", blob, "recording.webm");
+          form.append("context", context);
 
-          // Client-side size check (2MB default limit)
-          const MAX_SIZE = 2 * 1024 * 1024;
-          if (base64.length > MAX_SIZE) {
-            setError("Audio demasiado largo. Máximo 30 segundos.");
-            setProcessing(false);
-            return;
-          }
-
-          console.debug("[stt] request", { base64Bytes: base64.length, context });
-          const res = await apiRequest("POST", "/api/ai/stt", { audio: base64, context });
+          const res = await apiRequest("POST", "/api/ai/stt", form);
           const contentType = res.headers.get("content-type") || "";
           if (!contentType.includes("application/json")) {
             throw new Error("Respuesta inválida del backend (no JSON)");
           }
           const data = await res.json();
-          console.debug("[stt] response", { ok: true, context, hasIntent: !!data?.data?.intent });
-          setResult(data.data);
-          setEditedIntent({ ...data.data.intent });
+          const intentPayload = data?.data?.intent || {};
+          const normalized = {
+            transcription: data?.data?.transcript || "",
+            intent: {
+              intent: intentPayload?.name || "customer.search",
+              entities: intentPayload?.entities || {},
+              confidence: intentPayload?.confidence || 0,
+              summary: intentPayload?.summary || "",
+            },
+            context,
+          };
+          console.debug("[stt] response", { ok: true, context, hasIntent: !!intentPayload?.name });
+          setResult(normalized);
+          setEditedIntent({ ...normalized.intent });
         } catch (err: any) {
-          const msg = err?.message || "No se pudo transcribir. Probá de nuevo o hablá más cerca del micrófono.";
+          const msg = err?.message || "IA no disponible. Probá nuevamente en unos segundos.";
           setError(msg);
+          toast({ title: "IA no disponible", description: msg, variant: "destructive" });
         } finally {
           setProcessing(false);
         }
@@ -180,6 +186,7 @@ export function VoiceCommand({ context, onResult, onCancel }: VoiceCommandProps)
 
   const handleStopRecording = useCallback(() => {
     if (mediaRecorder && mediaRecorder.state === "recording") {
+      try { mediaRecorder.requestData(); } catch {}
       mediaRecorder.stop();
       mediaRecorderRef.current = null;
       setRecording(false);

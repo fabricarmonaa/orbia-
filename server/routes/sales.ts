@@ -1,7 +1,6 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
-import { randomBytes } from "crypto";
 import { enforceBranchScope, getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
@@ -9,6 +8,9 @@ import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
 import { customers, sales } from "@shared/schema";
 import { bumpMetrics } from "../services/metrics";
+import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
+import { resolvePagination } from "../utils/pagination";
+import { generatePublicToken } from "../utils/public-token";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -84,7 +86,7 @@ async function ensureSalePublicToken(saleId: number, tenantId: number) {
     .where(and(eq(sales.id, saleId), eq(sales.tenantId, tenantId)));
   const now = new Date();
   if (existing?.token && (!existing.expiresAt || new Date(existing.expiresAt) > now)) return existing.token;
-  const token = randomBytes(24).toString("base64url");
+  const token = generatePublicToken();
   await db
     .update(sales)
     .set({ publicToken: token, publicTokenCreatedAt: now, publicTokenExpiresAt: tokenExpiresAt(), updatedAt: now })
@@ -188,10 +190,7 @@ export function registerSaleRoutes(app: Express) {
       if (raw.from && from === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
       if (raw.to && to === null) return res.status(400).json({ error: "INVALID_DATE", code: "INVALID_DATE" });
 
-      const limitParsed = Number(raw.limit ?? "50");
-      const offsetParsed = Number(raw.offset ?? "0");
-      const limit = Number.isFinite(limitParsed) ? Math.min(200, Math.max(1, Math.trunc(limitParsed))) : 50;
-      const offset = Number.isFinite(offsetParsed) ? Math.max(0, Math.trunc(offsetParsed)) : 0;
+      const { limit, offset } = resolvePagination({ limit: raw.limit ?? "50", offset: raw.offset, page: raw.page });
 
       const customerIdParsed = Number(raw.customerId ?? "");
       const customerId = Number.isFinite(customerIdParsed) && customerIdParsed > 0 ? customerIdParsed : undefined;
@@ -399,6 +398,64 @@ export function registerSaleRoutes(app: Express) {
 
   app.get("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
   app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
+
+  app.get("/api/sales/:id/ticket-pdf", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const width = String(req.query.width || "80") === "58" ? 58 : 80;
+      const saleId = Number(req.params.id);
+      const tenantId = req.auth!.tenantId!;
+      const sale = await storage.getSaleById(saleId, tenantId);
+      if (!sale) return res.status(404).json({ error: "Venta no encontrada", code: "SALE_NOT_FOUND" });
+
+      const [items, branding, tenant, customerData] = await Promise.all([
+        storage.getSaleItems(sale.id, sale.tenantId),
+        storage.getTenantBranding(sale.tenantId),
+        storage.getTenantById(sale.tenantId),
+        sale.customerId
+          ? db
+              .select({ name: customers.name, doc: customers.doc, phone: customers.phone })
+              .from(customers)
+              .where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, sale.tenantId)))
+              .limit(1)
+              .then((rows) => rows[0] ?? null)
+          : Promise.resolve(null),
+      ]);
+
+      const slug = (tenant as any)?.slug || null;
+      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
+      const trackUrl = `${base || ""}/tracking/${sale.publicToken || sale.id}${slug ? "" : ""}`;
+
+      const pdf = await buildThermalTicketPdf({
+        widthMm: width,
+        companyName: branding.displayName || "ORBIA",
+        ticketLabel: "Ticket",
+        ticketNumber: sale.saleNumber,
+        datetime: String(sale.saleDatetime),
+        paymentMethod: sale.paymentMethod,
+        customerName: customerData?.name || null,
+        customerDni: customerData?.doc || null,
+        customerPhone: customerData?.phone || null,
+        items: items.map((item: any) => ({ qty: Number(item.quantity), name: item.productNameSnapshot || "Producto", price: String(item.lineTotal || "") })),
+        subtotal: String(sale.subtotalAmount || "0"),
+        discount: String(sale.discountAmount || "0"),
+        surcharge: String(sale.surchargeAmount || "0"),
+        total: String(sale.totalAmount || "0"),
+        qrUrl: trackUrl,
+        notes: sale.notes,
+      });
+
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=\"ticket-${sale.saleNumber}-${width}mm.pdf\"`);
+      return res.send(pdf);
+    } catch {
+      return res.status(500).json({ error: "No se pudo generar ticket PDF", code: "SALE_TICKET_PDF_ERROR", requestId: req.requestId || null });
+    }
+  });
 
   app.get("/api/public/sale/:token", validateParams(tokenParamSchema), async (req, res) => {
     try {
