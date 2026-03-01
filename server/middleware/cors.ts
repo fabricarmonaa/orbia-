@@ -16,9 +16,8 @@ const landingOrigins = [
   process.env.PUBLIC_WEB_URL,
   "https://orbiapanel.com",
   "https://www.orbiapanel.com",
+  "http://localhost:5001"
 ].filter(Boolean) as string[];
-
-
 export function corsGuard(req: Request, res: Response, next: NextFunction) {
   const origin = req.headers.origin;
   const isPublicTracking = req.path.startsWith("/api/public/tracking");

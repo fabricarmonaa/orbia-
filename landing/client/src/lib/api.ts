@@ -1,4 +1,4 @@
-const API_BASE = (import.meta.env.VITE_APP_API_URL as string | undefined)?.replace(/\/$/, "") || "https://app.orbiapanel.com";
+const API_BASE = (import.meta.env.VITE_APP_API_URL as string | undefined)?.replace(/\/$/, "") || (import.meta.env.DEV ? "http://localhost:5000" : "https://app.orbiapanel.com");
 
 export async function postPublicSignup(payload: {
   companyName: string;
