@@ -32,6 +32,7 @@ export default function PublicTracking() {
         closedAt: payload.closedAt,
         history: payload.history || [],
         publicComments: payload.publicComments || [],
+        customFields: payload.customFields || [],
         trackingLayout: payload.trackingLayout || "classic",
         trackingTosText: payload.trackingTosText,
       });
@@ -79,6 +80,7 @@ export default function PublicTracking() {
         closedAt: null,
         history: [],
         publicComments: [],
+        customFields: [],
         trackingLayout: "classic",
         trackingTosText: "",
       }}

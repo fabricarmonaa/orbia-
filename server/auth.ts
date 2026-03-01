@@ -50,6 +50,12 @@ function mapJwtError(err: unknown): "expired" | "invalid" {
   return "invalid";
 }
 
+
+function isTokenRevokedByUser(tokenIat: number | undefined, tokenInvalidBefore: Date | string | null | undefined) {
+  if (!tokenIat || !tokenInvalidBefore) return false;
+  const invalidBeforeSec = Math.floor(new Date(tokenInvalidBefore).getTime() / 1000);
+  return tokenIat <= invalidBeforeSec;
+}
 export interface JWTPayload {
   userId: number;
   email: string;
@@ -60,6 +66,7 @@ export interface JWTPayload {
   scope?: string;
   deliveryAgentId?: number;
   cashierId?: number;
+  iat?: number;
 }
 
 export interface PlanFeatures {
@@ -177,8 +184,19 @@ export function superAuth(req: Request, res: Response, next: NextFunction) {
     if (!payload.isSuperAdmin) {
       return res.status(403).json({ error: "Acceso denegado" });
     }
-    req.auth = payload;
-    next();
+
+    storage.getSuperAdminByEmail(payload.email)
+      .then((user) => {
+        if (!user || user.deletedAt || !user.isActive) {
+          return unauthorizedResponse(res, "invalid");
+        }
+        if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
+          return unauthorizedResponse(res, "expired");
+        }
+        req.auth = payload;
+        next();
+      })
+      .catch(() => res.status(500).json({ error: "Error de autenticación" }));
   } catch (err) {
     return unauthorizedResponse(res, mapJwtError(err));
   }
@@ -195,9 +213,9 @@ export function tenantAuth(req: Request, res: Response, next: NextFunction) {
     if (!payload.tenantId) {
       return res.status(403).json({ error: "Acceso denegado" });
     }
-    req.auth = payload;
+
     storage.getTenantById(payload.tenantId)
-      .then((tenant) => {
+      .then(async (tenant) => {
         if (!tenant || tenant.deletedAt) {
           return res.status(403).json({ error: "Negocio eliminado", code: "TENANT_DELETED" });
         }
@@ -207,6 +225,18 @@ export function tenantAuth(req: Request, res: Response, next: NextFunction) {
         if (!tenant.isActive) {
           return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
         }
+
+        if (payload.userId > 0) {
+          const user = await storage.getUserById(payload.userId, payload.tenantId!);
+          if (!user || user.deletedAt || !user.isActive) {
+            return unauthorizedResponse(res, "invalid");
+          }
+          if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
+            return unauthorizedResponse(res, "expired");
+          }
+        }
+
+        req.auth = payload;
         next();
       })
       .catch(() => res.status(500).json({ error: "Error verificando negocio" }));

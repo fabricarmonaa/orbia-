@@ -16,7 +16,7 @@ export const users = pgTable(
   "users",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }),
     email: varchar("email", { length: 255 }).notNull(),
     password: text("password").notNull(),
     fullName: varchar("full_name", { length: 200 }).notNull(),
@@ -27,6 +27,7 @@ export const users = pgTable(
     isSuperAdmin: boolean("is_super_admin").notNull().default(false),
     avatarUrl: text("avatar_url"),
     avatarUpdatedAt: timestamp("avatar_updated_at"),
+    tokenInvalidBefore: timestamp("token_invalid_before"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     deletedAt: timestamp("deleted_at"),
   },

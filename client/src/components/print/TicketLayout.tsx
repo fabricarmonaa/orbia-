@@ -26,8 +26,16 @@ export function TicketLayout({ mode, data, variant }: { mode: PrintMode; data: U
   const showPrices = variant !== "KITCHEN";
 
   return (
-    <div className="ticket-layout" style={{ width: w.width, maxWidth: "100%", margin: "0 auto", padding: mode === "A4" ? "14mm" : "3mm", fontFamily: "Inter, ui-monospace, monospace", fontSize: mode === "A4" ? 13 : 11, lineHeight: 1.3 }}>
-      <style>{`@media print { @page { size: ${w.page}; margin: ${mode === "A4" ? "10mm" : "0"}; } .print-hide { display:none !important; } }`}</style>
+    <div className="ticket-layout print-ticket-root" data-print-mode={mode} style={{ width: w.width, maxWidth: "100%", margin: "0 auto", padding: mode === "A4" ? "12mm" : "2mm", fontFamily: "Inter, ui-monospace, monospace", fontSize: mode === "A4" ? 13 : 11, lineHeight: 1.3, background: "#fff" }}>
+      <style>{`
+        @media print {
+          @page { size: ${w.page}; margin: ${mode === "A4" ? "8mm" : "0"}; }
+          html, body { width: ${mode === "A4" ? "210mm" : mode === "TICKET_80" ? "80mm" : "58mm"}; margin: 0 !important; padding: 0 !important; background: #fff !important; }
+          .print-hide { display:none !important; }
+          .print-page-shell { margin: 0 !important; padding: 0 !important; }
+          .print-ticket-root { box-shadow: none !important; border: none !important; }
+        }
+      `}</style>
       <div style={{ textAlign: "center" }}>
         {data.tenant.logoUrl ? <img src={data.tenant.logoUrl} style={{ maxHeight: mode === "A4" ? 70 : 45, margin: "0 auto 6px" }} /> : null}
         <div style={{ fontWeight: 800, textTransform: "uppercase", letterSpacing: 0.8 }}>{data.tenant.name}</div>

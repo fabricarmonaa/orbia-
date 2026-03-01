@@ -1,9 +1,10 @@
 import { db } from "../db";
-import { eq, and, desc, sql, count } from "drizzle-orm";
+import { eq, and, desc, sql, count, lt, or } from "drizzle-orm";
 import {
   orders, orderStatuses, orderStatusHistory, orderComments,
   type InsertOrder, type InsertOrderStatus, type InsertOrderStatusHistory, type InsertOrderComment,
 } from "@shared/schema";
+import { resolvePagination } from "../utils/pagination";
 
 export const orderStorage = {
   async getOrderStatuses(tenantId: number) {
@@ -24,12 +25,29 @@ export const orderStorage = {
     const [status] = await db.insert(orderStatuses).values(data).returning();
     return status;
   },
-  async getOrders(tenantId: number) {
-    return db
+  async getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }) {
+    const { limit, offset, cursor } = resolvePagination(pagination || {});
+    const rows = await db
       .select()
       .from(orders)
-      .where(eq(orders.tenantId, tenantId))
-      .orderBy(desc(orders.createdAt));
+      .where(
+        and(
+          eq(orders.tenantId, tenantId),
+          cursor
+            ? or(
+                lt(orders.createdAt, new Date(cursor.createdAt)),
+                and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+              )
+            : undefined,
+        )
+      )
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit)
+      .offset(cursor ? 0 : offset);
+    const nextCursor = rows.length === limit
+      ? Buffer.from(JSON.stringify({ createdAt: rows[rows.length - 1].createdAt, id: rows[rows.length - 1].id }), "utf8").toString("base64url")
+      : null;
+    return { data: rows, meta: { limit, offset: cursor ? 0 : offset, nextCursor } };
   },
   async getOrderById(id: number, tenantId: number) {
     const [order] = await db
@@ -112,11 +130,29 @@ export const orderStorage = {
     const [comment] = await db.insert(orderComments).values(data).returning();
     return comment;
   },
-  async getOrdersByBranch(tenantId: number, branchId: number) {
-    return db
+  async getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }) {
+    const { limit, offset, cursor } = resolvePagination(pagination || {});
+    const rows = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.tenantId, tenantId), eq(orders.branchId, branchId)))
-      .orderBy(desc(orders.createdAt));
+      .where(
+        and(
+          eq(orders.tenantId, tenantId),
+          eq(orders.branchId, branchId),
+          cursor
+            ? or(
+                lt(orders.createdAt, new Date(cursor.createdAt)),
+                and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+              )
+            : undefined,
+        )
+      )
+      .orderBy(desc(orders.createdAt), desc(orders.id))
+      .limit(limit)
+      .offset(cursor ? 0 : offset);
+    const nextCursor = rows.length === limit
+      ? Buffer.from(JSON.stringify({ createdAt: rows[rows.length - 1].createdAt, id: rows[rows.length - 1].id }), "utf8").toString("base64url")
+      : null;
+    return { data: rows, meta: { limit, offset: cursor ? 0 : offset, nextCursor } };
   },
 };

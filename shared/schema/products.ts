@@ -19,7 +19,7 @@ export const productCategories = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     name: varchar("name", { length: 200 }).notNull(),
     sortOrder: integer("sort_order").default(0),
@@ -40,7 +40,7 @@ export const products = pgTable(
   {
     id: serial("id").primaryKey(),
     tenantId: integer("tenant_id")
-      .references(() => tenants.id)
+      .references(() => tenants.id, { onDelete: "cascade" })
       .notNull(),
     categoryId: integer("category_id").references(() => productCategories.id),
     name: varchar("name", { length: 200 }).notNull(),
@@ -60,6 +60,7 @@ export const products = pgTable(
   },
   (table) => [
     index("idx_products_tenant").on(table.tenantId),
+    index("idx_products_tenant_active").on(table.tenantId, table.isActive, table.createdAt),
     index("idx_products_tenant_category_active_created").on(table.tenantId, table.categoryId, table.isActive, table.createdAt),
     uniqueIndex("uq_products_tenant_sku").on(table.tenantId, table.sku),
   ]

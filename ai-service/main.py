@@ -6,28 +6,37 @@ import os
 import re
 import asyncio
 import json
+import math
+import uuid
+import tempfile
+import subprocess
 from pathlib import Path
 from difflib import SequenceMatcher
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="ORBIA AI Service", version="2.0.0")
+app = FastAPI(title="ORBIA AI Service", version="2.1.1")
+
+@app.on_event("startup")
+async def startup_event():
+    print(json.dumps({"event":"ai_startup","workerTimeout":WORKER_TIMEOUT,"maxAudioSeconds":MAX_AUDIO_SECONDS,"maxConcurrent":AI_MAX_CONCURRENT_JOBS}))
 
 BACKEND_URL = os.environ.get("BACKEND_URL", "")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[BACKEND_URL] if BACKEND_URL else ["*"],
     allow_methods=["POST", "GET", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization"],
+    allow_headers=["Content-Type", "Authorization", "x-request-id"],
     allow_credentials=True,
 )
 
-WORKER_TIMEOUT = int(os.environ.get("AI_WORKER_TIMEOUT_SECONDS", "8"))
-MAX_AUDIO_SECONDS = int(os.environ.get("STT_MAX_AUDIO_SECONDS", "15"))
-MAX_AUDIO_B64_BYTES = int(os.environ.get("STT_MAX_BASE64_BYTES", "1200000"))
+WORKER_TIMEOUT = int(os.environ.get("AI_WORKER_TIMEOUT_SECONDS", "20"))
+MAX_AUDIO_SECONDS = int(os.environ.get("MAX_AUDIO_SECONDS", os.environ.get("STT_MAX_AUDIO_SECONDS", "20")))
+AI_MAX_CONCURRENT_JOBS = int(os.environ.get("AI_MAX_CONCURRENT_JOBS", "2"))
+ai_semaphore = asyncio.Semaphore(max(1, AI_MAX_CONCURRENT_JOBS))
 ALLOWED_INTENTS = {
     "customer.create", "customer.search", "customer.purchases",
     "product.create", "product.search", "sale.create", "sale.search",
@@ -40,59 +49,53 @@ class Example(BaseModel):
     entities: dict[str, Any]
 
 
-class STTInterpretRequest(BaseModel):
-    audio: str | None = None
-    text: str | None = None
-    history: list[Example] = []
-
-
 class STTInterpretResponse(BaseModel):
+    success: bool
     transcript: str
-    intent: str
-    entities: dict[str, Any]
-    confidence: float
-    summary: str
+    durationSeconds: float | None = None
+    detectedLanguage: str | None = None
+    intent: dict[str, Any]
 
 
-@app.get("/health")
-async def health():
-    worker_path = Path(__file__).parent / "worker_transcribe.py"
-    return {"status": "ok", "worker_available": worker_path.exists()}
+from typing import Any as _Any
 
+whisper_model: _Any | None = None
 
-async def transcribe_with_subprocess(audio_base64: str, timeout: int) -> str:
-    worker_path = Path(__file__).parent / "worker_transcribe.py"
-    if not worker_path.exists():
-        raise HTTPException(status_code=500, detail="Worker script not found")
+def patch_ctranslate_execstack_once() -> None:
+    if os.environ.get("CTRANSLATE_EXECSTACK_PATCHED") == "1":
+        return
 
-    if len(audio_base64) > MAX_AUDIO_B64_BYTES:
-        raise HTTPException(status_code=413, detail="Audio payload too large")
-
-    approx_seconds = int((len(audio_base64) * 3 / 4) / 3000)
-    if approx_seconds > MAX_AUDIO_SECONDS:
-        raise HTTPException(status_code=413, detail="Audio duration exceeds limit")
-
-    input_data = json.dumps({"audio": audio_base64, "model_size": os.environ.get("WHISPER_MODEL", "base")})
-
-    process = await asyncio.create_subprocess_exec(
-        "python", str(worker_path),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
     try:
-        stdout, stderr = await asyncio.wait_for(process.communicate(input=input_data.encode()), timeout=timeout)
-    except asyncio.TimeoutError:
-        process.kill()
-        raise HTTPException(status_code=504, detail="Transcription timeout")
+        import glob
+        import site
 
-    if process.returncode != 0:
-        raise HTTPException(status_code=500, detail=f"Worker failed: {stderr.decode() if stderr else 'unknown'}")
+        patched = 0
+        for root in site.getsitepackages():
+            for so_path in glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True):
+                try:
+                    subprocess.run(["patchelf", "--clear-execstack", so_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    patched += 1
+                except Exception:
+                    continue
 
-    result = json.loads(stdout.decode())
-    if not result.get("success"):
-        raise HTTPException(status_code=500, detail=result.get("error", "Transcription failed"))
-    return str(result.get("transcription", "")).strip()
+        os.environ["CTRANSLATE_EXECSTACK_PATCHED"] = "1"
+        print(json.dumps({"event": "ctranslate_patch", "patched": patched}))
+    except Exception as err:
+        print(json.dumps({"event": "ctranslate_patch_error", "message": str(err)}))
+
+
+def get_whisper_model():
+    global whisper_model
+    if whisper_model is None:
+        patch_ctranslate_execstack_once()
+        from faster_whisper import WhisperModel
+        model_size = os.environ.get("WHISPER_MODEL", "base")
+        whisper_model = WhisperModel(model_size, device="cpu", compute_type="int8")
+    return whisper_model
+
+
+def fail(status_code: int, error_code: str, request_id: str):
+    raise HTTPException(status_code=status_code, detail={"success": False, "error": error_code, "requestId": request_id})
 
 
 def normalize(text: str) -> str:
@@ -186,41 +189,183 @@ def summary_for(intent: str, entities: dict[str, Any]) -> str:
     return f"Voy a ejecutar {intent}."
 
 
-@app.post("/api/stt/interpret", response_model=STTInterpretResponse)
-async def stt_interpret(request: STTInterpretRequest):
-    transcript = request.text.strip() if request.text else ""
-    if not transcript:
-      if not request.audio:
-          raise HTTPException(status_code=400, detail="audio or text required")
-      transcript = await transcribe_with_subprocess(request.audio, WORKER_TIMEOUT)
-
-    learned_intent, learned_entities, learned_conf = maybe_learned_override(transcript, request.history)
-    if learned_intent:
-        intent = learned_intent
-        entities = learned_entities
-        confidence = learned_conf
-    else:
-        intent, entities, confidence = parse_intent(transcript)
-
-    if intent == "blocked":
-        raise HTTPException(status_code=403, detail="Intent blocked by privacy policy")
-
-    if intent == "provider.purchases":
-        raise HTTPException(status_code=400, detail="Compras a proveedor no soportado por voz en este flujo")
-
-    if intent not in ALLOWED_INTENTS:
-        raise HTTPException(status_code=400, detail="Intent not allowed")
-
-    return STTInterpretResponse(
-        transcript=transcript,
-        intent=intent,
-        entities=entities,
-        confidence=confidence,
-        summary=summary_for(intent, entities),
+async def convert_to_wav(input_path: str, output_path: str):
+    process = await asyncio.create_subprocess_exec(
+        "ffmpeg", "-y", "-i", input_path, "-ac", "1", "-ar", "16000", output_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
     )
+    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=WORKER_TIMEOUT)
+    if process.returncode != 0:
+        raise RuntimeError((stderr or stdout or b"ffmpeg_failed").decode(errors="ignore"))
+
+
+async def probe_duration_seconds(wav_path: str) -> float | None:
+    process = await asyncio.create_subprocess_exec(
+        "ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "json", wav_path,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await asyncio.wait_for(process.communicate(), timeout=WORKER_TIMEOUT)
+    if process.returncode != 0:
+        return None
+
+    try:
+        payload = json.loads((stdout or b"{}").decode())
+        duration_raw = payload.get("format", {}).get("duration")
+        duration = float(duration_raw)
+        if math.isnan(duration) or duration <= 0:
+            return None
+        return duration
+    except Exception:
+        return None
+
+
+async def transcribe_wav(wav_path: str) -> tuple[str, str | None]:
+    model = get_whisper_model()
+
+    def _run() -> tuple[str, str | None]:
+        segments, info = model.transcribe(wav_path, language="es", beam_size=5)
+        text = " ".join(segment.text for segment in segments).strip()
+        lang = getattr(info, "language", None)
+        return text, lang
+
+    return await asyncio.to_thread(_run)
+
+
+@app.get("/health")
+async def health():
+    worker_path = Path(__file__).parent / "worker_transcribe.py"
+    return {"ok": True, "service": "ai", "status": "ok", "worker_available": worker_path.exists()}
+
+
+
+
+async def _stt_interpret_internal(
+    audio: UploadFile | None,
+    text: str | None,
+    history: str | None,
+    request_id: str,
+):
+    acquired_slot = False
+    try:
+        await asyncio.wait_for(ai_semaphore.acquire(), timeout=0.05)
+        acquired_slot = True
+    except TimeoutError:
+        fail(429, "AI_BUSY", request_id)
+
+    try:
+        print(json.dumps({"event":"stt_request","requestId":request_id,"hasAudio":bool(audio),"hasText":bool((text or "").strip())}))
+        parsed_history_raw = json.loads(history or "[]")
+        parsed_history = [Example(**item) for item in parsed_history_raw if isinstance(item, dict)]
+    except Exception:
+        fail(400, "AI_INVALID_HISTORY", request_id)
+
+    transcript = (text or "").strip()
+    duration_seconds: float | None = None
+    detected_language: str | None = None
+
+    temp_input = None
+    temp_wav = None
+    try:
+        if not transcript:
+            if not audio:
+                fail(400, "AI_INVALID_AUDIO", request_id)
+
+            suffix = Path(audio.filename or "audio.webm").suffix or ".webm"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as f:
+                while True:
+                    chunk = await audio.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                if f.tell() <= 0:
+                    fail(400, "AI_INVALID_AUDIO", request_id)
+                temp_input = f.name
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fw:
+                temp_wav = fw.name
+
+            try:
+                await convert_to_wav(temp_input, temp_wav)
+            except Exception:
+                fail(400, "AI_INVALID_AUDIO", request_id)
+
+            duration_seconds = await probe_duration_seconds(temp_wav)
+            if duration_seconds is None:
+                fail(400, "AI_INVALID_AUDIO", request_id)
+            if duration_seconds > MAX_AUDIO_SECONDS:
+                fail(413, "AI_AUDIO_TOO_LONG", request_id)
+
+            transcript, detected_language = await transcribe_wav(temp_wav)
+            if not transcript:
+                fail(400, "AI_INVALID_AUDIO", request_id)
+
+        learned_intent, learned_entities, learned_conf = maybe_learned_override(transcript, parsed_history)
+        if learned_intent:
+            intent_name = learned_intent
+            entities = learned_entities
+            confidence = learned_conf
+        else:
+            intent_name, entities, confidence = parse_intent(transcript)
+
+        if intent_name == "blocked":
+            fail(403, "AI_INTENT_BLOCKED", request_id)
+        if intent_name == "provider.purchases":
+            fail(400, "AI_PROVIDER_PURCHASES_NOT_SUPPORTED", request_id)
+        if intent_name not in ALLOWED_INTENTS:
+            fail(400, "AI_INTENT_NOT_ALLOWED", request_id)
+
+        return STTInterpretResponse(
+            success=True,
+            transcript=transcript,
+            durationSeconds=duration_seconds,
+            detectedLanguage=detected_language,
+            intent={
+                "name": intent_name,
+                "entities": entities,
+                "confidence": confidence,
+                "summary": summary_for(intent_name, entities),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception as err:
+        print(json.dumps({"event":"stt_error","requestId":request_id,"message":str(err)}))
+        fail(500, "AI_SERVICE_UNAVAILABLE", request_id)
+    finally:
+        if acquired_slot:
+            ai_semaphore.release()
+        for tmp in [temp_input, temp_wav]:
+            if tmp and os.path.exists(tmp):
+                try:
+                    os.unlink(tmp)
+                except Exception:
+                    pass
+
+@app.post("/api/stt/interpret", response_model=STTInterpretResponse)
+async def stt_interpret(
+    audio: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    history: str | None = Form(default="[]"),
+    x_request_id: str | None = Header(default=None),
+):
+    request_id = x_request_id or str(uuid.uuid4())
+    return await _stt_interpret_internal(audio, text, history, request_id)
+
+
+@app.post("/stt", response_model=STTInterpretResponse)
+async def stt_alias(
+    audio: UploadFile | None = File(default=None),
+    text: str | None = Form(default=None),
+    history: str | None = Form(default="[]"),
+    x_request_id: str | None = Header(default=None),
+):
+    request_id = x_request_id or str(uuid.uuid4())
+    return await _stt_interpret_internal(audio, text, history, request_id)
 
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", os.environ.get("AI_SERVICE_PORT", "8001")))
+    port = int(os.environ.get("PORT", os.environ.get("AI_SERVICE_PORT", "8000")))
     uvicorn.run(app, host="0.0.0.0", port=port)

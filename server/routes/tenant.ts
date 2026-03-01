@@ -7,7 +7,8 @@ import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
 import bcrypt from "bcryptjs";
-import { deleteTenantAtomic, generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { generateTenantExportZip, validateExportToken } from "../services/tenant-account";
+import { deleteTenantPermanent } from "../services/delete-tenant-permanent";
 import { evaluatePassword } from "../services/password-policy";
 import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-weak-cache";
 import { pool } from "../db";
@@ -24,7 +25,6 @@ const changePasswordSchema = z.object({
 const deleteTenantSchema = z.object({
   confirm: z.string().trim(),
   password: z.string().min(6).max(128),
-  exportBeforeDelete: z.boolean().optional().default(false),
 });
 
 const tenantConfigSchema = z.object({
@@ -256,9 +256,9 @@ export function registerTenantRoutes(app: Express) {
       const monthlyExpenses = monthlySummary ? monthlySummary.cashOutTotal : monthlyExpensesRaw;
       let allOrders;
       if (branchId) {
-        allOrders = await storage.getOrdersByBranch(tenantId, branchId);
+        allOrders = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
       } else {
-        allOrders = await storage.getOrders(tenantId);
+        allOrders = (await storage.getOrders(tenantId, { limit: 200 })).data;
       }
       const statuses = await storage.getOrderStatuses(tenantId);
       const pendingLikeStatusIds = new Set(
@@ -299,13 +299,13 @@ export function registerTenantRoutes(app: Express) {
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
       const monthlySummary = !branchId ? await getTenantMonthlyMetricsSummary(tenantId) : null;
 
-      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesByType, statuses, allOrders] = await Promise.all([
+      const [totalOrders, totalProducts, monthlyIncomeRaw, monthlyExpensesByType, statuses, allOrdersResult] = await Promise.all([
         storage.countOrders(tenantId, branchId),
         storage.countProducts(tenantId),
         storage.getMonthlyIncome(tenantId, branchId),
         storage.getMonthlyExpensesByType(tenantId, branchId),
         storage.getOrderStatuses(tenantId),
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
       ]);
 
       const pendingStatusIds = new Set(
@@ -325,6 +325,7 @@ export function registerTenantRoutes(app: Express) {
           .map((s: any) => s.id)
       );
 
+      const allOrders = allOrdersResult.data;
       const pendingCount = allOrders.filter((o: any) => o.statusId && pendingStatusIds.has(o.statusId)).length;
       const inProgressCount = allOrders.filter((o: any) => o.statusId && inProgressStatusIds.has(o.statusId)).length;
       const openCount = pendingCount + inProgressCount;
@@ -507,10 +508,11 @@ export function registerTenantRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const limit = Math.min(50, Math.max(1, Number(req.query.limit || 10)));
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
-      const [orders, statuses] = await Promise.all([
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+      const [ordersResult, statuses] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
         storage.getOrderStatuses(tenantId),
       ]);
+      const orders = ordersResult.data;
       const byId = new Map(statuses.map((s: any) => [s.id, String(s.name || "").toUpperCase()]));
       const pending = orders.filter((o: any) => ["PENDIENTE", "PENDING"].includes(byId.get(o.statusId) || "")).slice(0, limit);
       const inProgress = orders.filter((o: any) => ["EN PROCESO", "EN_PROCESO", "IN_PROGRESS"].includes(byId.get(o.statusId) || "")).slice(0, limit);
@@ -526,11 +528,12 @@ export function registerTenantRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const limit = Math.min(100, Math.max(1, Number(req.query.limit || 20)));
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId! : null;
-      const [orders, salesRows, cashRows] = await Promise.all([
-        branchId ? storage.getOrdersByBranch(tenantId, branchId) : storage.getOrders(tenantId),
+      const [ordersResult, salesRows, cashRows] = await Promise.all([
+        branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
         storage.listSales(tenantId, { branchId, limit, offset: 0 }),
         storage.getCashMovements(tenantId),
       ]);
+      const orders = ordersResult.data;
       const events = [
         ...orders.slice(0, limit).map((o: any) => ({ ts: o.updatedAt || o.createdAt, type: "ORDER", action: "updated", reference: `#${o.orderNumber || o.id}`, entityId: o.id })),
         ...salesRows.data.slice(0, limit).map((s: any) => ({ ts: s.createdAt, type: "SALE", action: "created", reference: s.number || `#${s.id}`, entityId: s.id })),
@@ -583,7 +586,8 @@ export function registerTenantRoutes(app: Express) {
         return res.status(403).json({ error: "Acceso denegado", code: "FORBIDDEN" });
       }
       const payload = deleteTenantSchema.parse(req.body || {});
-      if (payload.confirm !== "ELIMINAR MI CUENTA") {
+      const normalizedConfirm = String(payload.confirm || "").trim().toUpperCase();
+      if (normalizedConfirm !== "ELIMINAR MI EMPRESA") {
         return res.status(400).json({ error: "Confirmación inválida", code: "DELETE_CONFIRM_INVALID" });
       }
       const tenant = await storage.getTenantById(req.auth!.tenantId!);
@@ -597,26 +601,28 @@ export function registerTenantRoutes(app: Express) {
       const validPassword = await comparePassword(payload.password, user.password);
       if (!validPassword) return res.status(401).json({ error: "Password inválida", code: "PASSWORD_INVALID" });
 
-      let exportToken: string | undefined;
-      if (payload.exportBeforeDelete) {
-        const exportData = await generateTenantExportZip(req.auth!.tenantId!, req.auth!.userId);
-        exportToken = exportData.token;
-      }
+      const { deletedCounts, tenantTables } = await deleteTenantPermanent(req.auth!.tenantId!, req.auth!.userId, req.requestId || null);
+      console.info("[tenant] TENANT_DELETE_SUCCESS", { requestId: req.requestId, tenantId: req.auth!.tenantId!, actorUserId: req.auth!.userId, deletedCounts });
 
-      const deletedCounts = await deleteTenantAtomic(req.auth!.tenantId!);
       return res.json({
         deleted: true,
-        exportUrl: exportToken ? `/api/tenant/export/${exportToken}` : undefined,
         deletedCounts,
+        tenantTables,
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
       }
-      if (String(err?.message || "").includes("EXPORT")) {
-        return res.status(500).json({ error: "No se pudo generar exportación", code: "EXPORT_FAILED" });
-      }
-      return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR" });
+      console.error("[TENANT DELETE ERROR]", {
+        requestId: req.requestId || null,
+        route: req.path,
+        message: err?.message,
+        code: err?.code,
+        detail: err?.detail,
+        constraint: err?.constraint,
+        table: err?.table,
+      });
+      return res.status(500).json({ error: "No se pudo eliminar cuenta", code: "TENANT_DELETE_ERROR", requestId: req.requestId || null });
     }
   });
 

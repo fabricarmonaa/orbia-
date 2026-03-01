@@ -27,6 +27,9 @@ import { registerPurchaseCrudRoutes } from "./purchases";
 import { registerCustomerRoutes } from "./customers";
 import { registerOrderPresetRoutes } from "./order-presets";
 import { registerAttachmentRoutes } from "./attachments";
+import { registerAiRoutes } from "./ai";
+import { registerPublicRoutes } from "./public";
+import { registerAnalyticsRoutes } from "./analytics";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -34,6 +37,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   });
   registerStaticUploads(app);
   registerUploadRoutes(app);
+  registerPublicRoutes(app);
+  registerAnalyticsRoutes(app);
   registerAuthRoutes(app);
   registerSuperRoutes(app);
   registerTenantRoutes(app);
@@ -45,6 +50,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerCashRoutes(app);
   registerProductRoutes(app);
   registerSttRoutes(app);
+  registerAiRoutes(app);
   registerTrackingRoutes(app);
   registerDeliveryRoutes(app);
   registerBranchUserRoutes(app);

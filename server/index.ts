@@ -6,30 +6,41 @@ import { createServer } from "http";
 import { securityHeaders } from "./middleware/security-headers";
 import { corsGuard } from "./middleware/cors";
 import { HttpError } from "./lib/http-errors";
+import { requestContext } from "./middleware/request-context";
+import { captureServerError, initServerSentry } from "./observability/sentry";
+import { globalApiLimiter } from "./middleware/http-rate-limit";
+
+initServerSentry();
 
 const app = express();
 const httpServer = createServer(app);
 
+const REQUEST_BODY_LIMIT = process.env.REQUEST_BODY_LIMIT || "10mb";
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS || "30000");
+
 app.set("trust proxy", 1);
 app.use(securityHeaders);
 app.use(corsGuard);
+app.use(globalApiLimiter);
 
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
+    requestId?: string;
   }
 }
 
 app.use(
   express.json({
-    limit: "25mb",
+    limit: REQUEST_BODY_LIMIT,
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(express.urlencoded({ extended: false, limit: REQUEST_BODY_LIMIT }));
+app.use(requestContext);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -56,7 +67,7 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
+      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms [${req.requestId || "n/a"}]`;
       if (capturedJsonResponse && process.env.NODE_ENV !== "production") {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
@@ -81,7 +92,7 @@ app.use((req, res, next) => {
 
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const isHttpError = err instanceof HttpError;
     const status = isHttpError ? err.status : (err.status || err.statusCode || 500);
     const code = isHttpError
@@ -90,7 +101,10 @@ app.use((req, res, next) => {
     const message = status >= 500 ? "Error interno del servidor" : err.message || "Solicitud inválida";
 
     if (status >= 500) {
+      captureServerError(err, { requestId: req.requestId, route: req.path, status, code });
       console.error("[global-error-handler] Unhandled error:", {
+        requestId: req.requestId,
+        route: req.path,
         status,
         code,
         message: err?.message,
@@ -102,7 +116,7 @@ app.use((req, res, next) => {
       return next(err);
     }
 
-    const payload: Record<string, unknown> = { error: message, code };
+    const payload: Record<string, unknown> = { error: message, code, requestId: req.requestId || null };
     if (isHttpError && err.extra) {
       Object.assign(payload, err.extra);
     }
@@ -148,6 +162,8 @@ app.use((req, res, next) => {
   });
 
   const PORT = parseInt(process.env.PORT || "5000");
+  httpServer.requestTimeout = REQUEST_TIMEOUT_MS;
+  httpServer.headersTimeout = REQUEST_TIMEOUT_MS + 5000;
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     log(`Server running on port ${PORT}`);

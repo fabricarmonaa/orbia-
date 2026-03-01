@@ -4,6 +4,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ClipboardList, Wallet, Package, TrendingUp, TrendingDown } from "lucide-react";
 
+type DashboardAnalytics = {
+  avgTicket: number;
+  staleProducts60d: number;
+  topProductMonth: { name: string; units: number } | null;
+};
+
 type DashboardSummary = {
   orders: {
     openCount: number;
@@ -33,12 +39,24 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<DashboardSummary>(ZERO_SUMMARY);
+  const [analytics, setAnalytics] = useState<DashboardAnalytics>({ avgTicket: 0, staleProducts60d: 0, topProductMonth: null });
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await apiRequest("GET", "/api/dashboard/summary");
+        const [res, analyticsRes] = await Promise.all([
+          apiRequest("GET", "/api/dashboard/summary"),
+          apiRequest("GET", "/api/analytics/dashboard"),
+        ]);
         const json = await res.json();
+        const analyticsJson = await analyticsRes.json().catch(() => ({} as any));
+        if (analyticsRes.ok && analyticsJson?.data) {
+          setAnalytics({
+            avgTicket: Number(analyticsJson.data.avgTicket || 0),
+            staleProducts60d: Number(analyticsJson.data.staleProducts60d || 0),
+            topProductMonth: analyticsJson.data.topProductMonth || null,
+          });
+        }
         if (res.ok && json) {
           setSummary({
             orders: {
@@ -82,10 +100,22 @@ export default function Dashboard() {
         icon: Wallet,
       },
       {
-        title: "Egresos del Mes",
-        value: `$${summary.cash.monthExpense.toLocaleString("es-AR")}`,
-        subtitle: "Mes actual",
-        icon: Wallet,
+        title: "Ticket promedio",
+        value: `$${analytics.avgTicket.toLocaleString("es-AR", { maximumFractionDigits: 2 })}`,
+        subtitle: "Promedio por venta",
+        icon: TrendingUp,
+      },
+      {
+        title: "Sin ventas 60 días",
+        value: analytics.staleProducts60d.toLocaleString("es-AR"),
+        subtitle: "Productos para revisar",
+        icon: TrendingDown,
+      },
+      {
+        title: "Top producto del mes",
+        value: analytics.topProductMonth?.name || "Sin datos",
+        subtitle: analytics.topProductMonth ? `${analytics.topProductMonth.units} unidades` : "Mes actual",
+        icon: Package,
       },
       {
         title: "Productos",
@@ -94,7 +124,7 @@ export default function Dashboard() {
         icon: Package,
       },
     ],
-    [summary]
+    [summary, analytics]
   );
 
   return (
@@ -104,9 +134,9 @@ export default function Dashboard() {
         <p className="text-muted-foreground">Bienvenido, {user?.fullName}</p>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         {loading
-          ? [1, 2, 3, 4].map((i) => (
+          ? [1, 2, 3, 4, 5, 6].map((i) => (
             <Card key={i}>
               <CardContent className="pt-6"><Skeleton className="h-16 w-full" /></CardContent>
             </Card>

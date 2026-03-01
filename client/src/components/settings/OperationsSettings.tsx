@@ -10,6 +10,7 @@ import { generateMonthlySummary, type MonthlySummaryResponse } from "@/lib/repor
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
+import * as XLSX from "xlsx";
 
 export function OperationsSettings() {
   const [, setLocation] = useLocation();
@@ -58,13 +59,18 @@ export function OperationsSettings() {
 
   function downloadSummary() {
     if (!summary) return;
-    const blob = new Blob([JSON.stringify(summary, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `resumen-${summary.year}-${String(summary.month).padStart(2, "0")}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
+    const rows = [{
+      "Año": summary.year,
+      "Mes": summary.month,
+      "Resultado neto": Number(summary.totalsJson.net.toFixed(2)),
+      "Ingresos": Number(summary.totalsJson.income.toFixed(2)),
+      "Egresos": Number(summary.totalsJson.expenses.toFixed(2)),
+      "Costos fijos": Number(summary.totalsJson.fixedImpact.toFixed(2)),
+    }];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "Resumen");
+    XLSX.writeFile(wb, `resumen-${summary.year}-${String(summary.month).padStart(2, "0")}.xlsx`);
   }
 
   return (
@@ -145,7 +151,7 @@ export function OperationsSettings() {
                   </p>
                   <Button variant="ghost" size="sm" onClick={downloadSummary}>
                     <Download className="w-4 h-4 mr-2" />
-                    Descargar JSON
+                    Descargar Excel
                   </Button>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 text-sm">
