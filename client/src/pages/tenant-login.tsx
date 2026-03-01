@@ -79,9 +79,9 @@ export default function TenantLogin() {
         </div>
         <Card>
           <CardHeader className="pb-4">
-            <h2 className="text-lg font-semibold">Iniciar sesión</h2>
+            <h2 className="text-lg font-semibold">Te damos la bienvenida al sistema</h2>
             <p className="text-sm text-muted-foreground">
-              Ingresá con tu código de negocio y credenciales
+              Ingresá los datos de tu comercio y abrí la caja para empezar.
             </p>
           </CardHeader>
           <CardContent>

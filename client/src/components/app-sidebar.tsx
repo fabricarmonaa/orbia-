@@ -158,9 +158,9 @@ export function AppSidebar() {
       </SidebarContent>
       <SidebarFooter className="p-4">
         <div className="flex items-center gap-3">
-          <Avatar className="w-8 h-8 flex-shrink-0">
+          <Avatar className="w-8 h-8 flex-shrink-0 border border-primary/20">
             <AvatarImage src={user?.avatarUrl || undefined} alt={user?.fullName || "Usuario"} />
-            <AvatarFallback className="text-xs">{initials}</AvatarFallback>
+            <AvatarFallback className="text-xs bg-primary/10 text-primary font-bold">{initials}</AvatarFallback>
           </Avatar>
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium truncate">{user?.fullName}</p>

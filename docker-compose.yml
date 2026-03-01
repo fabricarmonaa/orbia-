@@ -51,13 +51,14 @@ services:
       SEED: "${SEED}"
     ports:
       - "5000:5000"
-    command: [ "sh", "docker-entrypoint-web.sh" ]
     restart: unless-stopped
 
   landing:
     build:
       context: .
       dockerfile: Dockerfile.landing
+      args:
+        VITE_APP_API_URL: "http://localhost:5000"
     container_name: orbia-landing
     ports:
       - "5001:80"

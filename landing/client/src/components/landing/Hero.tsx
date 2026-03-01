@@ -26,12 +26,12 @@ export function Hero() {
             </div>
 
             <h1 className="text-4xl sm:text-5xl lg:text-7xl font-extrabold text-foreground tracking-tighter leading-[1.05] mb-6 text-balance font-display">
-              Controlá tu negocio <br className="hidden lg:block" />
-              <span className="gradient-text">sin vueltas.</span>
+              Poné tu negocio <br className="hidden lg:block" />
+              <span className="gradient-text">en marcha.</span>
             </h1>
 
             <p className="text-lg sm:text-xl text-muted-foreground mb-8 max-w-2xl mx-auto lg:mx-0 text-balance leading-relaxed font-medium">
-              Gestioná pedidos, caja, ventas y clientes. <span className="text-foreground">Orbia</span> es un sistema descargable que te da el control total en cualquier dispositivo.
+              Olvidate de los cuadernos y el desorden. <span className="text-foreground">Orbia</span> te brinda el control absoluto de tus ventas, stock y clientes, de forma simple y en cualquier dispositivo.
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
@@ -85,8 +85,8 @@ export function Hero() {
                 <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-600"><polyline points="20 6 9 17 4 12"></polyline></svg>
               </div>
               <div>
-                <p className="text-sm font-bold text-foreground">Venta registrada</p>
-                <p className="text-xs text-muted-foreground">Hace unos segundos</p>
+                <p className="text-sm font-bold text-foreground">Venta procesada</p>
+                <p className="text-xs text-muted-foreground">Caja actualizada</p>
               </div>
             </div>
           </motion.div>

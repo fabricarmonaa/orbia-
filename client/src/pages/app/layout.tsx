@@ -128,31 +128,54 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
               <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
-                            {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/sales">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/products">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/customers">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
               {user?.role !== "CASHIER" && <Route path="/app/reports/cash">{() => { window.location.replace('/app/cash?tab=movements'); return null; }}</Route>}
-                                                                                    {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
+              {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
           <Dialog open={onboardingOpen} onOpenChange={setOnboardingOpen}>
-            <DialogContent>
+            <DialogContent className="sm:max-w-md">
               <DialogHeader>
-                <DialogTitle>Bienvenido a Orbia</DialogTitle>
-                <DialogDescription>Completá estos pasos para activar tu negocio rápido.</DialogDescription>
+                <DialogTitle className="text-2xl font-bold font-display tracking-tight">
+                  Hola {user?.fullName?.split(' ')[0] || 'comerciante'}, bienvenido a Orbia
+                </DialogTitle>
+                <DialogDescription className="text-base mt-2">
+                  Es un gusto tenerte acá. Completá estos 3 pasos rápidos para poner en marcha tu negocio.
+                </DialogDescription>
               </DialogHeader>
-              <ol className="list-decimal pl-5 text-sm space-y-2">
-                <li>Completar perfil del negocio (ajustes).</li>
-                <li>Confirmar tu primera sucursal.</li>
-                <li>Cargar tu primer producto.</li>
-                <li>Ir al POS y registrar una venta demo.</li>
-              </ol>
-              <DialogFooter>
-                <Button variant="outline" onClick={dismissOnboarding}>Saltar</Button>
-                <Button onClick={() => { setOnboardingOpen(false); setLocation("/app/settings"); }}>Empezar</Button>
+              <div className="space-y-4 py-4">
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-primary/20 bg-primary/5">
+                  <div className="h-8 w-8 rounded-full bg-primary/20 text-primary flex items-center justify-center font-bold">1</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Perfil del negocio</h4>
+                    <p className="text-sm text-muted-foreground">Configurá el nombre, logo y datos de tu empresa en los ajustes.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-border">
+                  <div className="h-8 w-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold">2</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Tu primer producto</h4>
+                    <p className="text-sm text-muted-foreground">Agregá tu producto estrella al catálogo con su precio y stock inicial.</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-4 p-3 rounded-lg border border-border">
+                  <div className="h-8 w-8 rounded-full bg-muted text-muted-foreground flex items-center justify-center font-bold">3</div>
+                  <div>
+                    <h4 className="font-semibold text-foreground">Venta inaugural</h4>
+                    <p className="text-sm text-muted-foreground">Abrí el Punto de Venta (POS) y registrá tu primera venta de prueba.</p>
+                  </div>
+                </div>
+              </div>
+              <DialogFooter className="flex-col sm:flex-row gap-2 mt-4">
+                <Button variant="ghost" onClick={dismissOnboarding} className="sm:mr-auto">Saltar por ahora</Button>
+                <Button onClick={() => { setOnboardingOpen(false); setLocation("/app/settings"); }} className="font-semibold">
+                  Vamos a empezar
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>

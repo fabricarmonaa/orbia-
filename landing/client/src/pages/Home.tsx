@@ -9,6 +9,8 @@ import { SignupTrial } from "@/components/landing/SignupTrial";
 import { Faq } from "@/components/landing/Faq";
 import { Footer } from "@/components/landing/Footer";
 
+import { TargetAudiences } from "@/components/landing/TargetAudiences";
+
 export default function Home() {
   return (
     <div className="min-h-screen bg-background">
@@ -16,6 +18,7 @@ export default function Home() {
       <main>
         <Hero />
         <Features />
+        <TargetAudiences />
         <Showcase />
         <Pricing />
         <SignupTrial />

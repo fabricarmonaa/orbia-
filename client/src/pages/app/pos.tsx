@@ -289,8 +289,8 @@ export default function PosPage() {
         const body = await res.json().catch(() => ({} as any));
         if (body?.code === "INSUFFICIENT_STOCK") {
           toast({
-            title: "Stock insuficiente",
-            description: `Producto #${body.product_id}: disponible ${body.available ?? "?"}, solicitado ${body.requested ?? "?"}`,
+            title: "Sin disponibilidad de stock",
+            description: `El stock del producto #${body.product_id} es insuficiente para esta venta (Disponible: ${body.available ?? 0}).`,
             variant: "destructive",
           });
         } else {
@@ -391,8 +391,9 @@ export default function PosPage() {
                 </div>
               ))}
               {products.length === 0 ? (
-                <div className="text-sm text-muted-foreground border rounded p-3">
-                  No hay productos para mostrar. Cargá productos o buscá con otro término.
+                <div className="text-sm text-muted-foreground border rounded p-6 text-center shadow-sm bg-muted/20">
+                  <p className="font-semibold text-foreground mb-1">Tu lista está vacía</p>
+                  <p>Buscá por nombre, código o usá tu escáner para empezar a agregar productos al carrito.</p>
                 </div>
               ) : null}
             </div>
