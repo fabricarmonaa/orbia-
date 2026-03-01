@@ -2,19 +2,26 @@ import type { Express } from "express";
 import { storage } from "../storage";
 import { tenantAuth, enforceBranchScope } from "../auth";
 import { z } from "zod";
-import { randomUUID } from "crypto";
+import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
-import { validateBody, validateParams } from "../middleware/validate";
-import { getDefaultStatus, resolveOrderStatusIdByCode, ensureStatusExists, normalizeStatusCode } from "../services/statuses";
+import { validateBody, validateParams, validateQuery } from "../middleware/validate";
+import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusId, normalizeDeliveryStatus } from "../services/statuses";
 import { db } from "../db";
 import { and, count, eq } from "drizzle-orm";
 import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
+import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
+import { generatePublicToken } from "../utils/public-token";
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
+const ordersListQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+  page: z.coerce.number().int().min(1).optional(),
+  cursor: z.string().min(1).optional(),
+});
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess(
@@ -92,16 +99,15 @@ const updateOrderSchema = z.object({
 
 
 export function registerOrderRoutes(app: Express) {
-  app.get("/api/orders", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/orders", tenantAuth, enforceBranchScope, validateQuery(ordersListQuerySchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      let data;
-      if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
-        data = await storage.getOrdersByBranch(tenantId, req.auth!.branchId);
-      } else {
-        data = await storage.getOrders(tenantId);
-      }
-      res.json({ data });
+      const query = ordersListQuerySchema.parse(req.query || {});
+      const pagination = { limit: query.limit, page: query.page, cursor: query.cursor };
+      const result = (req.auth!.scope === "BRANCH" && req.auth!.branchId)
+        ? await storage.getOrdersByBranch(tenantId, req.auth!.branchId, pagination)
+        : await storage.getOrders(tenantId, pagination);
+      res.json({ data: result.data, items: result.data, meta: result.meta });
     } catch (err: any) {
       if (err instanceof HttpError) {
         return res.status(err.status).json({ error: { code: err.code, message: err.message } });
@@ -133,8 +139,7 @@ export function registerOrderRoutes(app: Express) {
       const orderNumber = await storage.getNextOrderNumber(tenantId);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (payload.branchId || null);
       const defaultOrderStatus = await getDefaultStatus(tenantId, "ORDER");
-      const resolvedCreateStatusId = payload.statusId
-        || (payload.statusCode ? await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(payload.statusCode)) : null)
+      const resolvedCreateStatusId = (await resolveCanonicalOrderStatusId({ tenantId, statusId: payload.statusId || null, statusCode: payload.statusCode || null }))
         || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
         || null;
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
@@ -162,7 +167,7 @@ export function registerOrderRoutes(app: Express) {
           deliveryAddress: payload.deliveryAddress || null,
           deliveryCity: payload.deliveryCity || null,
           deliveryAddressNotes: payload.deliveryAddressNotes || null,
-          deliveryStatus: payload.requiresDelivery ? "pending" : null,
+          deliveryStatus: payload.requiresDelivery ? normalizeDeliveryStatus("PENDING").toLowerCase() : null,
           orderPresetId: payload.orderPresetId || null,
         }).returning();
 
@@ -277,20 +282,13 @@ export function registerOrderRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
       const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
-      let resolvedStatusId = statusId || null;
-      if (!resolvedStatusId && statusCode) {
-        const normalizedCode = normalizeStatusCode(statusCode);
-        await ensureStatusExists(tenantId, "ORDER", normalizedCode);
-        resolvedStatusId = await resolveOrderStatusIdByCode(tenantId, normalizedCode);
-      }
+      const resolvedStatusId = await resolveCanonicalOrderStatusId({ tenantId, statusId: statusId || null, statusCode: statusCode || null });
       if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
-      const order = await storage.getOrderById(orderId, tenantId);
-      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
-        return res.status(403).json({ error: "No tenés acceso a este pedido" });
-      }
-      await storage.updateOrderStatus(orderId, tenantId, resolvedStatusId);
-      await storage.createOrderHistory({
+      const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
+      if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
+      const order = scopeCheck.order;
+
+      await changeOrderStatusWithHistory({
         tenantId,
         orderId,
         statusId: resolvedStatusId,
@@ -380,7 +378,7 @@ export function registerOrderRoutes(app: Express) {
         orderId,
         userId: req.auth!.userId,
         content: payload.content,
-        isPublic: payload.isPublic || false,
+        isPublic: payload.isPublic ?? true,
       });
       res.status(201).json({ data });
     } catch (err: any) {
@@ -433,7 +431,7 @@ export function registerOrderRoutes(app: Express) {
       if (!order.publicTrackingId) {
         const config = await storage.getConfig(tenantId);
         const hours = config?.trackingExpirationHours || 24;
-        const trackingId = randomUUID();
+        const trackingId = generatePublicToken();
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
         order.publicTrackingId = trackingId as any;
@@ -472,6 +470,64 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
+  app.get("/api/orders/:id/ticket-pdf", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = req.params.id as unknown as number;
+      const width = String(req.query.width || "80") === "58" ? 58 : 80;
+      const order = await storage.getOrderById(orderId, tenantId);
+      if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      if (req.auth!.scope === "BRANCH" && order.branchId !== req.auth!.branchId) {
+        return res.status(403).json({ error: "No tenés acceso a este pedido" });
+      }
+
+      const [tenant, branding, statuses] = await Promise.all([
+        storage.getTenantById(tenantId),
+        storage.getTenantBranding(tenantId),
+        storage.getOrderStatuses(tenantId),
+      ]);
+      const status = statuses.find((s) => s.id === order.statusId);
+
+      if (!order.publicTrackingId) {
+        const config = await storage.getConfig(tenantId);
+        const hours = config?.trackingExpirationHours || 24;
+        const trackingId = generatePublicToken();
+        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
+        await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
+        order.publicTrackingId = trackingId as any;
+      }
+
+      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
+      const trackUrl = `${base || ""}/tracking/${order.publicTrackingId}`;
+
+      const pdf = await buildThermalTicketPdf({
+        widthMm: width,
+        companyName: branding.displayName || tenant?.name || "ORBIA",
+        ticketLabel: "Pedido",
+        ticketNumber: String(order.orderNumber),
+        datetime: String(order.createdAt),
+        customerName: order.customerName,
+        customerPhone: order.customerPhone,
+        items: [{ qty: 1, name: String(order.type || "Pedido"), price: String(order.totalAmount || "") }],
+        total: String(order.totalAmount || "0"),
+        qrUrl: trackUrl,
+        notes: order.description,
+        footerText: status?.name ? `Estado: ${status.name}` : undefined,
+      });
+
+      res.setHeader("X-Frame-Options", "SAMEORIGIN");
+      res.setHeader(
+        "Content-Security-Policy",
+        "default-src 'self'; frame-ancestors 'self'; object-src 'none'; base-uri 'self'"
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=\"pedido-${order.orderNumber}-${width}mm.pdf\"`);
+      return res.send(pdf);
+    } catch {
+      return res.status(500).json({ error: "No se pudo generar ticket PDF", code: "ORDER_TICKET_PDF_ERROR", requestId: req.requestId || null });
+    }
+  });
+
   app.post("/api/orders/:id/tracking-link", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
@@ -480,7 +536,7 @@ export function registerOrderRoutes(app: Express) {
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
       const config = await storage.getConfig(tenantId);
       const hours = config?.trackingExpirationHours || 24;
-      const trackingId = randomUUID();
+      const trackingId = generatePublicToken();
       const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
       await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
       res.json({ data: { publicTrackingId: trackingId, expiresAt } });

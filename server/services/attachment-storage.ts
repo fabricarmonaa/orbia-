@@ -83,6 +83,7 @@ export async function validateAndStoreAttachment(
     const absoluteDestPath = path.join(STORAGE_ROOT, relativeFilePath);
 
     let attachmentId: number | null = null;
+    let oldAttachmentPath: string | null = null;
 
     // 6. Mover archivo e insertar en la base de datos atómicamente
     try {
@@ -118,8 +119,20 @@ export async function validateAndStoreAttachment(
             const storageKey = `att:${attachment.id}`;
 
             if (existingFieldValue) {
-                // Podríamos eliminar el adjunto anterior físicamente aquí
-                // Por diseño los mantenemos en order_attachments para el historial
+                const previousStorageKey = String(existingFieldValue.fileStorageKey || "");
+                const match = previousStorageKey.match(/^att:(\d+)$/);
+                if (match) {
+                    const previousAttachmentId = Number(match[1]);
+                    const [previousAttachment] = await tx
+                        .select()
+                        .from(orderAttachments)
+                        .where(and(eq(orderAttachments.id, previousAttachmentId), eq(orderAttachments.orderId, orderId), eq(orderAttachments.tenantId, tenantId)));
+                    if (previousAttachment?.storagePath) {
+                        oldAttachmentPath = previousAttachment.storagePath;
+                    }
+                    await tx.delete(orderAttachments).where(eq(orderAttachments.id, previousAttachmentId));
+                }
+
                 await tx
                     .update(orderFieldValues)
                     .set({ fileStorageKey: storageKey })
@@ -134,8 +147,12 @@ export async function validateAndStoreAttachment(
             }
         });
 
-        // Deshacemos el rename manual (Mover desde el temporal a la carpeta segura)
         await fs.rename(tmpPath, absoluteDestPath);
+
+        if (oldAttachmentPath) {
+            const oldAbsPath = path.join(STORAGE_ROOT, path.normalize(oldAttachmentPath).replace(/^(\.\.(\/|\\|$))+/, ""));
+            await fs.unlink(oldAbsPath).catch(() => { });
+        }
     } catch (error) {
         // Si falla la transacción o el rename, nos aseguramos de borrar el tmp
         await fs.unlink(tmpPath).catch(() => { });

@@ -165,17 +165,20 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
     .from(orderFieldDefinitions)
     .where(and(eq(orderFieldDefinitions.tenantId, tenantId), inArray(orderFieldDefinitions.id, defIds)));
   const map = new Map(defs.map((d) => [d.id, d]));
-  return values.map((v) => ({
-    fieldId: v.fieldDefinitionId,
-    fieldKey: map.get(v.fieldDefinitionId)?.fieldKey || null,
-    label: map.get(v.fieldDefinitionId)?.label || null,
-    fieldType: map.get(v.fieldDefinitionId)?.fieldType || null,
-    required: map.get(v.fieldDefinitionId)?.required ?? false,
-    visibleInTracking: map.get(v.fieldDefinitionId)?.visibleInTracking ?? false,
-    valueText: v.valueText,
-    valueNumber: v.valueNumber,
-    fileStorageKey: v.fileStorageKey,
-    visibleOverride: v.visibleOverride,
-    config: map.get(v.fieldDefinitionId)?.config || null,
-  }));
+  return values
+    .map((v) => ({
+      fieldId: v.fieldDefinitionId,
+      fieldKey: map.get(v.fieldDefinitionId)?.fieldKey || null,
+      label: map.get(v.fieldDefinitionId)?.label || null,
+      fieldType: map.get(v.fieldDefinitionId)?.fieldType || null,
+      required: map.get(v.fieldDefinitionId)?.required ?? false,
+      visibleInTracking: map.get(v.fieldDefinitionId)?.visibleInTracking ?? false,
+      valueText: v.valueText,
+      valueNumber: v.valueNumber,
+      fileStorageKey: v.fileStorageKey,
+      visibleOverride: v.visibleOverride,
+      createdAt: v.createdAt,
+      config: map.get(v.fieldDefinitionId)?.config || null,
+    }))
+    .sort((a, b) => +new Date(String(b.createdAt || 0)) - +new Date(String(a.createdAt || 0)));
 }

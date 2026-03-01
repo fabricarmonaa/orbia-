@@ -20,7 +20,7 @@ export const tenantCounters = pgTable(
   "tenant_counters",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
     key: varchar("key", { length: 50 }).notNull(),
     value: integer("value").notNull().default(0),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -32,8 +32,8 @@ export const sales = pgTable(
   "sales",
   {
     id: serial("id").primaryKey(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
-    branchId: integer("branch_id").references(() => branches.id),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     cashierUserId: integer("cashier_user_id"),
     saleNumber: varchar("sale_number", { length: 30 }).notNull(),
     saleDatetime: timestamp("sale_datetime").defaultNow().notNull(),
@@ -48,7 +48,7 @@ export const sales = pgTable(
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }).notNull(),
     paymentMethod: varchar("payment_method", { length: 30 }).notNull(),
     notes: text("notes"),
-    customerId: integer("customer_id").references(() => customers.id),
+    customerId: integer("customer_id").references(() => customers.id, { onDelete: "set null" }),
     publicToken: varchar("public_token", { length: 120 }),
     publicTokenCreatedAt: timestamp("public_token_created_at"),
     publicTokenExpiresAt: timestamp("public_token_expires_at"),
@@ -57,6 +57,7 @@ export const sales = pgTable(
   },
   (table) => [
     index("idx_sales_tenant").on(table.tenantId),
+    index("idx_sales_tenant_created").on(table.tenantId, table.createdAt),
     index("idx_sales_tenant_date").on(table.tenantId, table.saleDatetime),
     index("idx_sales_tenant_branch_date").on(table.tenantId, table.branchId, table.saleDatetime),
     uniqueIndex("uq_sales_tenant_number").on(table.tenantId, table.saleNumber),
@@ -68,8 +69,8 @@ export const saleItems = pgTable(
   {
     id: serial("id").primaryKey(),
     saleId: integer("sale_id").references(() => sales.id).notNull(),
-    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
-    branchId: integer("branch_id").references(() => branches.id),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+    branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
     productId: integer("product_id").references(() => products.id).notNull(),
     productNameSnapshot: varchar("product_name_snapshot", { length: 200 }).notNull(),
     skuSnapshot: varchar("sku_snapshot", { length: 100 }),

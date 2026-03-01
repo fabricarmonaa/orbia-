@@ -51,7 +51,16 @@ services:
       SEED: "${SEED}"
     ports:
       - "5000:5000"
-    command: [ "sh", "script/docker-entrypoint-web.sh" ]
+    command: [ "sh", "docker-entrypoint-web.sh" ]
+    restart: unless-stopped
+
+  landing:
+    build:
+      context: .
+      dockerfile: Dockerfile.landing
+    container_name: orbia-landing
+    ports:
+      - "5001:80"
     restart: unless-stopped
 
 volumes:

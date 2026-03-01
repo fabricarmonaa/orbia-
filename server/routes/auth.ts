@@ -7,8 +7,10 @@ import {
   verifyToken,
   isIpAllowedForSuperAdmin,
   getClientIp,
+  tenantAuth,
 } from "../auth";
 import { createRateLimiter } from "../middleware/rate-limit";
+import { strictLoginLimiter } from "../middleware/http-rate-limit";
 import { db } from "../db";
 import { superAdminAuditLogs, superAdminTotp } from "@shared/schema";
 import { eq } from "drizzle-orm";
@@ -143,6 +145,28 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
+
+  app.post("/api/auth/logout-all", tenantAuth, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const userId = req.auth!.userId;
+      if (!userId || userId <= 0) {
+        return res.status(400).json({ error: "Usuario inválido", code: "USER_INVALID" });
+      }
+      await storage.updateUser(userId, tenantId, { tokenInvalidBefore: new Date() as any });
+      await storage.createAuditLog({
+        tenantId,
+        userId,
+        action: "logout_all",
+        entityType: "auth",
+        metadata: { ip: req.ip, userAgent: req.headers["user-agent"] || null },
+      });
+      return res.json({ ok: true });
+    } catch {
+      return res.status(500).json({ error: "No se pudo cerrar todas las sesiones", code: "LOGOUT_ALL_ERROR" });
+    }
+  });
+
   app.post("/api/auth/super/login", superLoginLimiter, async (req, res) => {
     try {
       if (!isIpAllowedForSuperAdmin(req)) {
@@ -242,7 +266,7 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-  app.post("/api/auth/login", tenantLoginLimiter, async (req, res) => {
+  app.post("/api/auth/login", strictLoginLimiter, tenantLoginLimiter, async (req, res) => {
     try {
       const { tenantCode, email, password } = tenantLoginSchema.parse(req.body);
       const tenant = await storage.getTenantByCode(tenantCode);

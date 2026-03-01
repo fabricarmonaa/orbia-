@@ -2,12 +2,21 @@
 set -e
 
 echo "[Web Entrypoint] Waiting for postgres..."
-# simple retry loop using pg_isready or just waiting via ts script (since wait-for-postgres.ts is in package.json)
-node --experimental-specifier-resolution=node dist/script/wait-for-postgres.cjs 2>/dev/null || npm run db:wait || sleep 5
+DB_HOST="${POSTGRES_HOST:-postgres}"
+DB_PORT="${POSTGRES_PORT:-5432}"
+
+retries=0
+until nc -z "$DB_HOST" "$DB_PORT"; do
+  retries=$((retries + 1))
+  if [ "$retries" -ge 60 ]; then
+    echo "[Web Entrypoint] Postgres not reachable at ${DB_HOST}:${DB_PORT} after 120s"
+    exit 1
+  fi
+  sleep 2
+done
 
 echo "[Web Entrypoint] Running SQL migrations idempotently (safe mode)..."
-# In Etapa 2 we will map this to run-sql-migrations.ts
-node dist/script/run-sql-migrations.cjs || npx tsx script/run-sql-migrations.ts || echo "No migration script yet, continuing."
+npm run db:push
 
 echo "[Web Entrypoint] Starting server..."
 exec node dist/index.cjs

@@ -86,7 +86,7 @@ export const stockMovements = pgTable(
     userId: integer("user_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [index("idx_stock_movements_tenant").on(table.tenantId), index("idx_stock_movements_kardex").on(table.tenantId, table.productId, table.branchId, table.createdAt)]
+  (table) => [index("idx_stock_movements_tenant").on(table.tenantId), index("idx_stock_movements_tenant_created").on(table.tenantId, table.createdAt), index("idx_stock_movements_kardex").on(table.tenantId, table.productId, table.branchId, table.createdAt)]
 );
 
 export const insertStockMovementSchema = createInsertSchema(stockMovements).omit({

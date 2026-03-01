@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { isValidEmail, isValidPhone } from "@shared/validation/contact";
 
 type Customer = {
   id: number;
@@ -115,6 +116,8 @@ export default function CustomersPage() {
     return /^\d{6,15}$/.test(trimmed);
   }
 
+  const formHasErrors = !form.name.trim() || !validateDoc(form.doc) || !isValidPhone(form.phone) || !isValidEmail(form.email);
+
   async function saveCustomer() {
     if (!form.name.trim()) {
       toast({ title: "Nombre requerido", variant: "destructive" });
@@ -122,6 +125,14 @@ export default function CustomersPage() {
     }
     if (!validateDoc(form.doc)) {
       toast({ title: "DNI inválido", description: "Usá solo números (6 a 15 dígitos)", variant: "destructive" });
+      return;
+    }
+    if (!isValidPhone(form.phone)) {
+      toast({ title: "Teléfono inválido", description: "Usá dígitos, espacios o guiones.", variant: "destructive" });
+      return;
+    }
+    if (!isValidEmail(form.email)) {
+      toast({ title: "Email inválido", description: "Ingresá un email válido (ej: nombre@dominio.com)", variant: "destructive" });
       return;
     }
 
@@ -228,11 +239,11 @@ export default function CustomersPage() {
             </div>
             <div>
               <Label>Teléfono</Label>
-              <Input value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} />
+              <Input value={form.phone} onChange={(e) => setForm((prev) => ({ ...prev, phone: e.target.value }))} inputMode="tel" placeholder="+54 11 1234-5678" />
             </div>
             <div>
               <Label>Email</Label>
-              <Input value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} />
+              <Input type="email" value={form.email} onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))} placeholder="nombre@dominio.com" />
             </div>
             <div>
               <Label>Dirección</Label>
@@ -243,7 +254,7 @@ export default function CustomersPage() {
               <Textarea value={form.notes} onChange={(e) => setForm((prev) => ({ ...prev, notes: e.target.value }))} rows={3} />
             </div>
             <div className="flex gap-2">
-              <Button onClick={saveCustomer} disabled={saving}>{editingId ? "Guardar cambios" : "Guardar cliente"}</Button>
+              <Button onClick={saveCustomer} disabled={saving || formHasErrors}>{editingId ? "Guardar cambios" : "Guardar cliente"}</Button>
               {editingId ? <Button variant="outline" onClick={cancelEdit}>Cancelar</Button> : null}
             </div>
           </CardContent>
