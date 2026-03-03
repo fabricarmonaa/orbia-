@@ -1,7 +1,7 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { db } from "../db";
 import { hashPassword } from "../auth";
-import { branches, plans, tenantAddons, tenantSubscriptions, tenants, users } from "@shared/schema";
+import { plans, tenantAddons, tenantSubscriptions, tenants, users } from "@shared/schema";
 
 export type PublicSignupInput = {
   companyName: string;
@@ -80,18 +80,9 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       })
       .returning({ id: tenants.id });
 
-    const [branch] = await tx
-      .insert(branches)
-      .values({
-        tenantId: tenant.id,
-        name: "Sucursal Principal",
-        phone: input.phone || null,
-      })
-      .returning({ id: branches.id });
-
     await tx.insert(users).values({
       tenantId: tenant.id,
-      branchId: branch.id,
+      branchId: null,
       email: input.email.trim().toLowerCase(),
       password: passwordHash,
       fullName: input.ownerName,

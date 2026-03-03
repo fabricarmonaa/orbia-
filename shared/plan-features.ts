@@ -87,7 +87,7 @@ export const PLAN_DEFAULTS: Record<string, {
         },
         limits: {
             customers_max: 50,
-            branches_max: 0,
+            branches_max: 1,
             cashiers_max: 0,
             staff_max: 0,
             orders_month_max: -1,

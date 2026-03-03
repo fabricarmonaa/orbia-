@@ -111,7 +111,7 @@ export default function DeliveryPanel() {
 
     fetch("/api/branding/app")
       .then((res) => res.json())
-      .then((data) => setOrbiaLogoUrl(data?.data?.orbiaLogoUrl || null))
+      .then((data) => setOrbiaLogoUrl(data?.data?.orbiaLogoUrl ? `${data.data.orbiaLogoUrl}${data.data.orbiaLogoUrl.includes("?") ? "&" : "?"}v=${data.data.version}` : null))
       .catch(() => setOrbiaLogoUrl(null));
 
     fetchAll();
@@ -315,9 +315,8 @@ export default function DeliveryPanel() {
                           <CardContent className="py-3">
                             <div className="flex items-center justify-between gap-4 flex-wrap">
                               <div className="flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${
-                                  selected ? "bg-primary text-primary-foreground" : "bg-muted"
-                                }`}>
+                                <div className={`w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0 ${selected ? "bg-primary text-primary-foreground" : "bg-muted"
+                                  }`}>
                                   <span className="text-xs font-bold">#{order.orderNumber}</span>
                                 </div>
                                 <div>
@@ -402,9 +401,8 @@ export default function DeliveryPanel() {
                           <CardContent className="py-3">
                             <div className="flex items-center justify-between gap-4 flex-wrap">
                               <div className="flex items-center gap-3">
-                                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                                  done ? "bg-chart-2/20 text-chart-2" : "bg-muted"
-                                }`}>
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${done ? "bg-chart-2/20 text-chart-2" : "bg-muted"
+                                  }`}>
                                   {done ? (
                                     <CheckCircle className="w-4 h-4" />
                                   ) : (

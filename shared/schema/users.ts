@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 import { tenants } from "./tenants";
 
 export const users = pgTable(
@@ -34,6 +35,7 @@ export const users = pgTable(
   (table) => [
     index("idx_users_tenant").on(table.tenantId),
     index("idx_users_tenant_deleted_at").on(table.tenantId, table.deletedAt),
+    index("single_super_admin_idx").on(table.isSuperAdmin).where(sql`is_super_admin = true AND deleted_at IS NULL`),
   ]
 );
 

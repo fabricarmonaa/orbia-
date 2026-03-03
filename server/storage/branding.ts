@@ -39,8 +39,10 @@ const DEFAULT_PDF = {
 
 function withCacheBusting(url: string | null, updatedAt?: Date | null) {
   if (!url) return null;
+  // Strip any existing ?v= to avoid double cache-busting (e.g. after upload sets a versioned URL)
+  const cleanUrl = url.split("?")[0];
   const version = updatedAt ? new Date(updatedAt).getTime() : Date.now();
-  return url.includes("?") ? `${url}&v=${version}` : `${url}?v=${version}`;
+  return `${cleanUrl}?v=${version}`;
 }
 
 function mergeDefaults<T extends Record<string, unknown>>(defaults: T, value?: Record<string, unknown> | null) {

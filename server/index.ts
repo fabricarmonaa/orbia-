@@ -83,9 +83,8 @@ app.use((req, res, next) => {
   const seedEnabled = String(process.env.SEED ?? "").trim().toLowerCase() === "true";
   log(`[BOOT] SEED env="${process.env.SEED}" → seedEnabled=${seedEnabled}`);
   if (seedEnabled) {
-    const { seedDatabase, seedDeliveryData } = await import("./seed");
+    const { seedDatabase } = await import("./seed");
     await seedDatabase();
-    await seedDeliveryData();
   } else {
     log("[BOOT] Seeding disabled");
   }

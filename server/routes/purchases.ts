@@ -70,7 +70,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
 
         let total = 0;
         for (const item of payload.items) {
-          const [product] = await tx.select({ id: products.id, name: products.name, sku: products.sku }).from(products).where(and(eq(products.tenantId, tenantId), eq(products.id, item.productId))).limit(1);
+          const [product] = await tx.select({ id: products.id, name: products.name, sku: products.sku, stock: products.stock }).from(products).where(and(eq(products.tenantId, tenantId), eq(products.id, item.productId))).limit(1);
           if (!product) throw Object.assign(new Error("PRODUCT_NOT_FOUND"), { code: "PRODUCT_NOT_FOUND", productId: item.productId });
           const lineTotal = Number(item.quantity) * Number(item.unitPrice);
           total += lineTotal;
@@ -99,6 +99,9 @@ export function registerPurchaseCrudRoutes(app: Express) {
           } else {
             await tx.insert(stockLevels).values({ tenantId, productId: product.id, branchId, quantity: String(nextQty), averageCost: String(nextAvg) });
           }
+          // Also keep the global product.stock column in sync so the products page reflects purchases
+          const currentGlobalStock = Number(product.stock || 0);
+          await tx.update(products).set({ stock: currentGlobalStock + qty }).where(eq(products.id, product.id));
           await tx.insert(stockMovements).values({
             tenantId,
             productId: product.id,

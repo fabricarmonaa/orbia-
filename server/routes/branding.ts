@@ -124,7 +124,8 @@ export function registerBrandingRoutes(app: Express) {
   app.get("/api/branding/tenant", tenantAuth, requireRoleAny(["admin", "staff"]), async (req, res) => {
     try {
       const data = await storage.getTenantBranding(req.auth!.tenantId!);
-      res.json({ data });
+      const version = data?.updatedAt ? new Date(data.updatedAt).getTime() : 1;
+      res.json({ data: { ...data, version } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -144,7 +145,8 @@ export function registerBrandingRoutes(app: Express) {
         pdfConfigJson: payload.pdfConfig ?? undefined,
       });
       const data = await storage.getTenantBranding(req.auth!.tenantId!);
-      res.json({ data });
+      const version = data?.updatedAt ? new Date(data.updatedAt).getTime() : 1;
+      res.json({ data: { ...data, version } });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", details: err.errors });
@@ -203,7 +205,8 @@ export function registerBrandingRoutes(app: Express) {
   app.get("/api/branding/app", async (_req, res) => {
     try {
       const data = await storage.getAppBranding();
-      res.json({ data });
+      const version = data?.updatedAt ? new Date(data.updatedAt).getTime() : 1;
+      res.json({ data: { ...data, version } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -217,7 +220,8 @@ export function registerBrandingRoutes(app: Express) {
         orbiaName: payload.orbiaName ?? undefined,
       });
       const data = await storage.getAppBranding();
-      res.json({ data });
+      const version = data?.updatedAt ? new Date(data.updatedAt).getTime() : 1;
+      res.json({ data: { ...data, version } });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", details: err.errors });

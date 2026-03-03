@@ -8,6 +8,8 @@
     "build": "tsx script/build.ts",
     "start": "NODE_ENV=production node dist/index.cjs",
     "check": "tsc",
+    "superadmin:create": "tsx scripts/superadmin-cli.ts",
+    "superadmin:reset-password": "tsx scripts/superadmin-cli.ts --reset",
     "db:push": "drizzle-kit push",
     "verify:invoice-b": "DATABASE_URL=postgresql://orbia:orbia@127.0.0.1:5432/orbia tsx script/verify-invoice-b.ts",
     "db:seed": "tsx script/db-seed.ts",

@@ -10,7 +10,7 @@ import {
   orderTypeDefinitions,
   orderFieldDefinitions,
 } from "@shared/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, isNull } from "drizzle-orm";
 
 const BASE_ORDER_TYPES = [
   { code: "PEDIDO", label: "Pedido" },
@@ -95,204 +95,145 @@ async function ensureOrderTypePresetsForAllTenants() {
 
 export async function seedDatabase() {
   try {
-    const existingSuperAdmin = await storage.getSuperAdminByEmail("admin@orbia.app");
-    if (existingSuperAdmin) {
+    console.log("Seed: Upserting plans with correct limits...");
+
+    // Always upsert plans so limits stay correct even after the first seed run
+    await db
+      .insert(plans)
+      .values({
+        planCode: "ECONOMICO",
+        name: "Económico",
+        featuresJson: {
+          orders: true, tracking: true, cash_simple: true, cash_sessions: false,
+          products: true, branches: false, fixed_expenses: false, variable_expenses: false,
+          reports_advanced: false, stt: false, pos: false, purchases: false, cashiers: false,
+          sales_history: false, customers: true, ai: false, attachments: false,
+          products_export: false, tracking_custom_design: false, tracking_external_links: false,
+          pdf_watermark: true, margin_pricing: false, excel_import: false, custom_tos: false,
+        },
+        limitsJson: {
+          customers_max: 50, branches_max: 1, max_branches: 1, cashiers_max: 0,
+          staff_max: 0, max_staff_users: 0, orders_month_max: -1, max_orders_month: -1,
+          tracking_retention_min_hours: 12, tracking_retention_max_hours: 24,
+        },
+        priceMonthly: "4999",
+        isActive: true,
+      })
+      .onConflictDoUpdate({
+        target: [plans.planCode],
+        set: {
+          name: "Económico",
+          limitsJson: {
+            customers_max: 50, branches_max: 1, max_branches: 1, cashiers_max: 0,
+            staff_max: 0, max_staff_users: 0, orders_month_max: -1, max_orders_month: -1,
+            tracking_retention_min_hours: 12, tracking_retention_max_hours: 24,
+          },
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    await db
+      .insert(plans)
+      .values({
+        planCode: "PROFESIONAL",
+        name: "Profesional",
+        featuresJson: {
+          orders: true, tracking: true, cash_simple: true, cash_sessions: true,
+          products: true, branches: true, fixed_expenses: true, variable_expenses: true,
+          reports_advanced: false, stt: false, pos: true, purchases: true, cashiers: true,
+          sales_history: true, customers: true, ai: false, attachments: true,
+          products_export: true, tracking_custom_design: false, tracking_external_links: false,
+          pdf_watermark: false, margin_pricing: true, excel_import: true, custom_tos: false,
+          CASHIERS: true,
+        },
+        limitsJson: {
+          customers_max: 1000, branches_max: 1, max_branches: 1, cashiers_max: 2,
+          staff_max: 10, max_staff_users: 10, max_staff_per_branch: 10,
+          orders_month_max: -1, max_orders_month: -1,
+          tracking_retention_min_hours: 1, tracking_retention_max_hours: 168,
+        },
+        priceMonthly: "9999",
+        allowCashiers: true,
+        isActive: true,
+      })
+      .onConflictDoUpdate({
+        target: [plans.planCode],
+        set: {
+          name: "Profesional",
+          limitsJson: {
+            customers_max: 1000, branches_max: 1, max_branches: 1, cashiers_max: 2,
+            staff_max: 10, max_staff_users: 10, max_staff_per_branch: 10,
+            orders_month_max: -1, max_orders_month: -1,
+            tracking_retention_min_hours: 1, tracking_retention_max_hours: 168,
+          },
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    await db
+      .insert(plans)
+      .values({
+        planCode: "ESCALA",
+        name: "Escala",
+        featuresJson: {
+          orders: true, tracking: true, cash_simple: true, cash_sessions: true,
+          products: true, branches: true, fixed_expenses: true, variable_expenses: true,
+          reports_advanced: true, stt: true, pos: true, purchases: true, cashiers: true,
+          sales_history: true, customers: true, ai: true, attachments: true,
+          products_export: true, tracking_custom_design: true, tracking_external_links: true,
+          pdf_watermark: false, margin_pricing: true, excel_import: true, custom_tos: true,
+          CASHIERS: true,
+        },
+        limitsJson: {
+          customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 20,
+          staff_max: 50, max_staff_users: 50, max_staff_per_branch: 10,
+          orders_month_max: -1, max_orders_month: -1,
+          tracking_retention_min_hours: 1, tracking_retention_max_hours: 720,
+        },
+        priceMonthly: "19999",
+        allowCashiers: true,
+        isActive: true,
+      })
+      .onConflictDoUpdate({
+        target: [plans.planCode],
+        set: {
+          name: "Escala",
+          limitsJson: {
+            customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 20,
+            staff_max: 50, max_staff_users: 50, max_staff_per_branch: 10,
+            orders_month_max: -1, max_orders_month: -1,
+            tracking_retention_min_hours: 1, tracking_retention_max_hours: 720,
+          },
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+
+    console.log("Seed: Plans upserted with correct limits.");
+
+
+    // Check if already seeded (demo tenant exists) — skip demo data creation
+    const existingDemoTenant = await storage.getTenantByCode("demo");
+    if (existingDemoTenant) {
       await ensureOrderTypePresetsForAllTenants();
-      console.log("Seed: Database already seeded, skipping.");
+      console.log("Seed: Demo data already exists, skipping demo creation.");
       return;
     }
 
-    console.log("Seed: Creating initial data...");
+    console.log("Seed: Creating demo tenant data...");
 
-    const hashedPassword = await hashPassword("admin123");
-    await storage.createUser({
-      email: "admin@orbia.app",
-      password: hashedPassword,
-      fullName: "Admin Orbia",
-      role: "super_admin",
-      isSuperAdmin: true,
-      isActive: true,
-      tenantId: null,
-    });
-    console.log("Seed: Super Admin created (admin@orbia.app / admin123)");
-
-    const existingCustomAdmin = await storage.getSuperAdminByEmail("huevohuevohuevin@gmail.com");
-    if (!existingCustomAdmin) {
-      const customAdminPass = await hashPassword("1579");
-      await storage.createUser({
-        email: "huevohuevohuevin@gmail.com",
-        password: customAdminPass,
-        fullName: "Super Admin Owner",
-        role: "super_admin",
-        isSuperAdmin: true,
-        isActive: true,
-        tenantId: null,
-      });
-      console.log("Seed: Custom Super Admin created (huevohuevohuevin@gmail.com / 1579)");
+    const planProfesional = await storage.getPlanByCode("PROFESIONAL");
+    if (!planProfesional) {
+      console.error("Seed: PROFESIONAL plan not found after upsert!");
+      return;
     }
 
-    const specificAdminEmail = "fabriciocarmona2007@gmail.com";
-    const existingSpecificAdmin = await storage.getSuperAdminByEmail(specificAdminEmail);
-    if (!existingSpecificAdmin) {
-      const specificAdminPass = await hashPassword("Panaxdxd!1589");
-      await storage.createUser({
-        email: specificAdminEmail,
-        password: specificAdminPass,
-        fullName: "Fabricio Carmona",
-        role: "super_admin",
-        isSuperAdmin: true,
-        isActive: true,
-        tenantId: null,
-      });
-      console.log(`Seed: Specific Super Admin created (${specificAdminEmail})`);
-    } else {
-      console.log(`Seed: Specific Super Admin already exists (${specificAdminEmail})`);
-    }
+    const planEscala = await storage.getPlanByCode("ESCALA");
+    const planEconomico = await storage.getPlanByCode("ECONOMICO");
 
-    const planEconomico = await storage.createPlan({
-      planCode: "ECONOMICO",
-      name: "Económico",
-      featuresJson: {
-        orders: true,
-        tracking: true,
-        cash_simple: true,
-        cash_sessions: false,
-        products: true,
-        branches: false,
-        fixed_expenses: false,
-        variable_expenses: false,
-        reports_advanced: false,
-        stt: false,
-        pos: false,
-        purchases: false,
-        cashiers: false,
-        sales_history: false,
-        customers: true,
-        ai: false,
-        attachments: false,
-        products_export: false,
-        tracking_custom_design: false,
-        tracking_external_links: false,
-        pdf_watermark: true,
-        margin_pricing: false,
-        excel_import: false,
-        custom_tos: false,
-      },
-      limitsJson: {
-        customers_max: 50,
-        branches_max: 0,
-        max_branches: 0,
-        cashiers_max: 0,
-        staff_max: 0,
-        max_staff_users: 0,
-        orders_month_max: -1,
-        max_orders_month: -1,
-        tracking_retention_min_hours: 12,
-        tracking_retention_max_hours: 24,
-      },
-      priceMonthly: "4999",
-      isActive: true,
-    });
-
-    const planProfesional = await storage.createPlan({
-      planCode: "PROFESIONAL",
-      name: "Profesional",
-      featuresJson: {
-        orders: true,
-        tracking: true,
-        cash_simple: true,
-        cash_sessions: true,
-        products: true,
-        branches: true,
-        fixed_expenses: true,
-        variable_expenses: true,
-        reports_advanced: false,
-        stt: false,
-        pos: true,
-        purchases: true,
-        cashiers: true,
-        sales_history: true,
-        customers: true,
-        ai: false,
-        attachments: true,
-        products_export: true,
-        tracking_custom_design: false,
-        tracking_external_links: false,
-        pdf_watermark: false,
-        margin_pricing: true,
-        excel_import: true,
-        custom_tos: false,
-        // Legacy uppercase aliases for backcompat
-        CASHIERS: true,
-      },
-      limitsJson: {
-        customers_max: 1000,
-        branches_max: 1,
-        max_branches: 1,
-        cashiers_max: 2,
-        staff_max: 10,
-        max_staff_users: 10,
-        max_staff_per_branch: 10,
-        orders_month_max: -1,
-        max_orders_month: -1,
-        tracking_retention_min_hours: 1,
-        tracking_retention_max_hours: 168,
-      },
-      priceMonthly: "9999",
-      allowCashiers: true,
-      isActive: true,
-    });
-
-    const planEscala = await storage.createPlan({
-      planCode: "ESCALA",
-      name: "Escala",
-      featuresJson: {
-        orders: true,
-        tracking: true,
-        cash_simple: true,
-        cash_sessions: true,
-        products: true,
-        branches: true,
-        fixed_expenses: true,
-        variable_expenses: true,
-        reports_advanced: true,
-        stt: true,
-        pos: true,
-        purchases: true,
-        cashiers: true,
-        sales_history: true,
-        customers: true,
-        ai: true,
-        attachments: true,
-        products_export: true,
-        tracking_custom_design: true,
-        tracking_external_links: true,
-        pdf_watermark: false,
-        margin_pricing: true,
-        excel_import: true,
-        custom_tos: true,
-        // Legacy uppercase aliases for backcompat
-        CASHIERS: true,
-      },
-      limitsJson: {
-        customers_max: 5000,
-        branches_max: 5,
-        max_branches: 5,
-        cashiers_max: 20,
-        staff_max: 50,
-        max_staff_users: 10,
-        max_staff_per_branch: 10,
-        orders_month_max: -1,
-        max_orders_month: -1,
-        tracking_retention_min_hours: 1,
-        tracking_retention_max_hours: 720,
-      },
-      priceMonthly: "19999",
-      allowCashiers: true,
-      isActive: true,
-    });
-
-    console.log("Seed: Plans created");
+    console.log("Seed: Creating demo tenant...");
 
     const demoTenant = await storage.createTenant({
       code: "demo",
@@ -554,7 +495,7 @@ export async function seedDatabase() {
 
     console.log("Seed: Demo data created successfully!");
     console.log("---");
-    console.log("Super Admin: admin@orbia.app / admin123");
+    console.log("Super Admin: Use CLI para crear.");
     console.log("Demo Tenant: demo / admin@demo.com / demo123");
     console.log("---");
   } catch (err) {

@@ -501,9 +501,54 @@ export default function ProductsPage() {
             <Button onClick={commitProductImport} disabled={!importPreview}>Importar</Button>
           </div>
           {importPreview ? (
-            <div className="rounded-md border p-3 text-xs space-y-2">
-              <p>Columnas detectadas: {importPreview.detectedHeaders?.join(", ") || "-"}</p>
-              <pre className="overflow-auto">{JSON.stringify(importPreview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre>
+            <div className="space-y-3">
+              <div className="text-sm bg-muted/40 p-2 rounded border">
+                <strong>Columnas detectadas:</strong> {importPreview.detectedHeaders?.join(", ") || "-"}
+              </div>
+              <div className="border rounded-md overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/60">
+                    <tr>
+                      <th className="p-2 text-left">Fila</th>
+                      <th className="p-2 text-left">Nombre</th>
+                      <th className="p-2 text-left">SKU</th>
+                      <th className="p-2 text-left">Categoría</th>
+                      <th className="p-2 text-right">Precio</th>
+                      <th className="p-2 text-right">Stock</th>
+                      <th className="p-2 text-left">Estado</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(importPreview.rowsPreview || []).slice(0, 10).map((row: any, idx: number) => {
+                      const hasErrors = row.errors && row.errors.length > 0;
+                      return (
+                        <tr key={idx} className={`border-t ${hasErrors ? "bg-red-50/50" : "bg-green-50/20"}`}>
+                          <td className="p-2">{idx + 2}</td>
+                          <td className="p-2 font-medium truncate max-w-[200px]">{row.normalized.name || <span className="text-red-500 text-xs">Falta</span>}</td>
+                          <td className="p-2 text-muted-foreground text-xs">{row.normalized.sku || "-"}</td>
+                          <td className="p-2 text-xs truncate max-w-[100px]">{row.normalized.category || "-"}</td>
+                          <td className="p-2 text-right font-medium">
+                            {row.normalized.price !== null ? `$${row.normalized.price.toLocaleString("es-AR")}` : "-"}
+                          </td>
+                          <td className="p-2 text-right">
+                            {row.normalized.stock !== null ? row.normalized.stock : "-"}
+                          </td>
+                          <td className="p-2">
+                            {hasErrors ? (
+                              <Badge variant="destructive" className="whitespace-nowrap">{row.errors.join(", ")}</Badge>
+                            ) : (
+                              <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">OK</Badge>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {importPreview.rowsPreview?.length > 10 && (
+                <p className="text-xs text-muted-foreground text-center">Mostrando solo las primeras 10 filas de preview.</p>
+              )}
             </div>
           ) : null}
         </CardContent>

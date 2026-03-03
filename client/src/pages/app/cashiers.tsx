@@ -23,6 +23,8 @@ export default function CashiersPage() {
   const [pin, setPin] = useState("");
 
   const enabled = ["PROFESIONAL", "ESCALA"].includes((plan?.planCode || "").toUpperCase());
+  const maxCashiers = plan?.limits?.cashiers_max ?? 0;
+  const atLimit = maxCashiers >= 0 && rows.length >= maxCashiers;
 
   async function load() {
     const res = await apiRequest("GET", "/api/cashiers");
@@ -67,10 +69,19 @@ export default function CashiersPage() {
       <CardHeader><CardTitle>Cajeros</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          <div><Label>Nombre</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
-          <div><Label>PIN (4-8)</Label><Input value={pin} onChange={(e) => setPin(e.target.value)} maxLength={8} /></div>
-          <div className="flex items-end"><Button onClick={createCashier} disabled={!name || pin.length < 4}>Crear</Button></div>
+          <div><Label>Nombre</Label><Input value={name} onChange={(e) => setName(e.target.value)} disabled={atLimit} /></div>
+          <div><Label>PIN (4-8)</Label><Input value={pin} onChange={(e) => setPin(e.target.value)} maxLength={8} disabled={atLimit} /></div>
+          <div className="flex items-end">
+            <Button onClick={createCashier} disabled={!name || pin.length < 4 || atLimit} title={atLimit ? `Límite de ${maxCashiers} cajeros alcanzado` : undefined}>
+              Crear
+            </Button>
+          </div>
         </div>
+        {atLimit && (
+          <div className="p-3 bg-secondary/20 text-sm text-muted-foreground rounded-md border border-border">
+            Alcanzaste el límite de <strong>{maxCashiers}</strong> cajeros de tu plan. Mejorá tu plan para agregar más.
+          </div>
+        )}
         <div className="space-y-2">
           {rows.map((row) => (
             <div key={row.id} className="border rounded p-2 flex items-center justify-between">

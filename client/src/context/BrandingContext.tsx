@@ -91,13 +91,18 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
   const [tenantBranding, setTenantBranding] = useState<TenantBranding | null>(null);
   const [appBranding, setAppBranding] = useState<AppBranding>(defaultAppBranding);
 
+  const applyVersion = (url: string | null, version: number | string | undefined) => {
+    if (!url || !version) return url;
+    return url + (url.includes("?") ? "&" : "?") + "v=" + version;
+  };
+
   const fetchAppBranding = useCallback(async () => {
     try {
       const res = await fetch("/api/branding/app");
       const data = await res.json();
       if (data.data) {
         setAppBranding({
-          orbiaLogoUrl: data.data.orbiaLogoUrl || null,
+          orbiaLogoUrl: applyVersion(data.data.orbiaLogoUrl, data.data.version) || null,
           orbiaName: data.data.orbiaName || "Orbia",
         });
       } else {
@@ -123,7 +128,7 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
       if (data.data) {
         const payload = data.data;
         setTenantBranding({
-          logoUrl: payload.logoUrl || null,
+          logoUrl: applyVersion(payload.logoUrl, payload.version) || null,
           displayName: payload.displayName || "",
           colors: {
             ...defaultTenantBranding.colors,

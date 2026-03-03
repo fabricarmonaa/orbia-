@@ -36,7 +36,7 @@ export default function BranchesPage() {
   });
 
   const canAccess = hasFeature("branches");
-  const maxBranches = getLimit("max_branches");
+  const maxBranches = plan?.limits?.branches_max ?? plan?.limits?.max_branches ?? -1;
 
   useEffect(() => {
     if (!isTenantAdmin) {

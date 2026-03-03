@@ -24,6 +24,7 @@ import { cashierStorage } from './cashiers';
 export class DatabaseStorage implements IStorage {
   getPlans = planStorage.getPlans;
   getPlanById = planStorage.getPlanById;
+  getPlanByCode = planStorage.getPlanByCode;
   createPlan = planStorage.createPlan;
   updatePlanByCode = planStorage.updatePlanByCode;
   listSubscriptions = planStorage.listSubscriptions;

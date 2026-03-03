@@ -118,6 +118,20 @@ export function registerCashierRoutes(app: Express) {
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
       const plan = await getTenantPlan(tenantId);
+      if (!plan) return res.status(403).json({ error: "Plan inválido", code: "PLAN_INVALID" });
+
+      const maxCashiers = plan.limits.cashiers_max ?? 0;
+      if (maxCashiers >= 0) {
+        const [tenantCashierCount] = await db.select({ c: count() }).from(cashiers)
+          .where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.active, true)));
+        if (Number(tenantCashierCount?.c || 0) >= maxCashiers) {
+          return res.status(403).json({
+            error: `Tu plan permite máximo ${maxCashiers} cajero${maxCashiers === 1 ? "" : "s"}.`,
+            code: "LIMIT_REACHED", limit: "cashiers_max"
+          });
+        }
+      }
+
       if (payload.branch_id) {
         const [row] = await db.select({ c: count() }).from(cashiers).where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.branchId, payload.branch_id), eq(cashiers.active, true)));
         if (Number(row?.c || 0) >= 1) {

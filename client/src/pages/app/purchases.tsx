@@ -12,6 +12,7 @@ import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeLi
 import CameraScanner from "@/components/addons/CameraScanner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 
 interface PurchaseRow {
   id: number;
@@ -319,9 +320,54 @@ export default function PurchasesPage() {
               <Input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] || null)} />
               <Button onClick={previewImport}>Preview</Button>
               {preview && (
-                <div className="space-y-2">
-                  <pre className="text-xs overflow-auto">{JSON.stringify(preview.rowsPreview?.slice(0, 5) || [], null, 2)}</pre>
-                  <Button onClick={commitImport}>Confirmar importación</Button>
+                <div className="space-y-3 mt-4">
+                  <div className="text-sm bg-muted/40 p-2 rounded border">
+                    <strong>Columnas detectadas:</strong> {preview.detectedHeaders?.join(", ") || "-"}
+                  </div>
+                  <div className="border rounded-md overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-muted/60">
+                        <tr>
+                          <th className="p-2 text-left">Fila</th>
+                          <th className="p-2 text-left">Código / Título</th>
+                          <th className="p-2 text-left">Proveedor</th>
+                          <th className="p-2 text-right">Cant.</th>
+                          <th className="p-2 text-right">Precio Un.</th>
+                          <th className="p-2 text-left">Estado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(preview.rowsPreview || []).slice(0, 10).map((row: any, idx: number) => {
+                          const hasErrors = row.errors && row.errors.length > 0;
+                          return (
+                            <tr key={idx} className={`border-t ${hasErrors ? "bg-red-50/50" : "bg-green-50/20"}`}>
+                              <td className="p-2">{idx + 2}</td>
+                              <td className="p-2">
+                                <div className="font-medium truncate max-w-[200px]">{row.normalized.name || <span className="text-red-500 text-xs">Falta nombre</span>}</div>
+                                <div className="text-xs text-muted-foreground">{row.normalized.code || "-"}</div>
+                              </td>
+                              <td className="p-2 text-xs truncate max-w-[120px]">{row.normalized.supplier_name || "-"}</td>
+                              <td className="p-2 text-right font-medium">{row.normalized.quantity !== null ? row.normalized.quantity : "-"}</td>
+                              <td className="p-2 text-right font-medium">
+                                {row.normalized.unit_price !== null ? `$${row.normalized.unit_price.toLocaleString("es-AR")}` : "-"}
+                              </td>
+                              <td className="p-2">
+                                {hasErrors ? (
+                                  <Badge variant="destructive" className="whitespace-nowrap">{row.errors.join(", ")}</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">OK</Badge>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {preview.rowsPreview?.length > 10 && (
+                    <p className="text-xs text-muted-foreground text-center">Mostrando solo las primeras 10 filas de preview.</p>
+                  )}
+                  <Button onClick={commitImport} className="w-full mt-2">Confirmar importación</Button>
                 </div>
               )}
             </CardContent>

@@ -4,7 +4,7 @@ async function main() {
   const isProd = process.env.NODE_ENV === "production";
   await seedDatabase();
   if (!isProd) {
-    console.log("Seed complete (local mode). SuperAdmin email: admin@orbia.app");
+    console.log("Seed complete (local mode). SuperAdmin must be created via CLI.");
   } else {
     console.log("Seed complete.");
   }

@@ -64,9 +64,9 @@ export default function AppLayout() {
       placement: "center",
       content: (
         <div className="text-left">
-          <h3 className="font-bold text-lg mb-2">Bienvenido a Orbia</h3>
+          <h3 className="font-bold text-lg mb-2">¡Bienvenido a Orbia! 👋</h3>
           <p className="text-sm text-muted-foreground">
-            Estamos configurando tu entorno de trabajo. Este breve recorrido te mostrará dónde encontrar las herramientas clave para gestionar tu negocio.
+            Este recorrido rápido te va a mostrar todo lo que podés hacer desde el panel. Vamos paso a paso así arrancás con todo configurado.
           </p>
         </div>
       ),
@@ -77,7 +77,118 @@ export default function AppLayout() {
       content: (
         <div className="text-left">
           <h3 className="font-bold mb-1">Menú Principal</h3>
-          <p className="text-sm text-muted-foreground">Desde aquí podés acceder a todos los módulos: control de caja, productos, clientes y analíticas en tiempo real.</p>
+          <p className="text-sm text-muted-foreground">Desde aquí accedés a todos los módulos: pedidos, caja, productos, clientes, compras y más. Todo en un solo lugar.</p>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-configuracion']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">⚙️ Configuración</h3>
+          <p className="text-sm text-muted-foreground">Lo primero que tenés que hacer es configurar tu negocio. Aquí encontrás:</p>
+          <ul className="text-sm text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+            <li><strong>Branding</strong>: logo, nombre, slogan y colores de tu marca</li>
+            <li><strong>Precios</strong>: margen automático vs precio manual</li>
+            <li><strong>Pedidos</strong>: estados personalizados, presets y opciones de entrega</li>
+            <li><strong>Integraciones</strong>: WhatsApp y seguimiento de pedidos</li>
+          </ul>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-caja']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">💰 Caja</h3>
+          <p className="text-sm text-muted-foreground">Acá controlás el flujo de dinero del negocio:</p>
+          <ul className="text-sm text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+            <li><strong>Gastos variables</strong>: egresos que ocurren regularmente (alquiler, servicios)</li>
+            <li><strong>Gastos fijos</strong>: costos puntuales del día a día</li>
+            <li>Para cargar un gasto, entrá a Caja y usá el botón <em>"Registrar movimiento"</em></li>
+            <li>Podés ver resúmenes mensuales, diarios y comparativas</li>
+          </ul>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-clientes']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">👤 Clientes</h3>
+          <p className="text-sm text-muted-foreground">Para crear un cliente:</p>
+          <ol className="text-sm text-muted-foreground mt-2 space-y-1 list-decimal pl-4">
+            <li>Entrá a <strong>Clientes</strong> desde el menú</li>
+            <li>Hacé click en <em>"Nuevo cliente"</em></li>
+            <li>Completá nombre, DNI y teléfono</li>
+            <li>El cliente quedará guardado y podés asociarlo a ventas y pedidos</li>
+          </ol>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-pedidos']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">📦 Pedidos</h3>
+          <p className="text-sm text-muted-foreground">Para crear un pedido nuevo:</p>
+          <ol className="text-sm text-muted-foreground mt-2 space-y-1 list-decimal pl-4">
+            <li>Hacé click en <strong>Pedidos</strong> en el menú</li>
+            <li>Usá el botón <em>"Nuevo pedido"</em></li>
+            <li>Elegí un cliente, agregá ítems y configurá el estado</li>
+            <li>Cada pedido tiene un link de seguimiento único para el cliente</li>
+          </ol>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-configuracion']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">📋 Presets de pedidos</h3>
+          <p className="text-sm text-muted-foreground">Los presets te permiten crear pedidos estándar con un click. Para crear uno:</p>
+          <ol className="text-sm text-muted-foreground mt-2 space-y-1 list-decimal pl-4">
+            <li>Andá a <strong>Configuración → Pedidos</strong></li>
+            <li>En la sección <em>"Presets"</em>, creá un template con ítems predefinidos</li>
+            <li>Al crear un pedido, podés elegir un preset y se carga automáticamente</li>
+          </ol>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-compras']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">🛒 Cargar una compra</h3>
+          <p className="text-sm text-muted-foreground">Cuando recibís mercadería de un proveedor:</p>
+          <ol className="text-sm text-muted-foreground mt-2 space-y-1 list-decimal pl-4">
+            <li>Andá a <strong>Compras</strong> en el menú</li>
+            <li>Elegí <em>"Carga manual"</em> para ingresar ítem por ítem, o usá <em>"Importar Excel"</em></li>
+            <li>Indicá el proveedor, código de producto, precio y cantidad</li>
+            <li>Al guardar, el stock de los productos se actualiza automáticamente</li>
+          </ol>
+        </div>
+      ),
+      placement: "right",
+    },
+    {
+      target: "[data-testid='nav-productos']",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold mb-1">📦 Productos y Stock</h3>
+          <p className="text-sm text-muted-foreground">En <strong>Productos</strong> podés:</p>
+          <ul className="text-sm text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+            <li>Crear y editar productos con precio, costo y código</li>
+            <li>Ver el stock actual y renovarlo manualmente</li>
+            <li>Filtrar por categoría, estado o rango de precio</li>
+            <li>El stock se descuenta automáticamente al hacer una venta</li>
+          </ul>
         </div>
       ),
       placement: "right",
@@ -86,8 +197,14 @@ export default function AppLayout() {
       target: "[data-testid='nav-ventas']",
       content: (
         <div className="text-left">
-          <h3 className="font-bold mb-1">Punto de Venta (POS)</h3>
-          <p className="text-sm text-muted-foreground">Tu módulo más importante. Entrá aquí para facturar, buscar productos rápido o escanear códigos de barra.</p>
+          <h3 className="font-bold mb-1">🏪 Punto de Venta (POS)</h3>
+          <p className="text-sm text-muted-foreground">El POS es tu módulo de ventas rápidas. Podés:</p>
+          <ul className="text-sm text-muted-foreground mt-2 space-y-1 list-disc pl-4">
+            <li>Buscar productos por nombre o escanear código de barras</li>
+            <li>Buscar y asociar un cliente a la venta</li>
+            <li>Agregar descuentos o recargos</li>
+            <li>Registrar con múltiples métodos de pago e imprimir el ticket</li>
+          </ul>
         </div>
       ),
       placement: "right",
@@ -97,10 +214,23 @@ export default function AppLayout() {
       content: (
         <div className="text-left">
           <h3 className="font-bold mb-1">Ajustes y Perfil</h3>
-          <p className="text-sm text-muted-foreground">Gestioná los datos de tu empresa, tu plan actual o cerrá sesión desde este menú.</p>
+          <p className="text-sm text-muted-foreground">Desde aquí gestionás los datos de tu empresa, tu plan actual y podés cerrar sesión.</p>
         </div>
       ),
       placement: "right",
+    },
+    {
+      target: "body",
+      placement: "center",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold text-lg mb-2">¡Listo para empezar! 🚀</h3>
+          <p className="text-sm text-muted-foreground">
+            Ya conocés las herramientas principales de Orbia. Te recomendamos empezar por <strong>Configuración</strong> para personalizar tu negocio. Cualquier duda, contactanos directo por WhatsApp.
+          </p>
+        </div>
+      ),
+      disableBeacon: true,
     },
   ];
 

@@ -38,6 +38,7 @@ import type {
 export interface IStorage {
   getPlans(): Promise<Plan[]>;
   getPlanById(id: number): Promise<Plan | undefined>;
+  getPlanByCode(planCode: string): Promise<Plan | null>;
   createPlan(data: InsertPlan): Promise<Plan>;
   updatePlanByCode(planCode: string, data: Partial<InsertPlan>): Promise<Plan | undefined>;
   listSubscriptions(): Promise<Array<{ tenantId: number; tenantName: string; tenantCode: string; planCode: string | null; status: string | null; startsAt: Date | null; expiresAt: Date | null }>>;

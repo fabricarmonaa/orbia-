@@ -15,58 +15,57 @@ export function registerBranchRoutes(app: Express) {
     tenantAuth,
     requireTenantAdmin,
     async (req, res) => {
-    try {
-      const tenantId = req.auth!.tenantId!;
-      const tenant = await storage.getTenantById(tenantId);
-      const plan = tenant?.planId ? await storage.getPlanById(tenant.planId) : null;
-      const features = (plan?.featuresJson || {}) as Record<string, boolean>;
-      const hasBranchesFeature = Boolean(features.branches) || Boolean((plan as any)?.allowBranches);
-      if (!hasBranchesFeature) {
-        return res.json({ data: [{ id: 0, tenantId, name: "Casa Central", address: null, phone: null, isActive: true }] });
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const tenant = await storage.getTenantById(tenantId);
+        const plan = tenant?.planId ? await storage.getPlanById(tenant.planId) : null;
+        const features = (plan?.featuresJson || {}) as Record<string, boolean>;
+        const hasBranchesFeature = Boolean(features.branches) || Boolean((plan as any)?.allowBranches);
+        if (!hasBranchesFeature) {
+          return res.json({ data: [{ id: 0, tenantId, name: "Casa Central", address: null, phone: null, isActive: true }] });
+        }
+        if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
+          const branch = await storage.getBranchById(req.auth!.branchId, tenantId);
+          return res.json({ data: branch ? [branch] : [] });
+        }
+        const data = await storage.getBranches(tenantId);
+        res.json({ data });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
       }
-      if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
-        const branch = await storage.getBranchById(req.auth!.branchId, tenantId);
-        return res.json({ data: branch ? [branch] : [] });
-      }
-      const data = await storage.getBranches(tenantId);
-      res.json({ data });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    });
 
   app.post(
     "/api/branches",
     tenantAuth,
     requireTenantAdmin,
     requireFeature("branches"),
-    requirePlanCodes(["ESCALA"]),
     blockBranchScope,
     async (req, res) => {
-    try {
-      const tenantId = req.auth!.tenantId!;
-      const plan = req.plan!;
-      const maxBranches = plan.limits.max_branches;
-      if (maxBranches >= 0) {
-        const existing = await storage.getBranches(tenantId);
-        if (existing.length >= maxBranches) {
-          return res.status(403).json({
-            error: `Tu plan "${plan.name}" permite máximo ${maxBranches} sucursales. Mejorá tu plan para agregar más.`,
-            code: "LIMIT_REACHED",
-            limit: "max_branches",
-            currentPlan: plan.planCode,
-          });
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const plan = req.plan!;
+        const maxBranches = plan.limits.branches_max ?? plan.limits.max_branches ?? 0;
+        if (maxBranches >= 0) {
+          const existing = await storage.getBranches(tenantId);
+          if (existing.length >= maxBranches) {
+            return res.status(403).json({
+              error: `Tu plan "${plan.name}" permite máximo ${maxBranches} sucursal${maxBranches === 1 ? "" : "es"}. Mejorá tu plan para agregar más.`,
+              code: "LIMIT_REACHED",
+              limit: "branches_max",
+              currentPlan: plan.planCode,
+            });
+          }
         }
+        const data = await storage.createBranch({
+          tenantId,
+          ...req.body,
+        });
+        res.status(201).json({ data });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
       }
-      const data = await storage.createBranch({
-        tenantId,
-        ...req.body,
-      });
-      res.status(201).json({ data });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    });
 
   app.get(
     "/api/branches/:branchId/orders",
@@ -76,20 +75,20 @@ export function registerBranchRoutes(app: Express) {
     requirePlanCodes(["ESCALA"]),
     enforceBranchScope,
     async (req, res) => {
-    try {
-      const tenantId = req.auth!.tenantId!;
-      const branchId = parseInt(req.params.branchId as string);
-      if (req.auth!.scope === "BRANCH" && req.auth!.branchId !== branchId) {
-        return res.status(403).json({ error: "No tenés acceso a esta sucursal" });
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const branchId = parseInt(req.params.branchId as string);
+        if (req.auth!.scope === "BRANCH" && req.auth!.branchId !== branchId) {
+          return res.status(403).json({ error: "No tenés acceso a esta sucursal" });
+        }
+        const branch = await storage.getBranchById(branchId, tenantId);
+        if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
+        const data = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
+        res.json({ data });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
       }
-      const branch = await storage.getBranchById(branchId, tenantId);
-      if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
-      const data = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
-      res.json({ data });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    });
 
   app.get(
     "/api/branches/:branchId/cash/movements",
@@ -99,20 +98,20 @@ export function registerBranchRoutes(app: Express) {
     requirePlanCodes(["ESCALA"]),
     enforceBranchScope,
     async (req, res) => {
-    try {
-      const tenantId = req.auth!.tenantId!;
-      const branchId = parseInt(req.params.branchId as string);
-      if (req.auth!.scope === "BRANCH" && req.auth!.branchId !== branchId) {
-        return res.status(403).json({ error: "No tenés acceso a esta sucursal" });
+      try {
+        const tenantId = req.auth!.tenantId!;
+        const branchId = parseInt(req.params.branchId as string);
+        if (req.auth!.scope === "BRANCH" && req.auth!.branchId !== branchId) {
+          return res.status(403).json({ error: "No tenés acceso a esta sucursal" });
+        }
+        const branch = await storage.getBranchById(branchId, tenantId);
+        if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
+        const data = await storage.getCashMovementsByBranch(tenantId, branchId);
+        res.json({ data });
+      } catch (err: any) {
+        res.status(500).json({ error: err.message });
       }
-      const branch = await storage.getBranchById(branchId, tenantId);
-      if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
-      const data = await storage.getCashMovementsByBranch(tenantId, branchId);
-      res.json({ data });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+    });
 
   app.delete(
     "/api/branches/:branchId",

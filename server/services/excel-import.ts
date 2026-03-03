@@ -22,30 +22,30 @@ export interface PreviewResult {
 }
 
 const purchaseAliases: Record<string, string[]> = {
-  code: ["codigo", "code", "sku", "id", "cod_producto"],
-  name: ["nombre", "producto", "descripcion", "name", "nombre_producto", "nombreproducto", "articulo"],
-  quantity: ["cantidad", "qty", "cant", "unidades"],
-  unit_price: ["precio", "precio_unit", "unit_price", "costo", "cost", "precio_por_unidad"],
-  currency: ["moneda", "currency", "divisa"],
-  supplier_name: ["proveedor", "supplier", "vendedor", "distribuidor"],
+  code: ["codigo", "code", "sku", "id", "cod_producto", "codigo_de_producto", "product_code", "product_code_sku", "barcode", "codigodebarras", "item_sku", "item_sku_optional"],
+  name: ["nombre", "producto", "descripcion", "name", "nombre_producto", "nombreproducto", "articulo", "product_name", "item_name"],
+  quantity: ["cantidad", "qty", "cant", "unidades", "quantity"],
+  unit_price: ["precio", "precio_unit", "unit_price", "costo", "cost", "precio_por_unidad", "precio_de_compra", "price_net", "cost_net", "unit_cost", "unit_cost_net"],
+  currency: ["moneda", "currency", "divisa", "currency_arsusd"],
+  supplier_name: ["proveedor", "supplier", "vendedor", "distribuidor", "supplier_name"],
   notes: ["notas", "observaciones", "detalle"],
 };
 
 const customerAliases: Record<string, string[]> = {
-  name: ["nombre", "razon_social", "cliente"],
-  phone: ["telefono", "celular", "whatsapp"],
-  email: ["mail", "email", "correo"],
-  doc: ["dni", "cuit", "documento"],
-  address: ["direccion", "domicilio"],
-  notes: ["nota", "observacion"],
+  name: ["nombre", "razon_social", "cliente", "customer_name", "customer"],
+  phone: ["telefono", "celular", "whatsapp", "phone", "tel"],
+  email: ["mail", "email", "correo", "e_mail"],
+  doc: ["dni", "cuit", "documento", "document", "id_number", "identification"],
+  address: ["direccion", "domicilio", "address", "calle"],
+  notes: ["nota", "observacion", "notes"],
 };
 
 const productAliases: Record<string, string[]> = {
-  name: ["nombre", "producto", "name", "nombre_producto", "articulo"],
-  description: ["descripcion", "description", "detalle"],
-  price: ["precio", "price", "precio_venta", "venta"],
-  sku: ["codigo", "sku", "code", "cod_producto"],
-  stock: ["stock", "cantidad", "existencia", "inventario"],
+  name: ["nombre", "producto", "name", "nombre_producto", "articulo", "product_name"],
+  description: ["descripcion", "description", "detalle", "desc"],
+  price: ["precio", "price", "precio_venta", "venta", "price_net", "precio_neto"],
+  sku: ["codigo", "sku", "code", "cod_producto", "product_code_sku", "barcode", "codigodebarras"],
+  stock: ["stock", "cantidad", "existencia", "inventario", "initial_stock", "initial_stock_optional", "stock_inicial"],
   category: ["categoria", "category", "rubro"],
 };
 
@@ -149,7 +149,12 @@ function safeText(value: unknown, max: number): string {
 function pickSuggestedMapping(headers: string[], aliases: Record<string, string[]>) {
   const mapping: Record<string, string> = {};
   for (const [field, fieldAliases] of Object.entries(aliases)) {
-    const hit = headers.find((h) => fieldAliases.includes(h));
+    const hit = headers.find((h) => {
+      // Direct exact match
+      if (fieldAliases.includes(h)) return true;
+      // Partial match for flexibility (e.g. 'product_name' matches 'nombre_producto' intuitively if we add words, but let's check fuzzy inclusion)
+      return fieldAliases.some((alias) => h === alias || h.includes(alias) || alias.includes(h));
+    });
     if (hit) mapping[field] = hit;
   }
   return mapping;
@@ -179,8 +184,24 @@ function normalizePurchaseRow(raw: Record<string, string>, mapping: Record<strin
 }
 
 function normalizeCustomerRow(raw: Record<string, string>, mapping: Record<string, string>) {
+  let name = safeText(raw[mapping.name || ""] || "", 200);
+
+  // Fallback: Si no hay nombre mapeado, intentamos buscar first_name y last_name en crudo
+  if (!name || name.trim() === "") {
+    const rawKeys = Object.keys(raw);
+    const firstNameKey = rawKeys.find(k => k.includes("first_name") || k.includes("nombre"));
+    const lastNameKey = rawKeys.find(k => k.includes("last_name") || k.includes("apellido"));
+
+    const firstName = firstNameKey ? String(raw[firstNameKey] || "").trim() : "";
+    const lastName = lastNameKey ? String(raw[lastNameKey] || "").trim() : "";
+
+    if (firstName || lastName) {
+      name = sanitizeShortText(`${firstName} ${lastName}`.trim(), 200);
+    }
+  }
+
   const normalized = {
-    name: safeText(raw[mapping.name || ""] || "", 200),
+    name,
     phone: sanitizeShortText(safeText(raw[mapping.phone || ""] || "", 50), 50),
     email: safeText(raw[mapping.email || ""] || "", 255).toLowerCase(),
     doc: sanitizeShortText(safeText(raw[mapping.doc || ""] || "", 50), 50),
@@ -281,14 +302,6 @@ export function buildPreview(entity: ImportEntity, filePath: string): PreviewRes
 }
 
 export function normalizeRowsForCommit(entity: ImportEntity, filePath: string, mapping: Record<string, string>) {
-  const requiredFields = entity === "purchases" ? ["name", "quantity", "unit_price"] : entity === "products" ? ["name", "price"] : ["name"];
-  const missingRequired = requiredFields.filter((f) => !mapping[f]);
-  if (missingRequired.length) {
-    const labels: Record<string, string> = { name: "Nombre", quantity: "Cantidad", unit_price: "Precio", price: "Precio" };
-    const missingLabels = missingRequired.map(f => labels[f] || f);
-    throw new Error(`EXCEL_IMPORT_MISSING_COLUMNS|Debe mapear la columna '${missingLabels.join(", ")}' antes de continuar.`);
-  }
-
   const { rows } = parseXlsxRows(filePath);
   return rows.map((raw, idx) => {
     const normalizedPack = entity === "purchases"
