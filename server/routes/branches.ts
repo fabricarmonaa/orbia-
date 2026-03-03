@@ -72,7 +72,6 @@ export function registerBranchRoutes(app: Express) {
     tenantAuth,
     requireTenantAdmin,
     requireFeature("branches"),
-    requirePlanCodes(["ESCALA"]),
     enforceBranchScope,
     async (req, res) => {
       try {
@@ -95,7 +94,6 @@ export function registerBranchRoutes(app: Express) {
     tenantAuth,
     requireTenantAdmin,
     requireFeature("branches"),
-    requirePlanCodes(["ESCALA"]),
     enforceBranchScope,
     async (req, res) => {
       try {
@@ -118,7 +116,6 @@ export function registerBranchRoutes(app: Express) {
     tenantAuth,
     requireTenantAdmin,
     requireFeature("branches"),
-    requirePlanCodes(["ESCALA"]),
     blockBranchScope,
     async (req, res) => {
       try {

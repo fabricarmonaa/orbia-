@@ -187,7 +187,7 @@ export async function seedDatabase() {
           CASHIERS: true,
         },
         limitsJson: {
-          customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 20,
+          customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 10,
           staff_max: 50, max_staff_users: 50, max_staff_per_branch: 10,
           orders_month_max: -1, max_orders_month: -1,
           tracking_retention_min_hours: 1, tracking_retention_max_hours: 720,
@@ -201,7 +201,7 @@ export async function seedDatabase() {
         set: {
           name: "Escala",
           limitsJson: {
-            customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 20,
+            customers_max: 5000, branches_max: 5, max_branches: 5, cashiers_max: 10,
             staff_max: 50, max_staff_users: 50, max_staff_per_branch: 10,
             orders_month_max: -1, max_orders_month: -1,
             tracking_retention_min_hours: 1, tracking_retention_max_hours: 720,
