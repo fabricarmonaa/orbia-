@@ -162,7 +162,7 @@ export const PLAN_DEFAULTS: Record<string, {
         limits: {
             customers_max: 5000,
             branches_max: 5,
-            cashiers_max: 20,
+            cashiers_max: 10,
             staff_max: 50,
             orders_month_max: -1,
             tracking_retention_min_hours: 1,
