@@ -71,6 +71,7 @@ export default function CashPage() {
 
   const [openingAmount, setOpeningAmount] = useState("");
   const [closingAmount, setClosingAmount] = useState("");
+  const [closeNote, setCloseNote] = useState("");
 
   useEffect(() => {
     fetchData();
@@ -132,10 +133,12 @@ export default function CashPage() {
     try {
       await apiRequest("PATCH", `/api/cash/sessions/${openSession.id}/close`, {
         closingAmount: parseFloat(closingAmount) || 0,
+        closeNote: closeNote.trim() || null,
       });
       toast({ title: "Caja cerrada" });
       setCloseDialogOpen(false);
       setClosingAmount("");
+      setCloseNote("");
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -412,6 +415,15 @@ export default function CashPage() {
                                 data-testid="input-closing-amount"
                               />
                             </div>
+                            <div className="space-y-2">
+                              <Label>Nota de cierre (opcional)</Label>
+                              <Input
+                                placeholder="Ej: faltante por cambio chico"
+                                value={closeNote}
+                                onChange={(e) => setCloseNote(e.target.value)}
+                                data-testid="input-close-note"
+                              />
+                            </div>
                             <Button type="submit" className="w-full" data-testid="button-confirm-close">
                               Cerrar Caja
                             </Button>
@@ -595,6 +607,27 @@ export default function CashPage() {
               </CardContent>
             </Card>
           </div>
+
+
+
+          {canUseSessions && sessions.some((s: any) => s.status === "closed" && s.closeNote) && (
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold">Notas de cierres recientes</h3>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {sessions
+                  .filter((s: any) => s.status === "closed" && s.closeNote)
+                  .slice(0, 6)
+                  .map((s: any) => (
+                    <div key={s.id} className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">Cierre {formatDate(s.closedAt)}</p>
+                      <p className="text-sm font-medium">{s.closeNote}</p>
+                    </div>
+                  ))}
+              </CardContent>
+            </Card>
+          )}
 
           <div>
             <h3 className="font-semibold mb-3">Movimientos</h3>

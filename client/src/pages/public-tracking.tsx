@@ -35,9 +35,11 @@ export default function PublicTracking() {
         customFields: payload.customFields || [],
         trackingLayout: payload.trackingLayout || "classic",
         trackingTosText: payload.trackingTosText,
+        trackingSettings: payload.trackingSettings,
+        tosUrl: payload.tosUrl,
       });
       const payloadBranding = payload.branding || {};
-      const logoFallback = payloadBranding.logoUrl || appBranding.orbiaLogoUrl || null;
+      const logoFallback = payloadBranding.logoUrl || null;
       setBranding({
         ...defaultTenantBranding,
         ...payloadBranding,
@@ -83,6 +85,8 @@ export default function PublicTracking() {
         customFields: [],
         trackingLayout: "classic",
         trackingTosText: "",
+        trackingSettings: undefined,
+        tosUrl: null,
       }}
       appName={appBranding.orbiaName}
       loading={loading}

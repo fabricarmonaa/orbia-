@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
+import { DEFAULT_TRACKING_SETTINGS, mergeTrackingSettings } from "@shared/tracking-settings";
 
 export interface TrackingOrderData {
   orderNumber: number;
@@ -31,6 +32,8 @@ export interface TrackingOrderData {
   }>;
   trackingLayout: string;
   trackingTosText?: string | null;
+  trackingSettings?: Partial<typeof DEFAULT_TRACKING_SETTINGS>;
+  tosUrl?: string | null;
 }
 
 interface TrackingViewProps {
@@ -88,6 +91,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   }
 
   const layout = order.trackingLayout || "classic";
+  const trackingSettings = mergeTrackingSettings(order.trackingSettings);
   const colors = branding.colors;
   const bgColor = colors.background || "#ffffff";
   const textColor = colors.text || getContrastText(bgColor);
@@ -99,7 +103,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
         <img
           src={branding.logoUrl}
           alt={branding.displayName}
-          className="w-14 h-14 rounded-md object-cover mx-auto mb-3"
+          className="w-16 h-16 rounded-md object-contain mx-auto mb-3 bg-white/80 p-1"
           data-testid="img-tracking-logo"
         />
       ) : (
@@ -124,10 +128,12 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
       <CardContent className="pt-6">
         <div className="flex items-center justify-between gap-4 mb-4">
           <div>
-            <p className="text-sm text-muted-foreground">Pedido</p>
-            <p className="text-xl font-bold" data-testid="text-tracking-order-number">
-              #{order.orderNumber}
-            </p>
+            {trackingSettings.showOrderNumber ? <p className="text-sm text-muted-foreground">Pedido</p> : null}
+            {trackingSettings.showOrderNumber ? (
+              <p className="text-xl font-bold" data-testid="text-tracking-order-number">
+                #{order.orderNumber}
+              </p>
+            ) : null}
           </div>
           <Badge
             style={{ backgroundColor: order.statusColor || colors.trackingBadge, color: "#fff" }}
@@ -138,31 +144,36 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
           </Badge>
         </div>
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <p className="text-muted-foreground">Tipo</p>
-            <p className="font-medium">{order.type}</p>
-          </div>
+          {trackingSettings.showOrderType ? (
+            <div>
+              <p className="text-muted-foreground">Tipo</p>
+              <p className="font-medium">{order.type}</p>
+            </div>
+          ) : null}
           <div>
             <p className="text-muted-foreground">Cliente</p>
             <p className="font-medium">{order.customerName || "-"}</p>
           </div>
-          <div>
-            <p className="text-muted-foreground">Creado</p>
-            <p className="font-medium">{formatDate(order.createdAt)}</p>
-          </div>
-          {order.closedAt && (
+          {trackingSettings.showDates ? (
+            <div>
+              <p className="text-muted-foreground">Creado</p>
+              <p className="font-medium">{formatDate(order.createdAt)}</p>
+            </div>
+          ) : null}
+          {trackingSettings.showDates && order.closedAt ? (
             <div>
               <p className="text-muted-foreground">Cerrado</p>
               <p className="font-medium">{formatDate(order.closedAt)}</p>
             </div>
-          )}
+          ) : null}
           {order.customFields?.map((field, idx) => (
-            <div key={idx} className="col-span-2">
-              <p className="text-muted-foreground">{field.label}: <span className="font-medium text-foreground">{field.value || "-"}</span></p>
+            <div key={idx} className="col-span-2 rounded-md border p-2">
+              <p className="text-muted-foreground">{field.label}</p>
+              <p className="font-medium text-foreground">{field.value || "-"}</p>
               {field.downloadUrl ? (
-                <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a>
+                <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver o descargar archivo</a>
               ) : null}
-              <p className="text-xs text-muted-foreground">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p>
+              {trackingSettings.showDates ? <p className="text-xs text-muted-foreground">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p> : null}
             </div>
           ))}
         </div>
@@ -269,10 +280,12 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     </div>
   );
 
-  const historySection = layout === "cards" ? cardsHistory
-    : layout === "stepper" ? stepperHistory
-      : layout === "minimal" ? minimalHistory
-        : classicHistory;
+  const historySection = trackingSettings.showOnlyCurrentStatus || !trackingSettings.showHistory
+    ? null
+    : layout === "cards" ? cardsHistory
+      : layout === "stepper" ? stepperHistory
+        : layout === "minimal" ? minimalHistory
+          : classicHistory;
 
   const commentsSection = order.publicComments.length > 0 && (
     <Card>
@@ -292,11 +305,14 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     </Card>
   );
 
-  const tosSection = order.trackingTosText && (
-    <div className="text-xs p-3 rounded-md" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>
-      {order.trackingTosText}
+  const tosSection = (order.trackingTosText || order.tosUrl) ? (
+    <div className="text-xs p-3 rounded-md flex items-center justify-between gap-2" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>
+      <span>{order.trackingTosText || "Podés consultar nuestros términos y condiciones."}</span>
+      {order.tosUrl ? (
+        <a href={order.tosUrl} className="underline font-medium" style={{ color: textColor }}>Términos y condiciones</a>
+      ) : null}
     </div>
-  );
+  ) : null;
 
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
@@ -308,7 +324,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
         {tosSection}
         {mode === "public" && (
           <p className="text-center text-xs py-4" style={{ color: mutedText }}>
-            Powered by {appName || "ORBIA"}
+            Desarrollado por {appName || "ORBIA"}
           </p>
         )}
       </div>

@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
 const DEFAULT_MAX_UPLOAD_BYTES = parseInt(process.env.MAX_UPLOAD_BYTES || "2000000", 10);
-const DEFAULT_LOGO_UPLOAD_BYTES = parseInt(process.env.MAX_LOGO_UPLOAD_BYTES || "1000000", 10);
+const DEFAULT_LOGO_UPLOAD_BYTES = parseInt(process.env.MAX_LOGO_UPLOAD_BYTES || "5000000", 10);
 
 const MIME_EXTENSION_MAP: Record<string, string> = {
   "image/png": ".png",
@@ -88,7 +88,7 @@ export function uploadErrorHandler(err: any, _req: Request, res: Response, next:
   if (!err) return next();
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({ error: "Archivo demasiado grande", code: "UPLOAD_TOO_LARGE" });
+      return res.status(413).json({ error: "El archivo supera el tamaño máximo permitido.", code: "UPLOAD_TOO_LARGE", maxBytes: DEFAULT_LOGO_UPLOAD_BYTES });
     }
     return res.status(400).json({ error: "Error al subir archivo", code: "UPLOAD_ERROR" });
   }

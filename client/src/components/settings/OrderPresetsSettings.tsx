@@ -19,7 +19,7 @@ type OrderField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "NUMBER" | "FILE";
+  fieldType: "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA";
   required: boolean;
   visibleInTracking: boolean;
   sortOrder: number;
@@ -82,10 +82,13 @@ export function OrderPresetsSettings() {
   const [openEditField, setOpenEditField] = useState(false);
   const [createForm, setCreateForm] = useState({
     label: "",
-    fieldType: "TEXT" as "TEXT" | "NUMBER" | "FILE",
+    fieldType: "TEXT" as "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA",
     required: false,
     visibleInTracking: false,
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
+    selectOptionsText: "",
+    moneyCurrency: "ARS",
+    moneyDefaultDirection: 1 as 1 | -1,
   });
   const [editTarget, setEditTarget] = useState<OrderField | null>(null);
   const [editForm, setEditForm] = useState({
@@ -232,12 +235,19 @@ export function OrderPresetsSettings() {
       if (createForm.fieldType === "FILE") {
         payload.config = { allowedExtensions: createForm.allowedExtensions };
       }
+      if (createForm.fieldType === "SELECT") {
+        const options = createForm.selectOptionsText.split(",").map((x) => x.trim()).filter(Boolean).map((value) => ({ value, label: value }));
+        payload.config = { options };
+      }
+      if (createForm.fieldType === "MONEY") {
+        payload.config = { currency: createForm.moneyCurrency || "ARS", defaultDirection: createForm.moneyDefaultDirection || 1 };
+      }
       await apiJson(`/api/order-presets/presets/${activePresetId}/fields`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"] });
+      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptionsText: "", moneyCurrency: "ARS", moneyDefaultDirection: 1 });
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {

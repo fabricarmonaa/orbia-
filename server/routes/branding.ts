@@ -2,12 +2,13 @@ import type { Express } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { tenantAuth, requireTenantAdmin, requireRoleAny, superAuth, getTenantPlan } from "../auth";
-import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams } from "../middleware/validate";
 import { db } from "../db";
 import { eq } from "drizzle-orm";
 import { tenants } from "@shared/schema";
 import { isValidTenantSlug, normalizeTenantSlug, sanitizeTosContent } from "../services/tos";
+import { normalizeInstagramUrl, normalizeWhatsapp, normalizeWebsite } from "@shared/validators/links";
 
 const colorValue = z
   .string()
@@ -22,27 +23,6 @@ const colorValue = z
       /^var\(--[a-zA-Z0-9-]+\)$/.test(value) ||
       /^[a-zA-Z]+$/.test(value),
     { message: "Color inválido" }
-  );
-
-const linkValue = z
-  .string()
-  .trim()
-  .max(200)
-  .refine(
-    (value) => value === "" || /^https?:\/\//.test(value) || /^www\./.test(value),
-    { message: "Link inválido" }
-  );
-
-const whatsappValue = z
-  .string()
-  .trim()
-  .max(50)
-  .refine(
-    (value) =>
-      value === "" ||
-      /^(\+?\d{6,15})$/.test(value) ||
-      /^https?:\/\/wa\.me\//.test(value),
-    { message: "Whatsapp inválido" }
   );
 
 const tenantBrandingSchema = z.object({
@@ -68,15 +48,13 @@ const tenantBrandingSchema = z.object({
     .optional(),
   links: z
     .object({
-      instagram: linkValue.optional(),
-      whatsapp: whatsappValue.optional(),
-      web: linkValue.optional(),
+      instagram: z.string().trim().max(200).optional(),
+      whatsapp: z.string().trim().max(100).optional(),
+      web: z.string().trim().max(200).optional(),
     })
     .optional(),
   pdfConfig: z
     .object({
-      headerText: z.string().transform((value) => sanitizeShortText(value, 120)).optional(),
-      footerText: z.string().transform((value) => sanitizeLongText(value, 120)).optional(),
       showLogo: z.boolean().optional(),
     })
     .optional(),
@@ -100,6 +78,24 @@ const slugSchema = z.object({
     message: "Slug inválido",
   }),
 });
+
+function normalizeBrandingLinks(links: { instagram?: string; whatsapp?: string; web?: string } | undefined) {
+  if (!links) return { normalized: undefined, fieldErrors: {} as Record<string, string> };
+
+  const instagram = normalizeInstagramUrl(links.instagram);
+  const whatsapp = normalizeWhatsapp(links.whatsapp);
+  const web = normalizeWebsite(links.web);
+
+  const fieldErrors: Record<string, string> = {};
+  if (instagram.error) fieldErrors.instagram = instagram.error;
+  if (whatsapp.error) fieldErrors.whatsapp = whatsapp.error;
+  if (web.error) fieldErrors.web = web.error;
+
+  return {
+    normalized: { instagram: instagram.value, whatsapp: whatsapp.value, web: web.value },
+    fieldErrors,
+  };
+}
 
 export function registerBrandingRoutes(app: Express) {
   app.get("/api/public/tenant/:slug/tos", validateParams(publicSlugSchema), async (req, res) => {
@@ -136,20 +132,29 @@ export function registerBrandingRoutes(app: Express) {
       const payload = req.body as z.infer<typeof tenantBrandingSchema>;
       const plan = await getTenantPlan(req.auth!.tenantId!);
       const isEconomic = (plan?.planCode || "").toUpperCase() === "ECONOMICO";
+      const { normalized, fieldErrors } = normalizeBrandingLinks(payload.links);
+      if (Object.keys(fieldErrors).length > 0) {
+        return res.status(422).json({
+          code: "BRANDING_LINKS_INVALID",
+          error: "Revisá los links cargados.",
+          fieldErrors,
+        });
+      }
+
       await storage.upsertTenantBranding(req.auth!.tenantId!, {
         logoUrl: payload.logoUrl,
         displayName: payload.displayName,
         colorsJson: payload.colors ?? undefined,
         textsJson: payload.texts ?? undefined,
-        linksJson: isEconomic ? { instagram: "", whatsapp: "", web: "" } : (payload.links ?? undefined),
-        pdfConfigJson: payload.pdfConfig ?? undefined,
+        linksJson: isEconomic ? { instagram: "", whatsapp: "", web: "" } : (normalized ?? undefined),
+        pdfConfigJson: payload.pdfConfig ? { showLogo: payload.pdfConfig.showLogo } : undefined,
       });
       const data = await storage.getTenantBranding(req.auth!.tenantId!);
       const version = data?.updatedAt ? new Date(data.updatedAt).getTime() : 1;
       res.json({ data: { ...data, version } });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+        return res.status(422).json({ error: "Datos inválidos", code: "BRANDING_INVALID", details: err.errors });
       }
       res.status(500).json({ error: err.message });
     }
@@ -224,7 +229,7 @@ export function registerBrandingRoutes(app: Express) {
       res.json({ data: { ...data, version } });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
-        return res.status(400).json({ error: "Datos inválidos", details: err.errors });
+        return res.status(422).json({ error: "Datos inválidos", code: "BRANDING_INVALID", details: err.errors });
       }
       res.status(500).json({ error: err.message });
     }

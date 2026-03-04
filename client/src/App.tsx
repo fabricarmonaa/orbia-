@@ -32,6 +32,7 @@ function Router() {
       <Route path="/delivery/login" component={DeliveryLogin} />
       <Route path="/delivery/panel" component={DeliveryPanel} />
       <Route path="/tracking/:id" component={PublicTracking} />
+      <Route path="/tos/:publicToken" component={PublicTosPage} />
       <Route path="/t/:slug/tos" component={PublicTosPage} />
       <Route component={NotFound} />
     </Switch>

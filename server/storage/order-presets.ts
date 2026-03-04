@@ -12,7 +12,7 @@ import { badRequest, notFound, HttpError } from "../lib/http-errors";
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-const ALLOWED_FIELD_TYPES = new Set(["TEXT", "NUMBER", "FILE"] as const);
+const ALLOWED_FIELD_TYPES = new Set(["TEXT", "NUMBER", "FILE", "MONEY", "BOOLEAN", "DATE", "SELECT", "TEXTAREA"] as const);
 const ALLOWED_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
 const MAX_PRESETS_PER_TYPE = 3;
 
@@ -47,19 +47,44 @@ export function slugifyPresetCode(label: string): string {
     .slice(0, 80) || "preset";
 }
 
-function normalizeFieldType(value: string): "TEXT" | "NUMBER" | "FILE" {
+function normalizeFieldType(value: string): "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA" {
   const normalized = String(value || "").trim().toUpperCase();
   if (!ALLOWED_FIELD_TYPES.has(normalized as any)) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "fieldType inválido");
   }
-  return normalized as "TEXT" | "NUMBER" | "FILE";
+  return normalized as "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA";
 }
 
-function normalizeConfig(fieldType: "TEXT" | "NUMBER" | "FILE", config: unknown): Record<string, unknown> {
+function normalizeConfig(fieldType: "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA", config: unknown): Record<string, unknown> {
   const base =
     config && typeof config === "object" && !Array.isArray(config)
       ? { ...(config as Record<string, unknown>) }
       : {};
+
+  if (fieldType === "SELECT") {
+    const optionsRaw = (base.options ?? []) as unknown;
+    if (!Array.isArray(optionsRaw) || optionsRaw.length === 0) {
+      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "En campos de selección debés cargar opciones");
+    }
+    const normalizedOptions = optionsRaw.map((item) => {
+      const value = String((item as any)?.value || "").trim();
+      const label = String((item as any)?.label || "").trim();
+      if (!value || !label) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Cada opción debe incluir value y label");
+      return { value, label };
+    });
+    const uniqueValues = new Set(normalizedOptions.map((o) => o.value));
+    if (uniqueValues.size !== normalizedOptions.length) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Las opciones no pueden repetirse");
+    base.options = normalizedOptions;
+    return base;
+  }
+
+  if (fieldType === "MONEY") {
+    const currency = String(base.currency || "ARS").trim().toUpperCase();
+    base.currency = currency || "ARS";
+    const direction = Number(base.defaultDirection || 1);
+    base.defaultDirection = direction >= 0 ? 1 : -1;
+    return base;
+  }
 
   if (fieldType !== "FILE") return base;
 
@@ -114,6 +139,7 @@ async function getTypeOrThrow(tenantId: number, code: string) {
       orderTypeId: typeRow.id,
       code: "default",
       label: "Default",
+      isDefault: true,
       isActive: true,
       sortOrder: 0,
     });
@@ -200,6 +226,7 @@ export const orderPresetsStorage = {
           orderTypeId: typeRow.id,
           code: "default",
           label: "Default",
+          isDefault: true,
           isActive: true,
           sortOrder: 0,
         });
@@ -290,11 +317,13 @@ export const orderPresetsStorage = {
       .orderBy(desc(orderTypePresets.sortOrder))
       .limit(1);
 
+    const hasDefault = existingActive.length > 0;
     const values: InsertOrderTypePreset = {
       tenantId,
       orderTypeId: typeRow.id,
       code: presetCode,
       label,
+      isDefault: !hasDefault,
       isActive: true,
       sortOrder: (maxSort?.sortOrder ?? -1) + 1,
     };
@@ -572,6 +601,29 @@ export const orderPresetsStorage = {
     return { fields: result.fields, type: { code } };
   },
 
+  async setDefaultPreset(tenantId: number, presetId: number) {
+    const preset = await getPresetOrThrow(tenantId, presetId);
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(orderTypePresets)
+        .set({ isDefault: false })
+        .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, preset.orderTypeId)));
+
+      await tx
+        .update(orderTypePresets)
+        .set({ isDefault: true })
+        .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)));
+    });
+
+    const [saved] = await db
+      .select()
+      .from(orderTypePresets)
+      .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)));
+
+    return saved;
+  },
+
   async deactivateField(tenantId: number, fieldId: number) {
     const [saved] = await db
       .update(orderFieldDefinitions)
@@ -608,6 +660,7 @@ export const orderPresetsStorage = {
           orderTypeId,
           code: "default",
           label: "Default",
+          isDefault: true,
           isActive: true,
           sortOrder: 0,
         })

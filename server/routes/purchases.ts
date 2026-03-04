@@ -3,10 +3,14 @@ import { z } from "zod";
 import { and, count, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
+import { tenantAuth, requireRoleAny } from "../auth";
+import { resolveBranchScope, requireBranchAccess } from "../middleware/branch-scope";
 import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
+import { refreshMetricsForDate } from "../services/metrics-refresh";
+import { logAuditEventFromRequest } from "../services/audit";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
+import { refreshAnalyticsViews } from "../services/analytics";
 
 const itemSchema = z.object({ productId: z.coerce.number().int().positive(), quantity: z.coerce.number().positive(), unitPrice: z.coerce.number().min(0) });
 const createPurchaseSchema = z.object({
@@ -48,12 +52,28 @@ function migrationMissingError(err: any) {
   return err?.code === "42P01" || /relation .* does not exist|does not exist/i.test(msg);
 }
 
+
+async function registerPurchaseCashImpact(params: { tenantId: number; userId: number; branchId: number | null; totalAmount: number; purchaseId: number; note: string; }) {
+  const openSession = await storage.getOpenSession(params.tenantId, params.branchId || null);
+  await storage.createCashMovement({
+    tenantId: params.tenantId,
+    sessionId: openSession?.id || null,
+    branchId: params.branchId || null,
+    type: "egreso",
+    amount: params.totalAmount.toFixed(2),
+    method: "efectivo",
+    category: "compras",
+    description: params.note,
+    createdById: params.userId,
+  });
+}
+
 export function registerPurchaseCrudRoutes(app: Express) {
-  app.post("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateBody(createPurchaseSchema), async (req, res) => {
+  app.post("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), resolveBranchScope(true), requireBranchAccess, validateBody(createPurchaseSchema), async (req, res) => {
     const tenantId = req.auth!.tenantId!;
     const userId = req.auth!.userId;
     const payload = req.body as z.infer<typeof createPurchaseSchema>;
-    const branchId = req.auth?.scope === "BRANCH" ? req.auth.branchId : (payload.branchId ?? null);
+    const branchId = (req as any).branchScopeId ? Number((req as any).branchScopeId) : (req.auth?.scope === "BRANCH" ? req.auth.branchId : (payload.branchId ?? null));
 
     try {
       const created = await db.transaction(async (tx) => {
@@ -121,6 +141,10 @@ export function registerPurchaseCrudRoutes(app: Express) {
         const [finalPurchase] = await tx.update(purchases).set({ totalAmount: String(total.toFixed(2)), updatedAt: new Date() }).where(eq(purchases.id, purchase.id)).returning();
         return finalPurchase;
       });
+      await registerPurchaseCashImpact({ tenantId, userId, branchId: branchId || null, totalAmount: Number(created.totalAmount || 0), purchaseId: created.id, note: `Compra #${created.id}` });
+      await refreshMetricsForDate(tenantId, new Date());
+      logAuditEventFromRequest(req, { action: "compra.crear", entityType: "purchase", entityId: created.id, metadata: { totalAmount: created.totalAmount, branchId } });
+      refreshAnalyticsViews();
       return res.status(201).json({ data: created });
     } catch (err: any) {
       console.error("[purchases] PURCHASE_CREATE_ERROR", err);
@@ -130,7 +154,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
     }
   });
 
-  app.post("/api/purchases/manual", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateBody(manualPurchaseSchema), async (req, res) => {
+  app.post("/api/purchases/manual", tenantAuth, requireRoleAny(["admin", "staff"]), resolveBranchScope(true), requireBranchAccess, validateBody(manualPurchaseSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
@@ -247,6 +271,10 @@ export function registerPurchaseCrudRoutes(app: Express) {
         };
       });
 
+      await registerPurchaseCashImpact({ tenantId, userId, branchId: branchId || null, totalAmount: Number(created.totalAmount || 0), purchaseId: created.purchaseId, note: `Compra manual #${created.purchaseId}` });
+      await refreshMetricsForDate(tenantId, new Date());
+      logAuditEventFromRequest(req, { action: "compra.manual.crear", entityType: "purchase", entityId: created.purchaseId, metadata: { totalAmount: created.totalAmount, branchId } });
+      refreshAnalyticsViews();
       return res.status(201).json(created);
     } catch (err: any) {
       console.error("[purchases] PURCHASE_MANUAL_ERROR", err);
@@ -255,7 +283,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
     }
   });
 
-  app.get("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, validateQuery(listQuery), async (req, res) => {
+  app.get("/api/purchases", tenantAuth, requireRoleAny(["admin", "staff"]), resolveBranchScope(false), requireBranchAccess, validateQuery(listQuery), async (req, res) => {
     let tenantId = 0;
     try {
       tenantId = req.auth!.tenantId!;

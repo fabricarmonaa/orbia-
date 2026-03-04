@@ -6,6 +6,7 @@ import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
 import { getTenantMonthlyMetricsSummary } from "../services/metrics-refresh";
+import { getTenantLimitsSnapshot } from "../services/tenant-limits";
 import bcrypt from "bcryptjs";
 import { generateTenantExportZip, validateExportToken } from "../services/tenant-account";
 import { deleteTenantPermanent } from "../services/delete-tenant-permanent";
@@ -14,6 +15,10 @@ import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-w
 import { pool } from "../db";
 import { getStatuses } from "../services/statuses";
 import { getTenantAddons as getTenantAddonsFlags } from "../services/tenant-addons";
+import { mergeTrackingSettings } from "@shared/tracking-settings";
+import { getPlanDefaultTrackingHours, resolveTrackingHours } from "../services/tracking-ttl";
+import { applyBusinessTemplate } from "../services/business-templates";
+import { logAuditEventFromRequest } from "../services/audit";
 
 
 const changePasswordSchema = z.object({
@@ -32,13 +37,25 @@ const tenantConfigSchema = z.object({
   businessType: z.string().trim().max(80).optional(),
   businessDescription: z.string().trim().max(500).optional(),
   currency: z.string().trim().max(10).optional(),
-  trackingExpirationHours: z.coerce.number().int().min(1).max(168).optional(),
+  trackingExpirationHours: z.coerce.number().int().min(1).max(720).optional(),
   language: z.string().trim().max(10).optional(),
   trackingLayout: z.string().trim().max(40).optional(),
   trackingPrimaryColor: z.string().trim().max(30).optional(),
   trackingAccentColor: z.string().trim().max(30).optional(),
   trackingBgColor: z.string().trim().max(30).optional(),
   trackingTosText: z.string().trim().max(200).optional(),
+  trackingSettings: z.object({
+    showOrderNumber: z.boolean().optional(),
+    showOrderType: z.boolean().optional(),
+    showDates: z.boolean().optional(),
+    showHistory: z.boolean().optional(),
+    showOnlyCurrentStatus: z.boolean().optional(),
+  }).optional(),
+});
+
+
+const applyTemplateSchema = z.object({
+  templateCode: z.enum(["SERVICIO_TECNICO", "TIENDA_ROPA", "GENERAL"]),
 });
 
 const dashboardSettingsSchema = z.object({
@@ -177,6 +194,48 @@ export function registerTenantRoutes(app: Express) {
     }
   });
 
+  app.get("/api/tenant/limits", tenantAuth, requireTenantAdmin, async (req, res) => {
+    try {
+      const snapshot = await getTenantLimitsSnapshot(req.auth!.tenantId!);
+      if (!snapshot) {
+        return res.status(404).json({ error: "Plan no encontrado", code: "PLAN_NOT_FOUND" });
+      }
+      return res.json({ data: snapshot });
+    } catch (err: any) {
+      return res.status(500).json({ error: "No se pudieron obtener los límites del plan", code: "TENANT_LIMITS_ERROR" });
+    }
+  });
+
+
+
+  app.post("/api/tenants/apply-template", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const { templateCode } = applyTemplateSchema.parse(req.body || {});
+      const result = await applyBusinessTemplate(tenantId, templateCode);
+      logAuditEventFromRequest(req, {
+        action: "template.aplicar",
+        entityType: "tenant",
+        entityId: tenantId,
+        metadata: {
+          templateCode: result.templateCode,
+          createdPresets: result.createdPresets,
+          createdFields: result.createdFields,
+          createdOptionLists: result.createdOptionLists,
+          eventCode: "TEMPLATE_APPLIED",
+        },
+      });
+      return res.json({ data: result });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Plantilla inválida", details: err.errors });
+      }
+      if (err?.statusCode) {
+        return res.status(err.statusCode).json({ error: err.message, code: err.code });
+      }
+      return res.status(500).json({ error: "No se pudo aplicar la plantilla", code: "TEMPLATE_APPLY_ERROR" });
+    }
+  });
 
   app.put("/api/me/profile", tenantAuth, async (req, res) => {
     try {
@@ -200,8 +259,14 @@ export function registerTenantRoutes(app: Express) {
 
   app.get("/api/config", tenantAuth, async (req, res) => {
     try {
-      const config = await storage.getConfig(req.auth!.tenantId!);
-      res.json({ data: config || null });
+      const tenantId = req.auth!.tenantId!;
+      const [config, plan] = await Promise.all([
+        storage.getConfig(tenantId),
+        getTenantPlan(tenantId),
+      ]);
+      const trackingExpirationHours = resolveTrackingHours(config?.trackingExpirationHours, plan?.planCode);
+      const trackingSettings = mergeTrackingSettings((config as any)?.trackingSettings as Record<string, unknown> | undefined);
+      res.json({ data: config ? { ...config, trackingExpirationHours, trackingSettings } : { trackingExpirationHours: getPlanDefaultTrackingHours(plan?.planCode), trackingSettings } });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -215,7 +280,7 @@ export function registerTenantRoutes(app: Express) {
       if (plan && payload.trackingExpirationHours !== undefined) {
         const hours = parseInt(String(payload.trackingExpirationHours));
         const minH = plan.limits.tracking_retention_min_hours || 1;
-        const maxH = plan.limits.tracking_retention_max_hours || 24;
+        const maxH = plan.limits.tracking_retention_max_hours || getPlanDefaultTrackingHours(plan.planCode);
         if (hours < minH || hours > maxH) {
           return res.status(400).json({
             error: `Tu plan "${plan.name}" permite entre ${minH}h y ${maxH}h de retención de tracking.`,
@@ -225,9 +290,15 @@ export function registerTenantRoutes(app: Express) {
           });
         }
       }
+      const normalizedTrackingSettings = payload.trackingSettings ? mergeTrackingSettings(payload.trackingSettings as any) : undefined;
+      const normalizedTrackingHours = payload.trackingExpirationHours !== undefined
+        ? resolveTrackingHours(payload.trackingExpirationHours, plan?.planCode)
+        : undefined;
       const config = await storage.upsertConfig({
         tenantId,
         ...payload,
+        trackingExpirationHours: normalizedTrackingHours,
+        trackingSettings: normalizedTrackingSettings as any,
       });
       res.json({ data: config });
     } catch (err: any) {

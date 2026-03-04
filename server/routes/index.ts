@@ -30,6 +30,8 @@ import { registerAttachmentRoutes } from "./attachments";
 import { registerAiRoutes } from "./ai";
 import { registerPublicRoutes } from "./public";
 import { registerAnalyticsRoutes } from "./analytics";
+import { registerDynamicFieldsRoutes } from "./dynamic-fields";
+import { registerOptionListsRoutes } from "./option-lists";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -65,6 +67,8 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerPurchaseCrudRoutes(app);
   registerCustomerRoutes(app);
   registerOrderPresetRoutes(app);
+  registerDynamicFieldsRoutes(app);
+  registerOptionListsRoutes(app);
   registerAttachmentRoutes(app);
   return httpServer;
 }

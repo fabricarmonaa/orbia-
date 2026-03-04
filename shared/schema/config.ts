@@ -30,6 +30,7 @@ export const tenantConfig = pgTable("tenant_config", {
   trackingAccentColor: varchar("tracking_accent_color", { length: 20 }).default("#8b5cf6"),
   trackingBgColor: varchar("tracking_bg_color", { length: 20 }).default("#ffffff"),
   trackingTosText: text("tracking_tos_text"),
+  trackingSettings: jsonb("tracking_settings").default({}),
   configJson: jsonb("config_json").default({}),
 });
 

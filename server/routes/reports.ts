@@ -8,7 +8,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { tenantAuth, requireTenantAdmin, requireNotPlanCodes } from "../auth";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { db, pool } from "../db";
-import { cashMovements, expenseDefinitions, tenants } from "@shared/schema";
+import { cashMovements, cashSessions, expenseDefinitions, tenants } from "@shared/schema";
 import { storage } from "../storage";
 import { getTenantMonthlyMetricsSummary, refreshTenantMetrics } from "../services/metrics-refresh";
 
@@ -155,7 +155,14 @@ export function registerReportRoutes(app: Express) {
       const [incomeRow] = await db.select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` }).from(cashMovements).where(and(eq(cashMovements.tenantId, tenantId), eq(cashMovements.type, "ingreso"), sql`${cashMovements.createdAt} >= ${rangeStart}`, sql`${cashMovements.createdAt} < ${rangeEnd}`));
       const [expenseRow] = await db.select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` }).from(cashMovements).where(and(eq(cashMovements.tenantId, tenantId), eq(cashMovements.type, "egreso"), sql`${cashMovements.createdAt} >= ${rangeStart}`, sql`${cashMovements.createdAt} < ${rangeEnd}`));
       const [fixedRow] = await db.select({ total: sql<string>`COALESCE(SUM(${expenseDefinitions.defaultAmount}), 0)` }).from(expenseDefinitions).where(and(eq(expenseDefinitions.tenantId, tenantId), eq(expenseDefinitions.type, "FIXED"), eq(expenseDefinitions.isActive, true)));
-      const summary = await storage.upsertTenantMonthlySummary({ tenantId, year, month, totalsJson: { income: parseFloat(incomeRow?.total || "0"), expenses: parseFloat(expenseRow?.total || "0"), fixedImpact: parseFloat(fixedRow?.total || "0"), net: parseFloat(incomeRow?.total || "0") - parseFloat(expenseRow?.total || "0") - parseFloat(fixedRow?.total || "0") } });
+      const sessionNotes = await db.select({
+        id: cashSessions.id,
+        openedAt: cashSessions.openedAt,
+        closedAt: cashSessions.closedAt,
+        closingAmount: cashSessions.closingAmount,
+        closeNote: cashSessions.closeNote,
+      }).from(cashSessions).where(and(eq(cashSessions.tenantId, tenantId), sql`${cashSessions.closedAt} >= ${rangeStart}`, sql`${cashSessions.closedAt} < ${rangeEnd}`, sql`${cashSessions.closeNote} IS NOT NULL`, sql`length(trim(${cashSessions.closeNote})) > 0`)).orderBy(sql`${cashSessions.closedAt} DESC`);
+      const summary = await storage.upsertTenantMonthlySummary({ tenantId, year, month, totalsJson: { income: parseFloat(incomeRow?.total || "0"), expenses: parseFloat(expenseRow?.total || "0"), fixedImpact: parseFloat(fixedRow?.total || "0"), net: parseFloat(incomeRow?.total || "0") - parseFloat(expenseRow?.total || "0") - parseFloat(fixedRow?.total || "0"), closeNotes: sessionNotes } });
       res.json({ data: summary, cached: false });
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "REPORT_INVALID" });

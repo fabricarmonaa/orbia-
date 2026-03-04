@@ -3,6 +3,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tenants } from "./tenants";
 import { branches } from "./branches";
+import { users } from "./users";
 
 export const cashiers = pgTable(
   "cashiers",
@@ -13,6 +14,10 @@ export const cashiers = pgTable(
     name: varchar("name", { length: 120 }).notNull(),
     pinHash: varchar("pin_hash", { length: 255 }).notNull(),
     active: boolean("active").notNull().default(true),
+    isApproved: boolean("is_approved").notNull().default(false),
+    approvedAt: timestamp("approved_at"),
+    approvedByUserId: integer("approved_by_user_id").references(() => users.id),
+    revokedAt: timestamp("revoked_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

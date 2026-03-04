@@ -1,18 +1,22 @@
 import type { Express } from "express";
 import { storage } from "../storage";
-import { tenantAuth, enforceBranchScope } from "../auth";
+import { tenantAuth } from "../auth";
+import { resolveBranchScope, requireBranchAccess } from "../middleware/branch-scope";
 import { z } from "zod";
 import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
+import { logAuditEventFromRequest } from "../services/audit";
+import { refreshAnalyticsViews } from "../services/analytics";
 import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusId, normalizeDeliveryStatus } from "../services/statuses";
 import { db } from "../db";
-import { and, count, eq } from "drizzle-orm";
-import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
+import { and, count, eq, sql } from "drizzle-orm";
+import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions, orderTypePresets, orders, orderStatusHistory } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
+import { getTenantEffectiveTrackingHours } from "../services/tracking-ttl";
 import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
 import { generatePublicToken } from "../utils/public-token";
 
@@ -40,6 +44,12 @@ const customFieldSchema = z.object({
   fieldKey: z.string().trim().min(1).max(80).optional(),
   valueText: z.string().optional().nullable(),
   valueNumber: z.union([z.string(), z.number()]).optional().nullable(),
+  valueBool: z.boolean().optional().nullable(),
+  valueDate: z.string().optional().nullable(),
+  valueJson: z.any().optional().nullable(),
+  valueMoneyAmount: z.union([z.string(), z.number()]).optional().nullable(),
+  valueMoneyDirection: z.coerce.number().int().optional().nullable(),
+  currency: z.string().max(3).optional().nullable(),
   fileId: z.union([z.string(), z.number()]).optional().nullable(),
   fileStorageKey: z.string().optional().nullable(),
   visibleOverride: z.boolean().optional().nullable(),
@@ -98,8 +108,57 @@ const updateOrderSchema = z.object({
 });
 
 
+
+async function applyDeliveredMoneyImpact(params: { tenantId: number; orderId: number; branchId: number | null; userId: number; orderPresetId?: number | null }) {
+  const [order] = await db.select({ id: orders.id, deliveredCashMovementId: orders.deliveredCashMovementId }).from(orders).where(and(eq(orders.id, params.orderId), eq(orders.tenantId, params.tenantId)));
+  if (!order || order.deliveredCashMovementId) return null;
+
+  const rows = await db.select({
+    valueMoneyAmount: orderFieldValues.valueMoneyAmount,
+    valueMoneyDirection: orderFieldValues.valueMoneyDirection,
+    currency: orderFieldValues.currency,
+    label: orderFieldDefinitions.label,
+    fieldType: orderFieldDefinitions.fieldType,
+  }).from(orderFieldValues)
+    .innerJoin(orderFieldDefinitions, eq(orderFieldDefinitions.id, orderFieldValues.fieldDefinitionId))
+    .where(and(eq(orderFieldValues.tenantId, params.tenantId), eq(orderFieldValues.orderId, params.orderId), eq(orderFieldDefinitions.fieldType, "MONEY")));
+
+  const breakdown = rows
+    .filter((r) => r.valueMoneyAmount != null)
+    .map((r) => ({
+      label: r.label,
+      amount: Number(r.valueMoneyAmount || 0),
+      direction: Number(r.valueMoneyDirection || 1) >= 0 ? 1 : -1,
+      currency: (r.currency || "ARS").toUpperCase(),
+    }));
+
+  if (breakdown.length === 0) return null;
+  const net = breakdown.reduce((acc, row) => acc + row.amount * row.direction, 0);
+  if (!Number.isFinite(net) || net === 0) return null;
+
+  const openSession = await storage.getOpenSession(params.tenantId, params.branchId || null);
+  const movement = await storage.createCashMovement({
+    tenantId: params.tenantId,
+    sessionId: openSession?.id || null,
+    branchId: params.branchId || null,
+    type: net > 0 ? "ingreso" : "egreso",
+    amount: Math.abs(net).toFixed(2),
+    method: "efectivo",
+    category: "pedido_money_fields",
+    description: `Impacto económico pedido #${params.orderId}`,
+    orderId: params.orderId,
+    createdById: params.userId,
+  });
+
+  await db.update(orders)
+    .set({ deliveredCashMovementId: movement.id, updatedAt: new Date() })
+    .where(and(eq(orders.id, params.orderId), eq(orders.tenantId, params.tenantId), sql`${orders.deliveredCashMovementId} IS NULL`));
+
+  return { movement, breakdown, net };
+}
+
 export function registerOrderRoutes(app: Express) {
-  app.get("/api/orders", tenantAuth, enforceBranchScope, validateQuery(ordersListQuerySchema), async (req, res) => {
+  app.get("/api/orders", tenantAuth, resolveBranchScope(false), requireBranchAccess, validateQuery(ordersListQuerySchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const query = ordersListQuerySchema.parse(req.query || {});
@@ -116,7 +175,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.post("/api/orders", tenantAuth, enforceBranchScope, validateBody(createOrderSchema), async (req, res) => {
+  app.post("/api/orders", tenantAuth, resolveBranchScope(true), requireBranchAccess, validateBody(createOrderSchema), async (req, res) => {
     try {
       const payload = req.body as z.infer<typeof createOrderSchema>;
       const tenantId = req.auth!.tenantId!;
@@ -143,9 +202,30 @@ export function registerOrderRoutes(app: Express) {
         || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
         || null;
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
+
+      const [typeRow] = await db
+        .select({ id: orderTypeDefinitions.id })
+        .from(orderTypeDefinitions)
+        .where(and(eq(orderTypeDefinitions.tenantId, tenantId), eq(orderTypeDefinitions.code, orderTypeCode)));
+
+      let resolvedPresetId = payload.orderPresetId || null;
+      if (!resolvedPresetId && typeRow) {
+        const [defaultPreset] = await db
+          .select({ id: orderTypePresets.id })
+          .from(orderTypePresets)
+          .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, typeRow.id), eq(orderTypePresets.isActive, true), eq(orderTypePresets.isDefault, true)));
+        const [fallbackPreset] = !defaultPreset ? await db
+          .select({ id: orderTypePresets.id })
+          .from(orderTypePresets)
+          .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, typeRow.id), eq(orderTypePresets.isActive, true)))
+          .orderBy(orderTypePresets.sortOrder)
+          .limit(1) : [];
+        resolvedPresetId = defaultPreset?.id || fallbackPreset?.id || null;
+      }
+
       const customPayload = payload.customFields || [];
       const validatedCustom = customPayload.length > 0
-        ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, payload.orderPresetId)
+        ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, resolvedPresetId)
         : null;
 
       const data = await db.transaction(async (tx) => {
@@ -168,7 +248,7 @@ export function registerOrderRoutes(app: Express) {
           deliveryCity: payload.deliveryCity || null,
           deliveryAddressNotes: payload.deliveryAddressNotes || null,
           deliveryStatus: payload.requiresDelivery ? normalizeDeliveryStatus("PENDING").toLowerCase() : null,
-          orderPresetId: payload.orderPresetId || null,
+          orderPresetId: resolvedPresetId || null,
         }).returning();
 
         if (created.statusId) {
@@ -182,13 +262,21 @@ export function registerOrderRoutes(app: Express) {
         }
 
         if (validatedCustom && validatedCustom.normalized.length > 0) {
+          const fieldKeyById = new Map(validatedCustom.defs.map((def) => [def.id, def.fieldKey]));
           for (const row of validatedCustom.normalized) {
             await tx.insert(orderFieldValues).values({
               tenantId,
               orderId: created.id,
               fieldDefinitionId: row.fieldDefinitionId,
+              fieldKey: fieldKeyById.get(row.fieldDefinitionId) || null,
               valueText: row.valueText,
               valueNumber: row.valueNumber,
+              valueBool: row.valueBool,
+              valueDate: row.valueDate,
+              valueJson: row.valueJson,
+              valueMoneyAmount: row.valueMoneyAmount,
+              valueMoneyDirection: row.valueMoneyDirection,
+              currency: row.currency,
               fileStorageKey: row.fileStorageKey,
               visibleOverride: row.visibleOverride ?? null,
             });
@@ -222,7 +310,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.get("/api/orders/:id/custom-fields", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  app.get("/api/orders/:id/custom-fields", tenantAuth, validateParams(idParamSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
@@ -236,7 +324,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/orders/:id", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(updateOrderSchema), async (req, res) => {
+  app.patch("/api/orders/:id", tenantAuth, validateParams(idParamSchema), validateBody(updateOrderSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
@@ -277,7 +365,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.patch("/api/orders/:id/status", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(orderStatusSchema), async (req, res) => {
+  app.patch("/api/orders/:id/status", tenantAuth, resolveBranchScope(true), requireBranchAccess, validateParams(idParamSchema), validateBody(orderStatusSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
@@ -297,14 +385,38 @@ export function registerOrderRoutes(app: Express) {
       });
       const status = await storage.getOrderStatusById(resolvedStatusId, tenantId);
       if (status?.isFinal) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
+        const hours = await getTenantEffectiveTrackingHours(tenantId);
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         if (order.publicTrackingId) {
           await storage.updateOrderTracking(orderId, tenantId, order.publicTrackingId, expiresAt);
         }
       }
+      let moneyImpact: any = null;
+      if (status?.isFinal) {
+        moneyImpact = await applyDeliveredMoneyImpact({
+          tenantId,
+          orderId,
+          branchId: order.branchId || null,
+          userId: req.auth!.userId,
+          orderPresetId: order.orderPresetId || null,
+        });
+      }
       await refreshMetricsForDate(tenantId, new Date());
+      logAuditEventFromRequest(req, {
+        action: status?.isFinal ? "pedido.entregado" : "pedido.estado.actualizado",
+        entityType: "order",
+        entityId: orderId,
+        metadata: { previousStatusId: order.statusId || null, newStatusId: resolvedStatusId, note: note || null, isFinal: Boolean(status?.isFinal), moneyImpactNet: moneyImpact?.net || null, moneyImpactMovementId: moneyImpact?.movement?.id || null },
+      });
+      refreshAnalyticsViews();
+      if (moneyImpact?.movement?.id) {
+        logAuditEventFromRequest(req, {
+          action: "ORDER_DELIVERED_CASH_IMPACT",
+          entityType: "cash_movement",
+          entityId: moneyImpact.movement.id,
+          metadata: { orderId, net: moneyImpact.net, breakdown: moneyImpact.breakdown },
+        });
+      }
       res.json({ ok: true });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
@@ -315,7 +427,7 @@ export function registerOrderRoutes(app: Express) {
   });
 
 
-  app.patch("/api/orders/:id/link-sale", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(linkSaleSchema), async (req, res) => {
+  app.patch("/api/orders/:id/link-sale", tenantAuth, validateParams(idParamSchema), validateBody(linkSaleSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
@@ -337,7 +449,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.get("/api/orders/:id/comments", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/orders/:id/comments", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = parseInt(req.params.id as string);
@@ -358,7 +470,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.post("/api/orders/:id/comments", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(orderCommentSchema), async (req, res) => {
+  app.post("/api/orders/:id/comments", tenantAuth, validateParams(idParamSchema), validateBody(orderCommentSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
@@ -389,7 +501,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.get("/api/orders/:id/history", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/orders/:id/history", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = parseInt(req.params.id as string);
@@ -411,7 +523,7 @@ export function registerOrderRoutes(app: Express) {
   });
 
 
-  app.get("/api/orders/:id/print-data", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  app.get("/api/orders/:id/print-data", tenantAuth, validateParams(idParamSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
@@ -429,8 +541,7 @@ export function registerOrderRoutes(app: Express) {
       const status = statuses.find((s) => s.id === order.statusId);
 
       if (!order.publicTrackingId) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
+        const hours = await getTenantEffectiveTrackingHours(tenantId);
         const trackingId = generatePublicToken();
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
@@ -470,7 +581,7 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
-  app.get("/api/orders/:id/ticket-pdf", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  app.get("/api/orders/:id/ticket-pdf", tenantAuth, validateParams(idParamSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
@@ -489,8 +600,7 @@ export function registerOrderRoutes(app: Express) {
       const status = statuses.find((s) => s.id === order.statusId);
 
       if (!order.publicTrackingId) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
+        const hours = await getTenantEffectiveTrackingHours(tenantId);
         const trackingId = generatePublicToken();
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
@@ -534,8 +644,7 @@ export function registerOrderRoutes(app: Express) {
       const orderId = parseInt(req.params.id as string);
       const order = await storage.getOrderById(orderId, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-      const config = await storage.getConfig(tenantId);
-      const hours = config?.trackingExpirationHours || 24;
+      const hours = await getTenantEffectiveTrackingHours(tenantId);
       const trackingId = generatePublicToken();
       const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
       await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);

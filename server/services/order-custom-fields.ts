@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "../db";
-import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions } from "@shared/schema";
+import { optionListItems, optionLists, orderFieldDefinitions, orderFieldValues, orderTypeDefinitions } from "@shared/schema";
 import { badRequest, notFound } from "../lib/http-errors";
 
 export type CustomFieldPayload = {
@@ -8,6 +8,12 @@ export type CustomFieldPayload = {
   fieldKey?: string;
   valueText?: string | null;
   valueNumber?: number | string | null;
+  valueBool?: boolean | null;
+  valueDate?: string | null;
+  valueJson?: any;
+  valueMoneyAmount?: number | string | null;
+  valueMoneyDirection?: number | null;
+  currency?: string | null;
   fileId?: string | number | null;
   fileStorageKey?: string | null;
   visibleOverride?: boolean | null;
@@ -65,7 +71,7 @@ export async function validateAndNormalizeCustomFields(
   const byId = new Map(defs.map((d) => [d.id, d]));
   const byKey = new Map(defs.map((d) => [d.fieldKey, d]));
 
-  const normalized = customFields.map((row) => {
+  const normalized = await Promise.all(customFields.map(async (row) => {
     const def = row.fieldId ? byId.get(Number(row.fieldId)) : (row.fieldKey ? byKey.get(String(row.fieldKey)) : undefined);
     if (!def) {
       throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Campo personalizado inválido", { fieldId: row.fieldId ?? null, fieldKey: row.fieldKey ?? null });
@@ -73,16 +79,35 @@ export async function validateAndNormalizeCustomFields(
 
     let valueText: string | null = row.valueText != null ? String(row.valueText) : null;
     let valueNumber: string | null = row.valueNumber != null && row.valueNumber !== "" ? String(row.valueNumber) : null;
+    let valueBool: boolean | null = row.valueBool != null ? Boolean(row.valueBool) : null;
+    let valueDate: string | null = row.valueDate != null && row.valueDate !== "" ? String(row.valueDate) : null;
+    let valueJson: any = row.valueJson ?? null;
+    let valueMoneyAmount: string | null = row.valueMoneyAmount != null && row.valueMoneyAmount !== "" ? String(row.valueMoneyAmount) : null;
+    let valueMoneyDirection: number | null = row.valueMoneyDirection != null ? (Number(row.valueMoneyDirection) >= 0 ? 1 : -1) : null;
+    let currency: string | null = row.currency ? String(row.currency).toUpperCase().slice(0,3) : null;
     let fileStorageKey: string | null = row.fileStorageKey != null && row.fileStorageKey !== "" ? String(row.fileStorageKey) : (row.fileId != null && row.fileId !== "" ? String(row.fileId) : null);
 
-    if (def.fieldType === "TEXT") {
+    if (def.fieldType === "TEXT" || def.fieldType === "TEXTAREA") {
+      valueText = valueText != null ? String(valueText).trim() : null;
       valueNumber = null;
+      valueBool = null;
+      valueDate = null;
+      valueJson = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
       fileStorageKey = null;
       if (def.required && !String(valueText || "").trim()) {
         throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_TEXT" });
       }
     } else if (def.fieldType === "NUMBER") {
       valueText = null;
+      valueBool = null;
+      valueDate = null;
+      valueJson = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
       fileStorageKey = null;
       if (valueNumber != null && Number.isNaN(Number(valueNumber))) {
         throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Número inválido en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_NUMBER" });
@@ -90,9 +115,94 @@ export async function validateAndNormalizeCustomFields(
       if (def.required && (valueNumber == null || valueNumber === "")) {
         throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_NUMBER" });
       }
+    } else if (def.fieldType === "BOOLEAN") {
+      valueText = null;
+      valueNumber = null;
+      valueDate = null;
+      valueJson = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
+      fileStorageKey = null;
+      if (def.required && valueBool == null) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_BOOLEAN" });
+      }
+    } else if (def.fieldType === "DATE") {
+      valueText = null;
+      valueNumber = null;
+      valueBool = null;
+      valueJson = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
+      fileStorageKey = null;
+      if (valueDate != null && Number.isNaN(Date.parse(valueDate))) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Fecha inválida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_DATE" });
+      }
+      if (def.required && !valueDate) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_DATE" });
+      }
+    } else if (def.fieldType === "SELECT") {
+      valueText = null;
+      valueNumber = null;
+      valueBool = null;
+      valueDate = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
+      fileStorageKey = null;
+      const cfg = (def.config || {}) as { options?: Array<{ value: string; label: string }>; optionListKey?: string };
+      let options = Array.isArray(cfg.options) ? cfg.options.map((opt) => String(opt?.value || "").trim()).filter(Boolean) : [];
+      if (cfg.optionListKey) {
+        const [list] = await db.select().from(optionLists).where(and(eq(optionLists.tenantId, tenantId), eq(optionLists.key, String(cfg.optionListKey))));
+        if (list) {
+          const listItems = await db.select().from(optionListItems).where(and(eq(optionListItems.listId, list.id), eq(optionListItems.isActive, true)));
+          options = listItems.map((item) => String(item.value).trim()).filter(Boolean);
+        }
+      }
+      const selectValue = valueJson != null ? String((valueJson as any)?.value ?? valueJson).trim() : "";
+      if (def.required && !selectValue) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_SELECT" });
+      }
+      if (selectValue && options.length > 0 && !options.includes(selectValue)) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Opción inválida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_SELECT_OPTION" });
+      }
+      valueJson = selectValue ? { value: selectValue } : null;
+    } else if (def.fieldType === "MONEY") {
+      valueText = null;
+      valueNumber = null;
+      valueBool = null;
+      valueDate = null;
+      valueJson = null;
+      fileStorageKey = null;
+      const hasAmount = valueMoneyAmount != null && String(valueMoneyAmount).trim() !== "";
+      if (hasAmount && Number.isNaN(Number(valueMoneyAmount))) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Monto inválido en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_MONEY" });
+      }
+      const cfg = (def.config || {}) as { defaultDirection?: number; currency?: string };
+      if (hasAmount && !valueMoneyDirection) {
+        valueMoneyDirection = Number(cfg.defaultDirection) >= 0 ? 1 : -1;
+      }
+      if (hasAmount && valueMoneyDirection !== 1 && valueMoneyDirection !== -1) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Dirección inválida en ${def.label}. Usá suma o resta.`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_MONEY_DIRECTION" });
+      }
+      currency = currency || String(cfg.currency || "ARS").toUpperCase().slice(0, 3);
+      if (def.required && !hasAmount) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_MONEY" });
+      }
+      if (!hasAmount) {
+        valueMoneyAmount = null;
+        valueMoneyDirection = null;
+      }
     } else if (def.fieldType === "FILE") {
       valueText = null;
       valueNumber = null;
+      valueBool = null;
+      valueDate = null;
+      valueJson = null;
+      valueMoneyAmount = null;
+      valueMoneyDirection = null;
+      currency = null;
       const cfg = (def.config || {}) as { allowedExtensions?: string[] };
       const allowed = (cfg.allowedExtensions && cfg.allowedExtensions.length ? cfg.allowedExtensions : Array.from(FILE_ALLOWED)).map((x) => String(x).toLowerCase());
       if (def.required && !fileStorageKey) {
@@ -110,10 +220,16 @@ export async function validateAndNormalizeCustomFields(
       fieldDefinitionId: def.id,
       valueText,
       valueNumber,
+      valueBool,
+      valueDate,
+      valueJson,
+      valueMoneyAmount,
+      valueMoneyDirection,
+      currency,
       fileStorageKey,
       visibleOverride: row.visibleOverride !== undefined ? row.visibleOverride : null,
     };
-  });
+  }));
 
   const requiredMissing = defs.filter((d) => d.required && !normalized.some((n) => n.fieldDefinitionId === d.id));
   if (requiredMissing.length > 0) {
@@ -123,7 +239,10 @@ export async function validateAndNormalizeCustomFields(
   return { typeRow, normalized, defs };
 }
 
-export async function saveCustomFieldValues(orderId: number, tenantId: number, normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; fileStorageKey: string | null; visibleOverride: boolean | null; }>) {
+export async function saveCustomFieldValues(orderId: number, tenantId: number, normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; valueBool: boolean | null; valueDate: string | null; valueJson: any; valueMoneyAmount: string | null; valueMoneyDirection: number | null; currency: string | null; fileStorageKey: string | null; visibleOverride: boolean | null; }>) {
+  const defs = await db.select({ id: orderFieldDefinitions.id, fieldKey: orderFieldDefinitions.fieldKey }).from(orderFieldDefinitions).where(eq(orderFieldDefinitions.tenantId, tenantId));
+  const defById = new Map(defs.map((def) => [def.id, def]));
+
   for (const row of normalized) {
     const existing = await db
       .select({ id: orderFieldValues.id })
@@ -131,7 +250,7 @@ export async function saveCustomFieldValues(orderId: number, tenantId: number, n
       .where(and(eq(orderFieldValues.orderId, orderId), eq(orderFieldValues.fieldDefinitionId, row.fieldDefinitionId), eq(orderFieldValues.tenantId, tenantId)));
 
     if (existing.length > 0) {
-      const updateData: any = { valueText: row.valueText, valueNumber: row.valueNumber, fileStorageKey: row.fileStorageKey };
+      const updateData: any = { valueText: row.valueText, valueNumber: row.valueNumber, valueBool: row.valueBool, valueDate: row.valueDate, valueJson: row.valueJson, valueMoneyAmount: row.valueMoneyAmount, valueMoneyDirection: row.valueMoneyDirection, currency: row.currency, fileStorageKey: row.fileStorageKey, fieldKey: defById.get(row.fieldDefinitionId)?.fieldKey || null, updatedAt: new Date() };
       if (row.visibleOverride !== undefined && row.visibleOverride !== null) {
         updateData.visibleOverride = row.visibleOverride;
       }
@@ -144,8 +263,15 @@ export async function saveCustomFieldValues(orderId: number, tenantId: number, n
         orderId,
         tenantId,
         fieldDefinitionId: row.fieldDefinitionId,
+        fieldKey: defById.get(row.fieldDefinitionId)?.fieldKey || null,
         valueText: row.valueText,
         valueNumber: row.valueNumber,
+        valueBool: row.valueBool,
+        valueDate: row.valueDate,
+        valueJson: row.valueJson,
+        valueMoneyAmount: row.valueMoneyAmount,
+        valueMoneyDirection: row.valueMoneyDirection,
+        currency: row.currency,
         fileStorageKey: row.fileStorageKey,
         visibleOverride: row.visibleOverride ?? null,
       });
@@ -175,6 +301,12 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
       visibleInTracking: map.get(v.fieldDefinitionId)?.visibleInTracking ?? false,
       valueText: v.valueText,
       valueNumber: v.valueNumber,
+      valueBool: (v as any).valueBool ?? null,
+      valueDate: (v as any).valueDate ?? null,
+      valueJson: (v as any).valueJson ?? null,
+      valueMoneyAmount: (v as any).valueMoneyAmount ?? null,
+      valueMoneyDirection: (v as any).valueMoneyDirection ?? null,
+      currency: (v as any).currency ?? null,
       fileStorageKey: v.fileStorageKey,
       visibleOverride: v.visibleOverride,
       createdAt: v.createdAt,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -55,6 +55,8 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
+import { DynamicFieldsForm } from "@/components/dynamic-fields/DynamicFieldsForm";
+import { mergeFieldDefinitions } from "@shared/fields/merge-field-definitions";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -62,7 +64,7 @@ type OrderPresetField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "NUMBER" | "FILE";
+  fieldType: "TEXT" | "NUMBER" | "FILE" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "TEXTAREA";
   required: boolean;
   sortOrder: number;
   isSystemDefault: boolean;
@@ -115,7 +117,8 @@ export default function OrdersPage() {
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [presets, setPresets] = useState<OrderPreset[]>([]);
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
-  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
+  const [allOrderFields, setAllOrderFields] = useState<OrderPresetField[]>([]);
+  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; valueBool?: boolean; valueDate?: string; valueJson?: any; valueMoneyAmount?: string; valueMoneyDirection?: number; currency?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
 
   const [newOrder, setNewOrder] = useState({
@@ -135,6 +138,10 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchData();
+    apiRequest("GET", "/api/fields/ORDER")
+      .then((r) => r.json())
+      .then((json) => setAllOrderFields((json?.data || []).filter((f: any) => f.isActive && !f.isSystemDefault)))
+      .catch(() => setAllOrderFields([]));
     void loadPresetsForType(newOrder.type || "PEDIDO");
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
@@ -214,12 +221,25 @@ export default function OrdersPage() {
   async function createOrder(e: React.FormEvent) {
     e.preventDefault();
     try {
-      const customFields = presetFields.map((field) => {
+      const hasBlockingWarnings = fieldMergeResult.warnings.some((warning) => warning.blocking);
+      if (hasBlockingWarnings) {
+        const detail = fieldMergeResult.warnings.filter((warning) => warning.blocking).map((warning) => warning.message).join(" ");
+        toast({ title: "Hay campos con configuración inválida", description: detail, variant: "destructive" });
+        return;
+      }
+
+      const customFields = mergedFields.map((field) => {
         const raw = customFieldInputs[field.id] || {};
         return {
           fieldId: field.id,
-          valueText: field.fieldType === "TEXT" ? (raw.valueText || "") : undefined,
+          valueText: ["TEXT", "TEXTAREA"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
           valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
+          valueBool: field.fieldType === "BOOLEAN" ? Boolean(raw.valueBool) : undefined,
+          valueDate: field.fieldType === "DATE" ? (raw.valueDate || null) : undefined,
+          valueJson: field.fieldType === "SELECT" ? (raw.valueJson || null) : undefined,
+          valueMoneyAmount: field.fieldType === "MONEY" ? (raw.valueMoneyAmount || null) : undefined,
+          valueMoneyDirection: field.fieldType === "MONEY" ? (raw.valueMoneyDirection || 1) : undefined,
+          currency: field.fieldType === "MONEY" ? (raw.currency || "ARS") : undefined,
           fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
         };
@@ -337,6 +357,12 @@ export default function OrdersPage() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
   }
+
+  const fieldMergeResult = useMemo(() => mergeFieldDefinitions({
+    presetFields,
+    globalFields: allOrderFields,
+  }), [presetFields, allOrderFields]);
+  const mergedFields: OrderPresetField[] = fieldMergeResult.mergedFields as OrderPresetField[];
 
   const filteredOrders = orders.filter((o) => {
     const matchSearch =
@@ -527,44 +553,46 @@ export default function OrdersPage() {
                     data-testid="input-description"
                   />
                 </div>
-                {presetFields.length > 0 && (
+                                {mergedFields.length > 0 && (
                   <div className="space-y-3 border rounded-md p-3">
                     <p className="text-sm font-medium">Campos adicionales</p>
-                    {presetFields.map((field) => (
-                      <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
-                        <div className="flex items-center justify-between">
-                          <Label>{field.label}{field.required ? " *" : ""}</Label>
-                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={customFieldInputs[field.id]?.visibleOverride ?? field.visibleInTracking}
-                              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), visibleOverride: e.target.checked } }))}
-                            />
-                            Visible
-                          </label>
-                        </div>
-                        {field.fieldType === "TEXT" ? (
-                          <Input
-                            value={customFieldInputs[field.id]?.valueText || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
-                          />
-                        ) : field.fieldType === "NUMBER" ? (
-                          <Input
-                            type="number"
-                            value={customFieldInputs[field.id]?.valueNumber || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
-                          />
-                        ) : (
-                          <FileFieldInput
-                            orderId={"new"}
-                            fieldDefinitionId={field.id}
-                            allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                            onUploadSuccess={() => { }}
-                            onRemove={() => { }}
-                          />
-                        )}
-                      </div>
-                    ))}
+                    <DynamicFieldsForm
+                      fields={mergedFields.map((field) => ({ id: field.id, fieldKey: field.fieldKey, label: field.label, fieldType: field.fieldType, required: field.required, config: field.config || {} }))}
+                      values={Object.fromEntries(Object.entries(customFieldInputs).map(([id, v]) => {
+                        const field = mergedFields.find((f) => f.id === Number(id));
+                        if (!field) return [id, null];
+                        if (field.fieldType === "MONEY") return [id, v.valueMoneyAmount || ""];
+                        if (field.fieldType === "NUMBER") return [id, v.valueNumber || ""];
+                        if (field.fieldType === "BOOLEAN") return [id, Boolean(v.valueBool)];
+                        if (field.fieldType === "DATE") return [id, v.valueDate || ""];
+                        if (field.fieldType === "SELECT") return [id, (v.valueJson as any)?.value || ""];
+                        if (field.fieldType === "FILE") return [id, null];
+                        return [id, v.valueText || ""];
+                      }))}
+                      onChange={(fieldId, value) => {
+                        const field = mergedFields.find((f) => f.id === fieldId);
+                        if (!field) return;
+                        setCustomFieldInputs((prev) => {
+                          const current = prev[fieldId] || {};
+                          if (field.fieldType === "MONEY") return { ...prev, [fieldId]: { ...current, valueMoneyAmount: String(value || ""), valueMoneyDirection: current.valueMoneyDirection || 1, currency: String((field.config as any)?.currency || "ARS") } };
+                          if (field.fieldType === "NUMBER") return { ...prev, [fieldId]: { ...current, valueNumber: String(value || "") } };
+                          if (field.fieldType === "BOOLEAN") return { ...prev, [fieldId]: { ...current, valueBool: Boolean(value) } };
+                          if (field.fieldType === "DATE") return { ...prev, [fieldId]: { ...current, valueDate: String(value || "") } };
+                          if (field.fieldType === "SELECT") {
+                            const option = ((field.config as any)?.options || []).find((o: any) => String(o.value) === String(value));
+                            return { ...prev, [fieldId]: { ...current, valueJson: option || { value, label: value } } };
+                          }
+                          if (field.fieldType === "FILE") return { ...prev, [fieldId]: { ...current } };
+                          return { ...prev, [fieldId]: { ...current, valueText: String(value || "") } };
+                        });
+                      }}
+                    />
+                    {fieldMergeResult.warnings.length > 0 ? (
+                      <p className="text-xs text-amber-700">{fieldMergeResult.warnings[0]?.message}</p>
+                    ) : null}
+                    {mergedFields.some((f) => f.fieldType === "FILE") ? (
+                      <p className="text-xs text-muted-foreground">La carga de archivos por campo está deshabilitada al crear pedidos desde esta pantalla.</p>
+                    ) : null}
                   </div>
                 )}
                 {addonStatus.delivery && (

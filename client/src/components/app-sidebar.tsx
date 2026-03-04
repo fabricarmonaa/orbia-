@@ -28,6 +28,7 @@ import {
   ReceiptText,
   Users,
   FileSpreadsheet,
+  ShieldCheck,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -36,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BrandLogo } from "@/components/branding/BrandLogo";
+import { UI_TEXTS_ES_AR } from "@/constants/ui-texts-es-ar";
 
 interface MenuItem {
   title: string;
@@ -48,7 +50,7 @@ interface MenuItem {
 }
 
 const menuItems: MenuItem[] = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
+  { title: UI_TEXTS_ES_AR.sidebar.dashboard, url: "/app", icon: LayoutDashboard },
   { title: "Pedidos", url: "/app/orders", icon: ClipboardList },
   { title: "Caja", url: "/app/cash", icon: Wallet },
   { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
@@ -61,6 +63,7 @@ const menuItems: MenuItem[] = [
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true },
+  { title: "Auditoría", url: "/app/audit", icon: ShieldCheck, adminOnly: true },
 ];
 
 export function AppSidebar() {
@@ -115,7 +118,7 @@ export function AppSidebar() {
               {appBranding.orbiaName || "ORBIA"}
             </p>
             <div className="flex items-center gap-1.5">
-              <p className="text-xs text-muted-foreground truncate">{user?.role === "admin" ? "Administrador" : "Staff"}</p>
+              <p className="text-xs text-muted-foreground truncate">{user?.role === "admin" ? "Administrador" : UI_TEXTS_ES_AR.sidebar.staff}</p>
               {plan && (
                 <Badge variant="secondary" className="text-[10px]" data-testid="badge-plan-name">
                   {plan.name}

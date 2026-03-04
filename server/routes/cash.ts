@@ -1,11 +1,13 @@
 import type { Express } from "express";
 import { storage } from "../storage";
-import { tenantAuth, requireFeature, enforceBranchScope } from "../auth";
+import { tenantAuth, requireFeature } from "../auth";
+import { resolveBranchScope, requireBranchAccess } from "../middleware/branch-scope";
 import { z } from "zod";
 import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody } from "../middleware/validate";
+import { logAuditEventFromRequest } from "../services/audit";
 
 const sanitizeOptionalShort = (max: number) =>
   z.preprocess((value) => (typeof value === "string" && value.trim() === "" ? undefined : value), z.string().transform((value) => sanitizeShortText(value, max)).optional());
@@ -25,7 +27,7 @@ const cashMovementSchema = z.object({
 });
 
 export function registerCashRoutes(app: Express) {
-  app.get("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, async (req, res) => {
+  app.get("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const data = req.auth!.scope === "BRANCH" && req.auth!.branchId
@@ -37,7 +39,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.post("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, validateBody(z.object({ openingAmount: z.coerce.number().min(0), branchId: z.coerce.number().int().positive().optional().nullable() })), async (req, res) => {
+  app.post("/api/cash/sessions", tenantAuth, requireFeature("cash_sessions"), resolveBranchScope(true), requireBranchAccess, validateBody(z.object({ openingAmount: z.coerce.number().min(0), branchId: z.coerce.number().int().positive().optional().nullable() })), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (req.body.branchId || null);
@@ -53,20 +55,21 @@ export function registerCashRoutes(app: Express) {
         status: "open",
       });
       await refreshMetricsForDate(tenantId, new Date());
+      logAuditEventFromRequest(req, { action: "caja.apertura", entityType: "cash_session", entityId: data.id, metadata: { openingAmount: req.body.openingAmount || 0, branchId } });
       res.status(201).json({ data });
     } catch {
       res.status(500).json({ error: "No se pudo abrir caja", code: "CASH_SESSION_OPEN_ERROR" });
     }
   });
 
-  app.patch("/api/cash/sessions/:id/close", tenantAuth, requireFeature("cash_sessions"), enforceBranchScope, validateBody(z.object({ closingAmount: z.coerce.number().min(0) })), async (req, res) => {
+  app.patch("/api/cash/sessions/:id/close", tenantAuth, requireFeature("cash_sessions"), validateBody(z.object({ closingAmount: z.coerce.number().min(0), closeNote: sanitizeOptionalLong(500).nullable().optional() })), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const sessionId = parseInt(req.params.id as string);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
       const idemKey = getIdempotencyKey(req.headers["idempotency-key"] as string | undefined);
-      const requestHash = hashPayload({ sessionId, closingAmount: req.body.closingAmount || 0, branchId });
+      const requestHash = hashPayload({ sessionId, closingAmount: req.body.closingAmount || 0, closeNote: req.body.closeNote || null, branchId });
 
       if (idemKey) {
         const cached = await getIdempotentResponse(tenantId, userId, idemKey, "PATCH:/api/cash/sessions/:id/close", requestHash).catch((e) => {
@@ -78,15 +81,13 @@ export function registerCashRoutes(app: Express) {
         if (cached) return res.status(cached.status).json(cached.body as any);
       }
 
-      await storage.closeCashSession(sessionId, tenantId, branchId, String(req.body.closingAmount || 0));
+      await storage.closeCashSession(sessionId, tenantId, branchId, String(req.body.closingAmount || 0), req.body.closeNote || null);
 
-      await storage.createAuditLog({
-        tenantId,
-        userId,
-        action: "close",
+      logAuditEventFromRequest(req, {
+        action: "caja.cierre",
         entityType: "cash_session",
         entityId: sessionId,
-        metadata: { closingAmount: req.body.closingAmount, scope: req.auth!.scope, branchId },
+        metadata: { closingAmount: req.body.closingAmount, closeNote: req.body.closeNote || null, scope: req.auth!.scope, branchId },
       });
 
       await refreshMetricsForDate(tenantId, new Date());
@@ -108,7 +109,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.get("/api/cash/session", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/cash/session", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (req.query.branchId ? parseInt(req.query.branchId as string) : null);
@@ -119,7 +120,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.get("/api/cash/movements", tenantAuth, enforceBranchScope, async (req, res) => {
+  app.get("/api/cash/movements", tenantAuth, resolveBranchScope(false), requireBranchAccess, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const data = req.auth!.scope === "BRANCH" && req.auth!.branchId
@@ -131,7 +132,7 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
-  app.post("/api/cash/movements", tenantAuth, enforceBranchScope, validateBody(cashMovementSchema), async (req, res) => {
+  app.post("/api/cash/movements", tenantAuth, resolveBranchScope(true), requireBranchAccess, validateBody(cashMovementSchema), async (req, res) => {
     try {
       const payload = req.body as z.infer<typeof cashMovementSchema>;
       const tenantId = req.auth!.tenantId!;
@@ -179,6 +180,12 @@ export function registerCashRoutes(app: Express) {
       });
 
       await refreshMetricsForDate(tenantId, new Date());
+      logAuditEventFromRequest(req, {
+        action: "caja.movimiento.crear",
+        entityType: "cash_movement",
+        entityId: data.id,
+        metadata: { type: payload.type, amount: payload.amount, branchId, sessionId: payload.sessionId || null, category: payload.category || null },
+      });
       const responseBody = { data };
       if (idemKey) {
         await saveIdempotentResponse({

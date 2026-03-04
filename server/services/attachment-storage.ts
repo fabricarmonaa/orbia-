@@ -135,13 +135,14 @@ export async function validateAndStoreAttachment(
 
                 await tx
                     .update(orderFieldValues)
-                    .set({ fileStorageKey: storageKey })
+                    .set({ fileStorageKey: storageKey, fieldKey: fieldDef.fieldKey })
                     .where(eq(orderFieldValues.id, existingFieldValue.id));
             } else {
                 await tx.insert(orderFieldValues).values({
                     tenantId,
                     orderId,
                     fieldDefinitionId,
+                    fieldKey: fieldDef.fieldKey,
                     fileStorageKey: storageKey,
                 });
             }

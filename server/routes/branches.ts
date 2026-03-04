@@ -8,8 +8,66 @@ import {
   requireTenantAdmin,
   requirePlanCodes,
 } from "../auth";
+import { getTenantLimitsSnapshot } from "../services/tenant-limits";
+import { and, eq } from "drizzle-orm";
+import { db } from "../db";
+import { userBranches } from "@shared/schema";
 
 export function registerBranchRoutes(app: Express) {
+
+  app.get("/api/branches/me", tenantAuth, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const userId = req.auth!.userId;
+      const role = String(req.auth?.role || "").toLowerCase();
+
+      if (role === "admin" && req.auth?.scope !== "BRANCH") {
+        const data = await storage.getBranches(tenantId);
+        return res.json({ data });
+      }
+
+      const assignments = await db.select().from(userBranches).where(and(eq(userBranches.tenantId, tenantId), eq(userBranches.userId, userId)));
+      if (!assignments.length && req.auth?.branchId) {
+        const branch = await storage.getBranchById(req.auth.branchId, tenantId);
+        return res.json({ data: branch ? [branch] : [] });
+      }
+
+      const ids = assignments.map((a) => a.branchId);
+      const branches = await storage.getBranches(tenantId);
+      return res.json({ data: branches.filter((b) => ids.includes(b.id)) });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "No se pudieron obtener tus sucursales" });
+    }
+  });
+
+  app.post("/api/users/:id/branches", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const userId = Number(req.params.id);
+      const branchId = Number(req.body?.branchId);
+      const roleInBranch = req.body?.roleInBranch ? String(req.body.roleInBranch) : null;
+      if (!Number.isFinite(userId) || !Number.isFinite(branchId)) return res.status(400).json({ error: "Usuario o sucursal inválida", code: "INVALID_BRANCH_ASSIGNMENT" });
+      const branch = await storage.getBranchById(branchId, tenantId);
+      if (!branch) return res.status(404).json({ error: "Sucursal no encontrada", code: "BRANCH_NOT_FOUND" });
+      const [created] = await db.insert(userBranches).values({ tenantId, userId, branchId, roleInBranch }).onConflictDoNothing().returning();
+      return res.status(201).json({ data: created || { tenantId, userId, branchId, roleInBranch } });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "No se pudo asignar sucursal" });
+    }
+  });
+
+  app.delete("/api/users/:id/branches/:branchId", tenantAuth, requireTenantAdmin, blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const userId = Number(req.params.id);
+      const branchId = Number(req.params.branchId);
+      await db.delete(userBranches).where(and(eq(userBranches.tenantId, tenantId), eq(userBranches.userId, userId), eq(userBranches.branchId, branchId)));
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message || "No se pudo desasignar sucursal" });
+    }
+  });
+
   app.get(
     "/api/branches",
     tenantAuth,
@@ -44,16 +102,19 @@ export function registerBranchRoutes(app: Express) {
     async (req, res) => {
       try {
         const tenantId = req.auth!.tenantId!;
-        const plan = req.plan!;
-        const maxBranches = plan.limits.branches_max ?? plan.limits.max_branches ?? 0;
+        const snapshot = await getTenantLimitsSnapshot(tenantId);
+        if (!snapshot) return res.status(403).json({ error: "Plan inválido", code: "PLAN_INVALID" });
+        const maxBranches = snapshot.limits.maxBranches;
         if (maxBranches >= 0) {
-          const existing = await storage.getBranches(tenantId);
-          if (existing.length >= maxBranches) {
-            return res.status(403).json({
-              error: `Tu plan "${plan.name}" permite máximo ${maxBranches} sucursal${maxBranches === 1 ? "" : "es"}. Mejorá tu plan para agregar más.`,
-              code: "LIMIT_REACHED",
-              limit: "branches_max",
-              currentPlan: plan.planCode,
+          if (snapshot.usage.branchesCount >= maxBranches) {
+            return res.status(409).json({
+              code: "PLAN_LIMIT_REACHED",
+              message: `Alcanzaste el límite de ${maxBranches} sucursal${maxBranches === 1 ? "" : "es"} para tu plan ${snapshot.planName}.`,
+              meta: {
+                limit: maxBranches,
+                plan: snapshot.planCode,
+                resource: "branches",
+              },
             });
           }
         }

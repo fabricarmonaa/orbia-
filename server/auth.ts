@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
 import { getSessionSecret } from "./config";
+import { getPlanDefaults, normalizePlanCode } from "@shared/plan-features";
 
 function unauthorizedResponse(res: Response, type: "required" | "expired" | "invalid") {
   if (type == "required") {
@@ -120,13 +121,14 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   if (!tenant?.planId) return null;
   const plan = await storage.getPlanById(tenant.planId);
   if (!plan) return null;
+  const canonicalPlanCode = normalizePlanCode(plan.planCode);
+  const canonicalDefaults = getPlanDefaults(canonicalPlanCode);
 
   // featuresJson is the canonical source of truth (populated by seed / super admin).
   // For backwards compat, also merge the legacy boolean columns on the plans table
   // so that tenants created before the featuresJson migration keep working.
   const baseFeatures = (plan.featuresJson || {}) as PlanFeatures;
-  const computedFeatures: PlanFeatures = {
-    // Backcompat: legacy boolean columns take effect if not explicitly in JSON
+  const legacyFeatures: Partial<PlanFeatures> = {
     cashiers: baseFeatures.cashiers ?? Boolean((plan as any).allowCashiers),
     CASHIERS: baseFeatures.CASHIERS ?? Boolean((plan as any).allowCashiers),
     margin_pricing: baseFeatures.margin_pricing ?? Boolean((plan as any).allowMarginPricing),
@@ -135,20 +137,27 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
     EXCEL_IMPORT: baseFeatures.EXCEL_IMPORT ?? Boolean((plan as any).allowExcelImport),
     custom_tos: baseFeatures.custom_tos ?? Boolean((plan as any).allowCustomTos),
     CUSTOM_TOS: baseFeatures.CUSTOM_TOS ?? Boolean((plan as any).allowCustomTos),
-    ...baseFeatures, // JSON keys win over backcompat defaults
+  };
+  const computedFeatures: PlanFeatures = {
+    ...canonicalDefaults.features,
+    ...legacyFeatures,
+    ...baseFeatures,
   } as PlanFeatures;
 
   const legacyMaxBranches = Number((plan as any).maxBranches ?? 0);
   const baseLimits = (plan.limitsJson || {}) as PlanLimits;
   const computedLimits: PlanLimits = {
     // Spread JSON first; then override with legacy column values when the JSON key is absent
+    ...canonicalDefaults.limits,
     ...baseLimits,
     branches_max: baseLimits.branches_max ?? legacyMaxBranches,
     max_branches: baseLimits.max_branches ?? legacyMaxBranches,
+    cashiers_max: baseLimits.cashiers_max ?? Number(canonicalDefaults.limits.cashiers_max ?? 0),
+    tracking_retention_max_hours: Number(canonicalDefaults.limits.tracking_retention_max_hours ?? 24),
   } as PlanLimits;
 
   return {
-    planCode: plan.planCode,
+    planCode: canonicalPlanCode,
     name: plan.name,
     features: computedFeatures,
     limits: computedLimits,

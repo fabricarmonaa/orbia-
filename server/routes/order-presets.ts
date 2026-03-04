@@ -31,7 +31,7 @@ const patchPresetSchema = z
 
 const createFieldSchema = z.object({
   label: z.string().trim().min(1).max(160),
-  fieldType: z.enum(["TEXT", "NUMBER", "FILE"]),
+  fieldType: z.enum(["TEXT", "NUMBER", "FILE", "MONEY", "BOOLEAN", "DATE", "SELECT", "TEXTAREA"]),
   required: z.boolean().optional(),
   fieldKey: z.string().trim().min(1).max(80).optional(),
   config: z.record(z.any()).optional(),
@@ -140,6 +140,22 @@ export function registerOrderPresetRoutes(app: Express) {
           req.body
         );
         return res.json({ data: saved });
+      } catch (err) {
+        return sendApiError(res, err);
+      }
+    }
+  );
+
+
+  app.post(
+    "/api/order-presets/presets/:presetId/set-default",
+    tenantAuth,
+    requireTenantAdmin,
+    validateParams(presetIdParamSchema),
+    async (req, res) => {
+      try {
+        const data = await orderPresetsStorage.setDefaultPreset(req.auth!.tenantId!, Number(req.params.presetId));
+        return res.json({ data });
       } catch (err) {
         return sendApiError(res, err);
       }
