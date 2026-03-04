@@ -3,12 +3,15 @@ import { z } from "zod";
 import { and, count, eq } from "drizzle-orm";
 import { db } from "../db";
 import { cashiers } from "@shared/schema";
-import { comparePassword, generateToken, getTenantPlan, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
+import { comparePassword, generateToken, hashPassword, requirePlanFeature, requireTenantAdmin, tenantAuth } from "../auth";
 import { storage } from "../storage";
 import { validateBody, validateParams } from "../middleware/validate";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { validateCashierPin } from "../services/password-policy";
 import { sanitizeShortText } from "../security/sanitize";
+import { getTenantLimitsSnapshot } from "../services/tenant-limits";
+import { normalizePlanCode } from "@shared/plan-features";
+import { logAuditEvent, logAuditEventFromRequest } from "../services/audit";
 
 const pinSchema = z.string().regex(/^\d{4,8}$/);
 
@@ -60,7 +63,7 @@ export function registerCashierRoutes(app: Express) {
         return res.status(401).json({ error: "Credenciales inválidas", code: "CASHIER_AUTH_INVALID" });
       }
       const plan = await storage.getPlanById(tenant.planId || 0);
-      const planCode = (plan?.planCode || "").toUpperCase();
+      const planCode = normalizePlanCode(plan?.planCode || "");
       if (!["PROFESIONAL", "ESCALA"].includes(planCode)) {
         return res.status(403).json({ error: "Tu plan no incluye cajeros", code: "FEATURE_BLOCKED" });
       }
@@ -77,6 +80,9 @@ export function registerCashierRoutes(app: Express) {
       if (!selected) {
         return res.status(401).json({ error: "Credenciales inválidas", code: "CASHIER_AUTH_INVALID" });
       }
+      if (!(selected as any).isApproved || (selected as any).revokedAt) {
+        return res.status(403).json({ error: "Tu acceso de cajero está pendiente de aprobación", code: "CASHIER_PENDING_APPROVAL" });
+      }
 
       const token = generateToken({
         userId: 0,
@@ -89,6 +95,7 @@ export function registerCashierRoutes(app: Express) {
         cashierId: selected.id,
       });
 
+      await logAuditEvent({ tenantId: tenant.id, branchId: selected.branchId || null, actorCashierId: selected.id, actorRole: "CASHIER", action: "cajero.login", entityType: "cashier", entityId: selected.id, metadata: { cashierName: selected.name } });
       return res.json({
         token,
         user: {
@@ -117,17 +124,20 @@ export function registerCashierRoutes(app: Express) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
-      const plan = await getTenantPlan(tenantId);
-      if (!plan) return res.status(403).json({ error: "Plan inválido", code: "PLAN_INVALID" });
+      const snapshot = await getTenantLimitsSnapshot(tenantId);
+      if (!snapshot) return res.status(403).json({ error: "Plan inválido", code: "PLAN_INVALID" });
 
-      const maxCashiers = plan.limits.cashiers_max ?? 0;
+      const maxCashiers = snapshot.limits.maxCashiers;
       if (maxCashiers >= 0) {
-        const [tenantCashierCount] = await db.select({ c: count() }).from(cashiers)
-          .where(and(eq(cashiers.tenantId, tenantId), eq(cashiers.active, true)));
-        if (Number(tenantCashierCount?.c || 0) >= maxCashiers) {
-          return res.status(403).json({
-            error: `Tu plan permite máximo ${maxCashiers} cajero${maxCashiers === 1 ? "" : "s"}.`,
-            code: "LIMIT_REACHED", limit: "cashiers_max"
+        if (snapshot.usage.cashiersCount >= maxCashiers) {
+          return res.status(409).json({
+            code: "PLAN_LIMIT_REACHED",
+            message: `Alcanzaste el límite de ${maxCashiers} cajero${maxCashiers === 1 ? "" : "s"} para tu plan ${snapshot.planName}.`,
+            meta: {
+              limit: maxCashiers,
+              plan: snapshot.planCode,
+              resource: "cashiers",
+            },
           });
         }
       }
@@ -145,16 +155,10 @@ export function registerCashierRoutes(app: Express) {
         name: payload.name,
         pinHash,
         active: true,
+        isApproved: false,
       });
-      await storage.createAuditLog({
-        tenantId,
-        userId: req.auth!.userId,
-        action: "create",
-        entityType: "cashier",
-        entityId: data.id,
-        metadata: { branchId: payload.branch_id, name: payload.name },
-      });
-      res.status(201).json({ data: { id: data.id, name: data.name, branch_id: data.branchId, active: data.active } });
+      logAuditEventFromRequest(req, { action: "cajero.crear", entityType: "cashier", entityId: data.id, metadata: { branchId: payload.branch_id, name: payload.name, estado: "pendiente_aprobacion" } });
+      res.status(201).json({ data: { id: data.id, name: data.name, branch_id: data.branchId, active: data.active, is_approved: (data as any).isApproved ?? false } });
     } catch (err: any) {
       res.status(500).json({ error: err.message || "No se pudo crear cajero", code: "CASHIER_CREATE_ERROR" });
     }
@@ -163,9 +167,36 @@ export function registerCashierRoutes(app: Express) {
   app.get("/api/cashiers", tenantAuth, requirePlanFeature("CASHIERS"), requireTenantAdmin, async (req, res) => {
     try {
       const data = await storage.getCashiers(req.auth!.tenantId!);
-      res.json({ data: data.map((x) => ({ id: x.id, name: x.name, branch_id: x.branchId, active: x.active })) });
+      res.json({ data: data.map((x) => ({ id: x.id, name: x.name, branch_id: x.branchId, active: x.active, is_approved: (x as any).isApproved ?? false, approved_at: (x as any).approvedAt ?? null, revoked_at: (x as any).revokedAt ?? null })) });
     } catch {
       res.status(500).json({ error: "No se pudo listar cajeros", code: "CASHIER_LIST_ERROR" });
+    }
+  });
+
+
+  app.post("/api/cashiers/:id/approve", tenantAuth, requirePlanFeature("CASHIERS"), requireTenantAdmin, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const [updated] = await db.update(cashiers).set({ isApproved: true, approvedAt: new Date(), approvedByUserId: req.auth!.userId!, revokedAt: null }).where(and(eq(cashiers.id, id), eq(cashiers.tenantId, tenantId))).returning();
+      if (!updated) return res.status(404).json({ error: "Cajero no encontrado", code: "CASHIER_NOT_FOUND" });
+      logAuditEventFromRequest(req, { action: "cajero.aprobar", entityType: "cashier", entityId: id, metadata: { isApproved: true } });
+      return res.json({ data: { id: updated.id, is_approved: updated.isApproved, approved_at: updated.approvedAt } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo aprobar el cajero", code: "CASHIER_APPROVE_ERROR" });
+    }
+  });
+
+  app.post("/api/cashiers/:id/revoke", tenantAuth, requirePlanFeature("CASHIERS"), requireTenantAdmin, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const [updated] = await db.update(cashiers).set({ isApproved: false, revokedAt: new Date(), active: false }).where(and(eq(cashiers.id, id), eq(cashiers.tenantId, tenantId))).returning();
+      if (!updated) return res.status(404).json({ error: "Cajero no encontrado", code: "CASHIER_NOT_FOUND" });
+      logAuditEventFromRequest(req, { action: "cajero.revocar", entityType: "cashier", entityId: id, metadata: { isApproved: false } });
+      return res.json({ data: { id: updated.id, is_approved: updated.isApproved, revoked_at: updated.revokedAt } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo revocar el cajero", code: "CASHIER_REVOKE_ERROR" });
     }
   });
 
@@ -178,19 +209,8 @@ export function registerCashierRoutes(app: Express) {
         const branch = await storage.getBranchById(payload.branch_id, tenantId);
         if (!branch) return res.status(403).json({ error: "Sucursal inválida", code: "BRANCH_FORBIDDEN" });
       }
-      const plan = await getTenantPlan(tenantId);
       if (payload.branch_id) {
         // Excluimos la caja actual de la cuenta
-        const [row] = await db.select({ c: count() })
-          .from(cashiers)
-          .where(
-            and(
-              eq(cashiers.tenantId, tenantId),
-              eq(cashiers.branchId, payload.branch_id),
-              eq(cashiers.active, true)
-            )
-          );
-
         // Si hay una caja y NO es la caja que estamos editando
         const existing = await db.select().from(cashiers).where(
           and(
@@ -215,6 +235,7 @@ export function registerCashierRoutes(app: Express) {
         pinHash: payload.pin ? await hashPassword(payload.pin) : undefined,
       });
       if (!data) return res.status(404).json({ error: "Cajero no encontrado", code: "CASHIER_NOT_FOUND" });
+      logAuditEventFromRequest(req, { action: "cajero.actualizar", entityType: "cashier", entityId: data.id, metadata: { branchId: payload.branch_id, active: payload.active, updatedFields: Object.keys(payload) } });
       res.json({ data: { id: data.id, name: data.name, branch_id: data.branchId, active: data.active } });
     } catch {
       res.status(500).json({ error: "No se pudo actualizar cajero", code: "CASHIER_UPDATE_ERROR" });
@@ -227,6 +248,7 @@ export function registerCashierRoutes(app: Express) {
       const id = req.params.id as unknown as number;
       const data = await storage.deactivateCashier(id, tenantId);
       if (!data) return res.status(404).json({ error: "Cajero no encontrado", code: "CASHIER_NOT_FOUND" });
+      logAuditEventFromRequest(req, { action: "cajero.desactivar", entityType: "cashier", entityId: id, metadata: { active: false } });
       res.json({ ok: true });
     } catch {
       res.status(500).json({ error: "No se pudo eliminar cajero", code: "CASHIER_DELETE_ERROR" });

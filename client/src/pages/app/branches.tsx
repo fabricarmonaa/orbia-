@@ -18,9 +18,11 @@ import { Plus, Building2, MapPin, Phone, ChevronRight } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import type { Branch } from "@shared/schema";
+import { useTenantLimits } from "@/lib/tenant-limits";
 
 export default function BranchesPage() {
-  const { hasFeature, getLimit, plan, loading: planLoading } = usePlan();
+  const { hasFeature, plan, loading: planLoading } = usePlan();
+  const { data: limitsData } = useTenantLimits();
   const { user } = useAuth();
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +38,8 @@ export default function BranchesPage() {
   });
 
   const canAccess = hasFeature("branches");
-  const maxBranches = plan?.limits?.branches_max ?? plan?.limits?.max_branches ?? -1;
+  const maxBranches = limitsData?.limits.maxBranches ?? plan?.limits?.branches_max ?? plan?.limits?.max_branches ?? -1;
+  const branchesCount = Math.max(branches.length, limitsData?.usage.branchesCount ?? 0);
 
   useEffect(() => {
     if (!isTenantAdmin) {
@@ -66,7 +69,9 @@ export default function BranchesPage() {
   async function createBranch(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await apiRequest("POST", "/api/branches", newBranch);
+      const res = await apiRequest("POST", "/api/branches", newBranch);
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.message || body?.error || "No se pudo crear la sucursal");
       toast({ title: "Sucursal creada" });
       setDialogOpen(false);
       setNewBranch({ name: "", address: "", phone: "" });
@@ -90,7 +95,7 @@ export default function BranchesPage() {
   }
 
 
-  const atLimit = maxBranches >= 0 && branches.length >= maxBranches;
+  const atLimit = maxBranches >= 0 && branchesCount >= maxBranches;
 
   return (
     <div className="space-y-6">
@@ -101,10 +106,13 @@ export default function BranchesPage() {
             Gestión de sedes y puntos de atención
             {maxBranches >= 0 && (
               <span className="ml-2 text-xs">
-                ({branches.length}/{maxBranches} usadas)
+                ({branchesCount}/{maxBranches} usadas)
               </span>
             )}
           </p>
+          {maxBranches >= 0 && (
+            <p className="text-xs text-muted-foreground mt-1">Te quedan {Math.max(maxBranches - branchesCount, 0)} de {maxBranches} sucursales disponibles.</p>
+          )}
         </div>
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogTrigger asChild>

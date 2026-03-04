@@ -109,6 +109,7 @@ export const stockTransfers = pgTable("stock_transfers", {
 
 export const stockTransferItems = pgTable("stock_transfer_items", {
   id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").references(() => tenants.id),
   transferId: integer("transfer_id").references(() => stockTransfers.id).notNull(),
   productId: integer("product_id").references(() => products.id).notNull(),
   quantity: numeric("quantity", { precision: 14, scale: 3 }).notNull(),

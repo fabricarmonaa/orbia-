@@ -4,9 +4,10 @@ import path from "path";
 import { and, eq } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
-import { orderAttachments } from "@shared/schema";
+import { orderAttachments, entityVisibilitySettings } from "@shared/schema";
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
+import { mergeTrackingSettings } from "@shared/tracking-settings";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -30,8 +31,29 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const publicComments = await storage.getPublicOrderComments(order.id);
   const config = await storage.getConfig(tenantId);
   const branding = await storage.getTenantBranding(tenantId);
-  const appBranding = await storage.getAppBranding();
-  const logoUrl = branding.logoUrl || appBranding.orbiaLogoUrl || null;
+  const legacyTrackingSettings = mergeTrackingSettings((config as any)?.trackingSettings as Record<string, unknown> | undefined);
+  const [visibility] = await db.select().from(entityVisibilitySettings).where(and(eq(entityVisibilitySettings.tenantId, tenantId), eq(entityVisibilitySettings.entityType, "ORDER")));
+  // Canon ETAPA 11.4: tracking público lee canónicamente desde entity_visibility_settings.
+  // Compatibilidad: si no existe fila en la tabla nueva, se cae a tracking_settings legado.
+  const visibilitySettings = visibility?.settings
+    ? (visibility.settings as Record<string, unknown>)
+    : {
+      showOrderNumber: legacyTrackingSettings.showOrderNumber,
+      showType: legacyTrackingSettings.showOrderType,
+      showFullHistory: legacyTrackingSettings.showHistory,
+      showHistoryTimestamps: legacyTrackingSettings.showDates,
+      showTosButton: true,
+    };
+  const effectiveTrackingSettings = {
+    ...legacyTrackingSettings,
+    showOrderNumber: visibilitySettings.showOrderNumber !== false,
+    showOrderType: visibilitySettings.showType !== false,
+    showOnlyCurrentStatus: visibilitySettings.showFullHistory === false,
+    showHistory: visibilitySettings.showFullHistory !== false,
+    showDates: visibilitySettings.showHistoryTimestamps !== false,
+  };
+  const showTosButton = visibilitySettings.showTosButton !== false;
+  const logoUrl = branding.logoUrl || null;
 
   const historyFormatted = history.map((h) => {
     const s = statuses.find((st) => st.id === h.statusId);
@@ -62,6 +84,21 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         }
       } else if (f.fieldType === "NUMBER") {
         displayValue = f.valueNumber !== null ? String(f.valueNumber) : null;
+      } else if (f.fieldType === "BOOLEAN") {
+        displayValue = f.valueBool === null ? null : (f.valueBool ? "Sí" : "No");
+      } else if (f.fieldType === "DATE") {
+        displayValue = f.valueDate ? String(f.valueDate) : null;
+      } else if (f.fieldType === "SELECT") {
+        displayValue = (f.valueJson && typeof f.valueJson === "object") ? String((f.valueJson as any).label || (f.valueJson as any).value || "") : null;
+      } else if (f.fieldType === "MONEY") {
+        const amount = f.valueMoneyAmount != null ? Number(f.valueMoneyAmount) : null;
+        if (amount !== null && !Number.isNaN(amount)) {
+          const sign = Number(f.valueMoneyDirection || 1) >= 0 ? "+" : "-";
+          const currency = (f.currency || "ARS").toUpperCase();
+          displayValue = `${sign}$${Math.abs(amount).toLocaleString("es-AR")} ${currency}`;
+        } else {
+          displayValue = null;
+        }
       } else {
         displayValue = f.valueText;
       }
@@ -95,6 +132,8 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         customFields: publicCustomFields,
         trackingLayout: config?.trackingLayout || "classic",
         trackingTosText: (branding.texts as any)?.trackingFooter || null,
+        trackingSettings: effectiveTrackingSettings,
+        tosUrl: showTosButton ? `/tos/${trackingId}` : null,
         branding: {
           displayName: branding.displayName,
           logoUrl,
@@ -128,6 +167,29 @@ export function registerTrackingRoutes(app: Express) {
       return res.status(result.status).json(result.body);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/public/tos/:trackingId", async (req, res) => {
+    try {
+      const trackingId = String(req.params.trackingId || "");
+      const resolved = await resolvePublicOrder(trackingId);
+      if ("status" in resolved) return res.status(resolved.status).json(resolved.body);
+      const tenant = await storage.getTenantById(resolved.order.tenantId);
+      if (!tenant?.tosContent) {
+        return res.status(404).json({ error: "No hay términos cargados para este negocio.", code: "TOS_NOT_FOUND" });
+      }
+      const branding = await storage.getTenantBranding(resolved.order.tenantId);
+      return res.json({
+        data: {
+          companyName: branding.displayName || tenant.name,
+          logoUrl: branding.logoUrl || null,
+          tosContent: tenant.tosContent,
+          updatedAt: tenant.tosUpdatedAt,
+        },
+      });
+    } catch {
+      return res.status(500).json({ error: "No se pudieron cargar los términos.", code: "PUBLIC_TOS_ERROR" });
     }
   });
 

@@ -204,6 +204,27 @@ export function handleUnauthorizedCode(code?: string) {
   void gracefulLogout(reason);
 }
 
+
+export function getActiveBranchId(): number | null {
+  try {
+    const raw = localStorage.getItem("orbia_active_branch_id");
+    if (!raw) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setActiveBranchId(branchId: number | null) {
+  try {
+    if (!branchId) localStorage.removeItem("orbia_active_branch_id");
+    else localStorage.setItem("orbia_active_branch_id", String(branchId));
+  } catch {
+    // noop
+  }
+}
+
 export function getToken(): string | null {
   return currentToken;
 }
@@ -260,6 +281,8 @@ export function authFetch(url: string, options: RequestInit = {}): Promise<Respo
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  const activeBranchId = getActiveBranchId();
+  if (activeBranchId) headers["x-branch-id"] = String(activeBranchId);
   if (options.body && typeof options.body === "string") {
     headers["Content-Type"] = "application/json";
   }
@@ -281,6 +304,8 @@ export async function apiRequest(
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
+  const activeBranchId = getActiveBranchId();
+  if (activeBranchId) headers["x-branch-id"] = String(activeBranchId);
   if (data && !(data instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }

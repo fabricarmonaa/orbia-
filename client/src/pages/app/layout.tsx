@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { useEffect, useMemo, useState } from "react";
+import { apiRequest, getActiveBranchId, setActiveBranchId, useAuth } from "@/lib/auth";
 import { fetchPlan, clearPlanCache } from "@/lib/plan";
 import { useLocation, Route, Switch } from "wouter";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -19,6 +19,7 @@ import DeliveryPage from "./delivery";
 import SettingsPage from "./settings";
 import SettingsOrdersPage from "./settings-orders";
 import MessagingSettingsPage from "./messaging";
+import AuditPage from "./audit";
 import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
@@ -27,6 +28,10 @@ import SalePrintPage from "./sale-print";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
 import Joyride, { Step, CallBackProps, STATUS } from "react-joyride";
 import { Button } from "@/components/ui/button";
+import { UI_TEXTS_ES_AR } from "@/constants/ui-texts-es-ar";
+import { useToast } from "@/hooks/use-toast";
+
+type BranchOption = { id: number; name: string };
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -57,8 +62,31 @@ export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
   const [location, setLocation] = useLocation();
   const [runTour, setRunTour] = useState(false);
+  const [stepIndex, setStepIndex] = useState(0);
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [isApplyingTemplate, setIsApplyingTemplate] = useState(false);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [activeBranchId, setActiveBranchIdState] = useState<number | null>(getActiveBranchId());
+  const { toast } = useToast();
 
-  const tourSteps: Step[] = [
+  const fallbackTourStep: Step = useMemo(
+    () => ({
+      target: "body",
+      placement: "center",
+      content: (
+        <div className="text-left">
+          <h3 className="font-bold text-lg mb-2">Recorrido finalizado</h3>
+          <p className="text-sm text-muted-foreground">
+            Este paso no está disponible en tu pantalla actual, así que finalizamos el recorrido para que puedas seguir usando Orbia sin interrupciones.
+          </p>
+        </div>
+      ),
+      disableBeacon: true,
+    }),
+    []
+  );
+
+  const tourSteps: Step[] = useMemo(() => [
     {
       target: "body",
       placement: "center",
@@ -232,26 +260,129 @@ export default function AppLayout() {
       ),
       disableBeacon: true,
     },
-  ];
+  ], []);
+
+  const [safeTourSteps, setSafeTourSteps] = useState<Step[]>(tourSteps);
+
+  const isStepTargetVisible = (target: Step["target"]) => {
+    if (typeof window === "undefined") return true;
+    if (!target || target === "body") return true;
+    if (typeof target !== "string") return true;
+
+    const element = document.querySelector(target) as HTMLElement | null;
+    if (!element) return false;
+
+    const styles = window.getComputedStyle(element);
+    if (styles.display === "none" || styles.visibility === "hidden" || styles.opacity === "0") {
+      return false;
+    }
+
+    const rect = element.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+
+  const resolveStep = (step: Step): Step => {
+    if (isStepTargetVisible(step.target)) return step;
+    return fallbackTourStep;
+  };
 
   useEffect(() => {
     if (!user) return;
+    const ownerLike = ["admin", "owner"].includes(String((user as any).role || "").toLowerCase());
+    if (!ownerLike) return;
+
+    const templateKey = `orbia:onboarding:template-selected:${user.id}`;
+    const templateSelected = localStorage.getItem(templateKey) === "1";
+
+    if (!templateSelected) {
+      setShowTemplateSelector(true);
+      return;
+    }
+
     const key = `orbia:onboarding:dismissed:${user.id}`;
     const dismissed = localStorage.getItem(key) === "1";
-    const ownerLike = ["admin", "owner"].includes(String((user as any).role || "").toLowerCase());
-    if (ownerLike && !dismissed) {
-      // Small delay so sidebar renders before tour targets it
+    if (!dismissed) {
       setTimeout(() => setRunTour(true), 500);
     }
   }, [user?.id]);
 
+  useEffect(() => {
+    if (!runTour) return;
+    setSafeTourSteps(tourSteps.map(resolveStep));
+  }, [runTour, location, tourSteps]);
+  useEffect(() => {
+    if (!isAuthenticated || user?.isSuperAdmin || user?.role === "CASHIER") return;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/branches/me");
+        const json = await res.json();
+        const data = Array.isArray(json?.data) ? json.data.map((b: any) => ({ id: Number(b.id), name: String(b.name || `Sucursal #${b.id}`) })) : [];
+        setBranches(data);
+        if (data.length > 0) {
+          const current = getActiveBranchId();
+          const exists = current && data.some((b: BranchOption) => b.id === current);
+          const next = exists ? current : data[0].id;
+          setActiveBranchId(next);
+          setActiveBranchIdState(next);
+        }
+      } catch {
+        setBranches([]);
+      }
+    })();
+  }, [isAuthenticated, user?.id, user?.role]);
+
+
+  const applyTemplate = async (templateCode: "SERVICIO_TECNICO" | "TIENDA_ROPA" | "GENERAL") => {
+    if (!user?.id) return;
+    try {
+      setIsApplyingTemplate(true);
+      const res = await apiRequest("POST", "/api/tenants/apply-template", { templateCode });
+      const json = await res.json();
+      if (!res.ok) {
+        throw new Error(json.error || "No se pudo aplicar la plantilla seleccionada.");
+      }
+
+      localStorage.setItem(`orbia:onboarding:template-selected:${user.id}`, "1");
+      setShowTemplateSelector(false);
+      toast({
+        title: "Plantilla aplicada",
+        description: "Configuramos Orbia para tu tipo de negocio. Podés editar estos campos cuando quieras.",
+      });
+      setLocation("/app/settings/orders");
+      setTimeout(() => setRunTour(true), 500);
+    } catch (err: any) {
+      toast({
+        title: "No pudimos aplicar la plantilla",
+        description: err?.message || "Revisá la conexión e intentá de nuevo.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsApplyingTemplate(false);
+    }
+  };
+
   const handleJoyrideCallback = (data: CallBackProps) => {
-    const { status } = data;
+    const { status, type, action, index = 0 } = data;
     const finishedStatuses: string[] = [STATUS.FINISHED, STATUS.SKIPPED];
 
     if (finishedStatuses.includes(status)) {
       if (user?.id) localStorage.setItem(`orbia:onboarding:dismissed:${user.id}`, "1");
       setRunTour(false);
+      setStepIndex(0);
+      return;
+    }
+
+    if (type === "step:after") {
+      setStepIndex((prev) => {
+        if (action === "prev") return Math.max(prev - 1, 0);
+        return Math.min(prev + 1, safeTourSteps.length - 1);
+      });
+      return;
+    }
+
+    if (type === "error:target_not_found") {
+      setSafeTourSteps((prev) => prev.map((step, i) => (i === index ? fallbackTourStep : step)));
+      setStepIndex(index);
     }
   };
 
@@ -291,9 +422,39 @@ export default function AppLayout() {
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center justify-between gap-4 p-3 border-b bg-card sticky top-0 z-50">
             <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <ThemeToggle />
+            <div className="flex items-center gap-2">
+              {user?.role !== "CASHIER" && branches.length > 0 && (
+                <select
+                  className="h-9 rounded-md border bg-background px-3 text-sm"
+                  value={activeBranchId || ""}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    const next = Number.isFinite(value) && value > 0 ? value : null;
+                    setActiveBranchId(next);
+                    setActiveBranchIdState(next);
+                    if (next) toast({ title: "Sucursal activa actualizada", description: "Filtramos la información según tu sucursal seleccionada." });
+                  }}
+                >
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>{branch.name}</option>
+                  ))}
+                </select>
+              )}
+              <ThemeToggle />
+            </div>
           </header>
           <SubscriptionBanner />
+          {showTemplateSelector && user?.role !== "CASHIER" && (
+            <div className="mx-4 mt-4 rounded-xl border bg-card p-4 shadow-sm" data-testid="onboarding-template-selector">
+              <h2 className="text-lg font-semibold">¿Qué tipo de negocio tenés?</h2>
+              <p className="text-sm text-muted-foreground mt-1 mb-3">Elegí una opción y configuramos presets, campos y seguimientos automáticamente.</p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                <Button disabled={isApplyingTemplate} onClick={() => applyTemplate("SERVICIO_TECNICO")}>Servicio técnico</Button>
+                <Button disabled={isApplyingTemplate} variant="secondary" onClick={() => applyTemplate("TIENDA_ROPA")}>Tienda de ropa</Button>
+                <Button disabled={isApplyingTemplate} variant="outline" onClick={() => applyTemplate("GENERAL")}>Otro</Button>
+              </div>
+            </div>
+          )}
           <main className="flex-1 overflow-auto p-4 sm:p-6">
             <Switch>
               {user?.role !== "CASHIER" && <Route path="/app/orders" component={OrdersPage} />}
@@ -309,6 +470,7 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/delivery" component={DeliveryPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/settings/orders" component={SettingsOrdersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/settings" component={SettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/audit" component={AuditPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print-test" component={PrintTestPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
               <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
@@ -323,12 +485,16 @@ export default function AppLayout() {
             </Switch>
           </main>
           <Joyride
-            steps={tourSteps}
+            steps={safeTourSteps}
             run={runTour}
+            stepIndex={stepIndex}
             continuous
             showProgress
             showSkipButton
             callback={handleJoyrideCallback}
+            disableScrolling
+            scrollToFirstStep={false}
+            spotlightClicks
             styles={{
               options: {
                 primaryColor: 'hsl(var(--primary))',
@@ -348,11 +514,7 @@ export default function AppLayout() {
               }
             }}
             locale={{
-              back: 'Anterior',
-              close: 'Cerrar',
-              last: 'Finalizar',
-              next: 'Siguiente',
-              skip: 'Saltar tour'
+              ...UI_TEXTS_ES_AR.onboarding.locale,
             }}
           />
           <GlobalVoiceFab />

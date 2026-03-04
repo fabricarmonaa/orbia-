@@ -35,7 +35,7 @@ export const cashStorage = {
     const [session] = await db.insert(cashSessions).values(data).returning();
     return session;
   },
-  async closeCashSession(id: number, tenantId: number, branchId: number | null, closingAmount: string) {
+  async closeCashSession(id: number, tenantId: number, branchId: number | null, closingAmount: string, closeNote?: string | null) {
     const conditions = [
       eq(cashSessions.id, id),
       eq(cashSessions.tenantId, tenantId),
@@ -64,6 +64,7 @@ export const cashStorage = {
         closingAmount,
         difference: String(diff),
         closedAt: new Date(),
+        closeNote: closeNote || null,
       })
       .where(and(eq(cashSessions.id, id), eq(cashSessions.tenantId, tenantId)));
   },

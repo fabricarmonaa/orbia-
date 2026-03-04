@@ -25,6 +25,11 @@ import { AdvancedSettings } from "@/components/settings/AdvancedSettings";
 
 import { OrderPresetsSettings } from "@/components/settings/OrderPresetsSettings";
 import { PriceListPdfSettings } from "@/components/pdfs/PriceListPdfSettings";
+import { VisibilitySettingsManager } from "@/components/settings/VisibilitySettingsManager";
+import { FieldsManager } from "@/components/settings/FieldsManager";
+import { OptionListsManager } from "@/components/settings/OptionListsManager";
+import { normalizeInstagramUrl, normalizeWhatsapp, normalizeWebsite } from "@shared/validators/links";
+import { DEFAULT_TRACKING_SETTINGS, mergeTrackingSettings } from "@shared/tracking-settings";
 
 interface Config {
   businessName: string;
@@ -39,6 +44,7 @@ interface Config {
   trackingAccentColor: string;
   trackingBgColor: string;
   trackingTosText: string;
+  trackingSettings: typeof DEFAULT_TRACKING_SETTINGS;
 }
 
 const layoutPresets = [
@@ -85,6 +91,7 @@ export default function SettingsPage() {
     trackingAccentColor: "#8b5cf6",
     trackingBgColor: "#ffffff",
     trackingTosText: "",
+    trackingSettings: { ...DEFAULT_TRACKING_SETTINGS },
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -98,9 +105,10 @@ export default function SettingsPage() {
   const [tosUpdatedAt, setTosUpdatedAt] = useState<string | null>(null);
   const [tosSaving, setTosSaving] = useState(false);
   const [slugSaving, setSlugSaving] = useState(false);
+  const [linkFieldErrors, setLinkFieldErrors] = useState<Record<string, string>>({});
 
   const minTrackingHours = getLimit("tracking_retention_min_hours") || 1;
-  const maxTrackingHours = getLimit("tracking_retention_max_hours") || 24;
+  const maxTrackingHours = getLimit("tracking_retention_max_hours") || 720;
   const previewOrder = {
     orderNumber: 123,
     type: "Pedido",
@@ -118,6 +126,7 @@ export default function SettingsPage() {
     publicComments: [],
     trackingLayout: config.trackingLayout || "classic",
     trackingTosText: brandingForm.texts.trackingFooter,
+    trackingSettings: config.trackingSettings,
   };
 
   useEffect(() => {
@@ -153,13 +162,14 @@ export default function SettingsPage() {
           businessDescription: configData.data.businessDescription || "",
           logoUrl: configData.data.logoUrl || "",
           currency: configData.data.currency || "ARS",
-          trackingExpirationHours: configData.data.trackingExpirationHours || 24,
+          trackingExpirationHours: Math.max(Number(configData.data.trackingExpirationHours || 24), 1),
           language: configData.data.language || "es",
           trackingLayout: configData.data.trackingLayout || "classic",
           trackingPrimaryColor: configData.data.trackingPrimaryColor || "#6366f1",
           trackingAccentColor: configData.data.trackingAccentColor || "#8b5cf6",
           trackingBgColor: configData.data.trackingBgColor || "#ffffff",
           trackingTosText: configData.data.trackingTosText || "",
+          trackingSettings: mergeTrackingSettings(configData.data.trackingSettings),
         });
       }
     } catch {
@@ -172,7 +182,11 @@ export default function SettingsPage() {
     e.preventDefault();
     setSaving(true);
     try {
-      await apiRequest("PUT", "/api/config", config);
+      await apiRequest("PUT", "/api/config", {
+        ...config,
+        trackingExpirationHours: Math.min(Math.max(Number(config.trackingExpirationHours || minTrackingHours), minTrackingHours), maxTrackingHours),
+        trackingSettings: mergeTrackingSettings(config.trackingSettings),
+      });
       toast({ title: "Configuración guardada" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -195,7 +209,7 @@ export default function SettingsPage() {
         body: formData,
       });
       if (!res.ok) {
-        const info = await parseApiError(res, { maxUploadBytes: 1000000 });
+        const info = await parseApiError(res, { maxUploadBytes: 5 * 1024 * 1024 });
         throw new Error(info.message);
       }
       const data = await res.json();
@@ -215,15 +229,45 @@ export default function SettingsPage() {
   async function saveBranding(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setBrandingSaving(true);
+    setLinkFieldErrors({});
     try {
-      await apiRequest("PUT", "/api/branding/tenant", {
-        logoUrl: brandingForm.logoUrl,
-        displayName: brandingForm.displayName,
-        colors: brandingForm.colors,
-        texts: brandingForm.texts,
-        links: brandingForm.links,
-        pdfConfig: brandingForm.pdfConfig,
+      const instagram = normalizeInstagramUrl(brandingForm.links.instagram);
+      const whatsapp = normalizeWhatsapp(brandingForm.links.whatsapp);
+      const web = normalizeWebsite(brandingForm.links.web);
+      const localFieldErrors: Record<string, string> = {};
+      if (instagram.error) localFieldErrors.instagram = instagram.error;
+      if (whatsapp.error) localFieldErrors.whatsapp = whatsapp.error;
+      if (web.error) localFieldErrors.web = web.error;
+      if (Object.keys(localFieldErrors).length > 0) {
+        setLinkFieldErrors(localFieldErrors);
+        throw new Error("Revisá los links cargados antes de guardar.");
+      }
+
+      const token = getToken();
+      const res = await fetch("/api/branding/tenant", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          logoUrl: brandingForm.logoUrl,
+          displayName: brandingForm.displayName,
+          colors: brandingForm.colors,
+          texts: brandingForm.texts,
+          links: {
+            instagram: instagram.value,
+            whatsapp: whatsapp.value,
+            web: web.value,
+          },
+          pdfConfig: { showLogo: brandingForm.pdfConfig.showLogo ?? true },
+        }),
       });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        if (body?.fieldErrors) setLinkFieldErrors(body.fieldErrors);
+        throw new Error(body?.error || body?.message || "No se pudo guardar la personalización");
+      }
       toast({ title: "Personalización guardada" });
       await refreshBranding();
     } catch (err: any) {
@@ -244,7 +288,7 @@ export default function SettingsPage() {
         colors: reset.colors,
         texts: reset.texts,
         links: reset.links,
-        pdfConfig: reset.pdfConfig,
+        pdfConfig: { showLogo: reset.pdfConfig.showLogo ?? true },
       });
       toast({ title: "Valores restaurados" });
       await refreshBranding();
@@ -358,6 +402,7 @@ export default function SettingsPage() {
               previewOrder={previewOrder}
               layoutPresets={layoutPresets}
               planCode={planCode}
+              linkFieldErrors={linkFieldErrors}
             />
           ),
         },
@@ -398,6 +443,33 @@ export default function SettingsPage() {
           id: "order-presets",
           label: "Pedidos (campos)",
           content: <OrderPresetsSettings />,
+        },
+        {
+          id: "option-lists",
+          label: "Listas desplegables",
+          content: <OptionListsManager />,
+        },
+        {
+          id: "fields",
+          label: "Campos dinámicos",
+          content: (
+            <div className="space-y-4">
+              <FieldsManager entityType="ORDER" />
+              <FieldsManager entityType="PRODUCT" />
+              <FieldsManager entityType="SALE" />
+            </div>
+          ),
+        },
+        {
+          id: "visibility",
+          label: "Visibilidad",
+          content: (
+            <div className="space-y-4">
+              <VisibilitySettingsManager entityType="ORDER" />
+              <VisibilitySettingsManager entityType="PRODUCT" />
+              <VisibilitySettingsManager entityType="SALE" />
+            </div>
+          ),
         },
         {
           id: "pdfs",

@@ -71,7 +71,7 @@ export function StatusesSettings() {
 
         {entity === "ORDER" ? (
           <div className="space-y-2 border rounded p-3">
-            <p className="text-sm font-medium">Estados destacados en Dashboard</p>
+            <p className="text-sm font-medium">Estados destacados en Inicio</p>
             <p className="text-xs text-muted-foreground">Se mostrarán hasta 5 pedidos por estado destacado.</p>
             <div className="space-y-1">
               {rows.filter((r) => r.isActive).map((s) => (
@@ -91,7 +91,7 @@ export function StatusesSettings() {
               <div className="w-3 h-3 rounded-full" style={{ background: s.color || "#9CA3AF" }} />
               <Input value={s.label} onChange={(e) => updateStatus(s.id, { label: e.target.value })} />
               <Badge variant="secondary">{s.code}</Badge>
-              {s.isDefault ? <Badge>Default</Badge> : <Button size="sm" variant="outline" onClick={() => apiRequest("POST", `/api/statuses/${entity}/${s.id}/set-default`, {}).then(load)}>Set default</Button>}
+              {s.isDefault ? <Badge>Predeterminado</Badge> : <Button size="sm" variant="outline" onClick={() => apiRequest("POST", `/api/statuses/${entity}/${s.id}/set-default`, {}).then(load)}>Definir como predeterminado</Button>}
               <div className="flex items-center gap-1 text-xs">Activo<Switch checked={s.isActive} onCheckedChange={(checked) => updateStatus(s.id, { isActive: checked })} /></div>
             </div>
           ))}

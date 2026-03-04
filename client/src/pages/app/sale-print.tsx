@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { apiRequest } from "@/lib/auth";
+import { authFetch } from "@/lib/auth";
 
 export default function SalePrintPage() {
   const [location] = useLocation();
@@ -32,10 +32,11 @@ export default function SalePrintPage() {
 
     (async () => {
       try {
-        const res = await apiRequest("GET", pdfUrl);
-        if (!res.ok) {
+        const res = await authFetch(pdfUrl, { method: "GET" });
+        const contentType = res.headers.get("content-type") || "";
+        if (!res.ok || !contentType.includes("application/pdf")) {
           const payload = await res.json().catch(() => ({}));
-          throw new Error(payload?.error || "No se pudo generar el PDF del ticket.");
+          throw new Error(payload?.error || payload?.message || "No se pudo generar el PDF del ticket.");
         }
         const blob = await res.blob();
         localUrl = URL.createObjectURL(blob);

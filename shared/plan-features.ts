@@ -129,7 +129,7 @@ export const PLAN_DEFAULTS: Record<string, {
             staff_max: 10,
             orders_month_max: -1,
             tracking_retention_min_hours: 1,
-            tracking_retention_max_hours: 168,
+            tracking_retention_max_hours: 128,
         },
     },
     ESCALA: {
@@ -170,3 +170,21 @@ export const PLAN_DEFAULTS: Record<string, {
         },
     },
 };
+
+export const PLAN_CODE_ALIASES: Record<string, keyof typeof PLAN_DEFAULTS> = {
+    PRO: "PROFESIONAL",
+    PROFESSIONAL: "PROFESIONAL",
+    BASIC: "ECONOMICO",
+    STARTER: "ECONOMICO",
+    SCALE: "ESCALA",
+};
+
+export function normalizePlanCode(rawPlanCode: string | null | undefined): keyof typeof PLAN_DEFAULTS {
+    const normalized = String(rawPlanCode || "").trim().toUpperCase();
+    if (normalized in PLAN_DEFAULTS) return normalized as keyof typeof PLAN_DEFAULTS;
+    return PLAN_CODE_ALIASES[normalized] || "ECONOMICO";
+}
+
+export function getPlanDefaults(planCode: string | null | undefined) {
+    return PLAN_DEFAULTS[normalizePlanCode(planCode)];
+}

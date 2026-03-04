@@ -15,6 +15,7 @@ import {
 import { Palette, Save, Upload, Eye, Settings } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 import { TrackingView } from "@/components/tracking/TrackingView";
+import { UI_TEXTS_ES_AR } from "@/constants/ui-texts-es-ar";
 
 interface ConfigForm {
   businessName: string;
@@ -29,6 +30,13 @@ interface ConfigForm {
   trackingAccentColor: string;
   trackingBgColor: string;
   trackingTosText: string;
+  trackingSettings: {
+    showOrderNumber: boolean;
+    showOrderType: boolean;
+    showDates: boolean;
+    showHistory: boolean;
+    showOnlyCurrentStatus: boolean;
+  };
 }
 
 interface LayoutPreset {
@@ -56,6 +64,7 @@ interface BrandingSettingsProps {
   resetBranding: () => void;
   previewOrder: any;
   layoutPresets: LayoutPreset[];
+  linkFieldErrors?: Record<string, string>;
 }
 
 export function BrandingSettings({
@@ -76,6 +85,7 @@ export function BrandingSettings({
   previewOrder,
   layoutPresets,
   planCode,
+  linkFieldErrors = {},
 }: BrandingSettingsProps) {
   const isEconomic = (planCode || "").toUpperCase() === "ECONOMICO";
   return (
@@ -157,9 +167,38 @@ export function BrandingSettings({
                 />
               </div>
             </div>
+
+            <div className="space-y-3 rounded-md border p-3">
+              <Label>Opciones visibles en Seguimiento</Label>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                {[
+                  { key: "showOrderNumber", label: "Mostrar número de pedido" },
+                  { key: "showOrderType", label: "Mostrar tipo" },
+                  { key: "showDates", label: "Mostrar fechas (creado/actualizado)" },
+                  { key: "showHistory", label: "Mostrar historial" },
+                  { key: "showOnlyCurrentStatus", label: "Mostrar solo estado actual" },
+                ].map((item) => (
+                  <label key={item.key} className="flex items-center justify-between gap-3">
+                    <span>{item.label}</span>
+                    <Switch
+                      checked={(config.trackingSettings as any)?.[item.key] ?? false}
+                      onCheckedChange={(checked) =>
+                        setConfig({
+                          ...config,
+                          trackingSettings: {
+                            ...config.trackingSettings,
+                            [item.key]: checked,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
             <Button type="submit" disabled={savingConfig}>
               <Save className="w-4 h-4 mr-2" />
-              {savingConfig ? "Guardando..." : "Guardar"}
+              {savingConfig ? UI_TEXTS_ES_AR.common.saving : UI_TEXTS_ES_AR.common.save}
             </Button>
           </form>
         </CardContent>
@@ -201,7 +240,7 @@ export function BrandingSettings({
                   onClick={() => tenantLogoInputRef.current?.click()}
                 >
                   <Upload className="w-4 h-4 mr-2" />
-                  {brandingUploading ? "Subiendo..." : "Subir Logo"}
+                  {brandingUploading ? "Subiendo..." : UI_TEXTS_ES_AR.branding.uploadLogo}
                 </Button>
               </div>
             </div>
@@ -225,8 +264,8 @@ export function BrandingSettings({
                   { key: "background", label: "Fondo" },
                   { key: "text", label: "Texto" },
                   { key: "trackingButton", label: "Tracking: Botón" },
-                  { key: "trackingHeader", label: "Tracking: Header" },
-                  { key: "trackingBadge", label: "Tracking: Badge" },
+                  { key: "trackingHeader", label: UI_TEXTS_ES_AR.branding.trackingHeaderColor },
+                  { key: "trackingBadge", label: UI_TEXTS_ES_AR.branding.trackingBadgeColor },
                 ].map((item) => (
                   <div key={item.key} className="space-y-2">
                     <Label>{item.label}</Label>
@@ -260,7 +299,7 @@ export function BrandingSettings({
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Texto header tracking</Label>
+                <Label>{UI_TEXTS_ES_AR.branding.trackingHeaderText}</Label>
                 <Input
                   value={brandingForm.texts.trackingHeader}
                   onChange={(e) =>
@@ -272,7 +311,7 @@ export function BrandingSettings({
                 />
               </div>
               <div className="space-y-2">
-                <Label>Texto footer tracking</Label>
+                <Label>{UI_TEXTS_ES_AR.branding.trackingFooterText}</Label>
                 <Input
                   value={brandingForm.texts.trackingFooter}
                   onChange={(e) =>
@@ -299,9 +338,10 @@ export function BrandingSettings({
                     }
                     placeholder="https://instagram.com/tu_marca"
                   />
+                  {linkFieldErrors.instagram ? <p className="text-xs text-destructive">{linkFieldErrors.instagram}</p> : null}
                 </div>
                 <div className="space-y-2">
-                  <Label>Whatsapp</Label>
+                  <Label>{UI_TEXTS_ES_AR.branding.whatsapp}</Label>
                   <Input
                     value={brandingForm.links.whatsapp || ""}
                     onChange={(e) =>
@@ -310,8 +350,9 @@ export function BrandingSettings({
                         links: { ...brandingForm.links, whatsapp: e.target.value },
                       })
                     }
-                    placeholder="Ej: 5491112345678"
+                    placeholder="Ej: 2235950783 o https://wa.me/2235950783"
                   />
+                  {linkFieldErrors.whatsapp ? <p className="text-xs text-destructive">{linkFieldErrors.whatsapp}</p> : null}
                 </div>
                 <div className="space-y-2">
                   <Label>Web</Label>
@@ -323,8 +364,9 @@ export function BrandingSettings({
                         links: { ...brandingForm.links, web: e.target.value },
                       })
                     }
-                    placeholder="https://www.tuecommerce.com"
+                    placeholder="Ej: mautica.com.ar"
                   />
+                  {linkFieldErrors.web ? <p className="text-xs text-destructive">{linkFieldErrors.web}</p> : null}
                 </div>
               </div>
             ) : (
@@ -333,34 +375,7 @@ export function BrandingSettings({
               </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>PDF: Encabezado</Label>
-                <Input
-                  value={brandingForm.pdfConfig.headerText || ""}
-                  onChange={(e) =>
-                    setBrandingForm({
-                      ...brandingForm,
-                      pdfConfig: { ...brandingForm.pdfConfig, headerText: e.target.value },
-                    })
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>PDF: Footer</Label>
-                <Input
-                  value={brandingForm.pdfConfig.footerText || ""}
-                  onChange={(e) =>
-                    setBrandingForm({
-                      ...brandingForm,
-                      pdfConfig: { ...brandingForm.pdfConfig, footerText: e.target.value },
-                    })
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-3">
               <Switch
                 checked={brandingForm.pdfConfig.showLogo ?? true}
                 onCheckedChange={(checked) =>
@@ -403,7 +418,7 @@ export function BrandingSettings({
             <div className="flex items-center gap-2">
               <Button type="submit" disabled={brandingSaving}>
                 <Save className="w-4 h-4 mr-2" />
-                {brandingSaving ? "Guardando..." : "Guardar Personalización"}
+                {brandingSaving ? UI_TEXTS_ES_AR.common.saving : UI_TEXTS_ES_AR.branding.savePersonalization}
               </Button>
               <Button type="button" variant="outline" onClick={resetBranding} disabled={brandingSaving}>
                 Restaurar valores por defecto

@@ -37,6 +37,7 @@ export const cashSessions = pgTable(
     status: varchar("status", { length: 20 }).notNull().default("open"),
     openedAt: timestamp("opened_at").defaultNow().notNull(),
     closedAt: timestamp("closed_at"),
+    closeNote: text("close_note"),
   },
   (table) => [
     index("idx_cash_sessions_tenant").on(table.tenantId),

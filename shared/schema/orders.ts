@@ -76,6 +76,7 @@ export const orders = pgTable(
     createdByBranchId: integer("created_by_branch_id").references(() => branches.id, { onDelete: "set null" }),
     // Etapa A: which preset was used when creating this order
     orderPresetId: integer("order_preset_id"),
+    deliveredCashMovementId: integer("delivered_cash_movement_id"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

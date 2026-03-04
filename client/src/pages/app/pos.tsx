@@ -11,6 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { DynamicFieldsForm } from "@/components/dynamic-fields/DynamicFieldsForm";
 import { ScanLine } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 import { usePOSCart } from "@/hooks/usePOS";
@@ -68,6 +69,8 @@ export default function PosPage() {
   const [payment, setPayment] = useState("EFECTIVO");
   const [notes, setNotes] = useState("");
   const [latestSale, setLatestSale] = useState<{ id: number; number: string; total: string } | null>(null);
+  const [saleFieldDefs, setSaleFieldDefs] = useState<Array<{ id: number; fieldKey: string; label: string; fieldType: string; required: boolean; config?: Record<string, unknown> }>>([]);
+  const [saleFieldValues, setSaleFieldValues] = useState<Record<number, unknown>>({});
   const [pendingSale, setPendingSale] = useState<PendingSaleFromOrder | null>(null);
   const [pendingCustomerName, setPendingCustomerName] = useState("");
   const [pendingCustomerDni, setPendingCustomerDni] = useState("");
@@ -290,6 +293,14 @@ export default function PosPage() {
     if (!win) setLocation(url);
   }
 
+
+  useEffect(() => {
+    apiRequest("GET", "/api/fields/SALE")
+      .then((r) => r.json())
+      .then((json) => setSaleFieldDefs(Array.isArray(json?.data) ? json.data.filter((f: any) => f.isActive) : []))
+      .catch(() => setSaleFieldDefs([]));
+  }, []);
+
   async function submitSale() {
     if (!cart.length) return;
     const orderCustomerSummary = pendingSale
@@ -335,6 +346,23 @@ export default function PosPage() {
 
       const sale = await res.json();
       setLatestSale({ id: sale.sale_id, number: sale.sale_number, total: sale.total_amount });
+
+      if (Object.keys(saleFieldValues).length > 0) {
+        try {
+          const values = Object.entries(saleFieldValues).map(([fieldDefinitionId, value]) => ({
+            fieldDefinitionId: Number(fieldDefinitionId),
+            valueText: typeof value === "string" ? value : undefined,
+            valueNumber: typeof value === "number" ? value : undefined,
+            valueBool: typeof value === "boolean" ? value : undefined,
+            valueDate: typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined,
+            valueJson: Array.isArray(value) ? value : undefined,
+            valueMoneyAmount: typeof value === "string" && /^-?\d+(\.\d+)?$/.test(value) ? value : undefined,
+          }));
+          await apiRequest("PUT", `/api/sales/${sale.sale_id}/custom-fields`, { values });
+        } catch (err: any) {
+          toast({ title: "Venta registrada", description: `No pudimos guardar los campos opcionales: ${err?.message || "error"}`, variant: "destructive" });
+        }
+      }
 
       if (pendingSale?.orderId) {
         try {
@@ -579,7 +607,15 @@ export default function PosPage() {
             </div>
 
             <div>
-              <Label>Notas</Label>
+              <div className="space-y-2">
+                  <Label>Campos opcionales</Label>
+                  <DynamicFieldsForm
+                    fields={saleFieldDefs.map((f) => ({ id: f.id, fieldKey: f.fieldKey, label: f.label, fieldType: f.fieldType, required: f.required, config: f.config || {} }))}
+                    values={saleFieldValues}
+                    onChange={(fieldId, value) => setSaleFieldValues((prev) => ({ ...prev, [fieldId]: value }))}
+                  />
+                </div>
+                <Label>Notas</Label>
               <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
             </div>
 

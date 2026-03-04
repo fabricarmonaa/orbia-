@@ -96,7 +96,7 @@ export interface IStorage {
   getCashSessions(tenantId: number): Promise<CashSession[]>;
   getOpenSession(tenantId: number, branchId?: number | null): Promise<CashSession | undefined>;
   createCashSession(data: InsertCashSession): Promise<CashSession>;
-  closeCashSession(id: number, tenantId: number, branchId: number | null, closingAmount: string): Promise<void>;
+  closeCashSession(id: number, tenantId: number, branchId: number | null, closingAmount: string, closeNote?: string | null): Promise<void>;
 
   getCashMovements(tenantId: number): Promise<CashMovement[]>;
   createCashMovement(data: InsertCashMovement): Promise<CashMovement>;

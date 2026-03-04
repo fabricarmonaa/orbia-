@@ -1,7 +1,8 @@
 import type { Express } from "express";
 import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
-import { enforceBranchScope, getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
+import { getTenantPlan, requireRoleAny, tenantAuth } from "../auth";
+import { resolveBranchScope, requireBranchAccess } from "../middleware/branch-scope";
 import { storage } from "../storage";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
@@ -12,6 +13,8 @@ import { buildThermalTicketPdf } from "../services/pdf/thermal-ticket";
 import { resolvePagination } from "../utils/pagination";
 import { generatePublicToken } from "../utils/public-token";
 import { submitSale } from "../services/sale.service";
+import { logAuditEventFromRequest } from "../services/audit";
+import { refreshAnalyticsViews } from "../services/analytics";
 
 const optionalLong = (max: number) =>
   z.preprocess(
@@ -108,7 +111,7 @@ function isApiDebugEnabled() {
 }
 
 export function registerSaleRoutes(app: Express) {
-  app.post("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateBody(createSaleSchema), async (req, res) => {
+  app.post("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), resolveBranchScope(true), requireBranchAccess, validateBody(createSaleSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const payload = req.body as z.infer<typeof createSaleSchema>;
@@ -141,6 +144,9 @@ export function registerSaleRoutes(app: Express) {
       });
 
       await ensureSalePublicToken(created.sale.id, tenantId);
+
+      logAuditEventFromRequest(req, { action: "venta.crear", entityType: "sale", entityId: created.sale.id, metadata: { totalAmount: created.sale.totalAmount, branchId } });
+      refreshAnalyticsViews();
 
       // Fire-and-forget: never blocks the response
       bumpMetrics(tenantId, {
@@ -179,7 +185,7 @@ export function registerSaleRoutes(app: Express) {
     }
   });
 
-  app.get("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateQuery(saleQuerySchema), async (req, res) => {
+  app.get("/api/sales", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), resolveBranchScope(false), requireBranchAccess, validateQuery(saleQuerySchema), async (req, res) => {
     let tenantId = 0;
     try {
       tenantId = req.auth!.tenantId!;
@@ -279,7 +285,7 @@ export function registerSaleRoutes(app: Express) {
     }
   });
 
-  app.get("/api/sales/:id", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  app.get("/api/sales/:id", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), validateParams(idParamSchema), async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
       const saleId = req.params.id as unknown as number;
@@ -400,10 +406,10 @@ export function registerSaleRoutes(app: Express) {
     }
   };
 
-  app.get("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
-  app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), getSalePrintData);
+  app.get("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), validateParams(idParamSchema), getSalePrintData);
+  app.post("/api/sales/:id/print-data", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), validateParams(idParamSchema), getSalePrintData);
 
-  app.get("/api/sales/:id/ticket-pdf", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+  app.get("/api/sales/:id/ticket-pdf", tenantAuth, requireRoleAny(["admin", "staff", "CASHIER"]), validateParams(idParamSchema), async (req, res) => {
     try {
       const width = String(req.query.width || "80") === "58" ? 58 : 80;
       const saleId = Number(req.params.id);

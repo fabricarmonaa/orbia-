@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { DynamicFieldsForm } from "@/components/dynamic-fields/DynamicFieldsForm";
 import {
   Select,
   SelectContent,
@@ -60,6 +61,27 @@ type ProductRow = {
 };
 
 type Category = { id: number; name: string };
+
+type ProductFieldDef = {
+  id: number;
+  label: string;
+  fieldType: "TEXT" | "NUMBER" | "MONEY" | "BOOLEAN" | "DATE" | "SELECT" | "MULTISELECT" | "TEXTAREA" | "FILE";
+  required: boolean;
+  fieldKey?: string;
+  config?: any;
+};
+
+type ProductFieldValueInput = {
+  fieldDefinitionId: number;
+  valueText?: string | null;
+  valueNumber?: string | number | null;
+  valueBool?: boolean | null;
+  valueDate?: string | null;
+  valueJson?: any;
+  valueMoneyAmount?: string | number | null;
+  valueMoneyDirection?: number | null;
+  currency?: string | null;
+};
 
 type ProductFilters = {
   q: string;
@@ -139,6 +161,9 @@ export default function ProductsPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any>(null);
   const [importMapping, setImportMapping] = useState<Record<string, string>>({});
+  const [productFieldDefs, setProductFieldDefs] = useState<ProductFieldDef[]>([]);
+  const [newProductCustomValues, setNewProductCustomValues] = useState<Record<number, ProductFieldValueInput>>({});
+  const [editProductCustomValues, setEditProductCustomValues] = useState<Record<number, ProductFieldValueInput>>({});
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
 
@@ -161,6 +186,7 @@ export default function ProductsPage() {
       return;
     }
     void fetchCategories();
+    if (isTenantAdmin) { void fetchProductFieldDefinitions(); }
     fetchAddons()
       .then((d) => setAddonStatus(d || {}))
       .catch(() => setAddonStatus({}));
@@ -194,6 +220,21 @@ export default function ProductsPage() {
     } catch (err: any) {
       toast({ title: "No se pudieron cargar categorías", description: err.message, variant: "destructive" });
     }
+  }
+
+  async function fetchProductFieldDefinitions() {
+    try {
+      const res = await apiRequest("GET", "/api/fields?entityType=PRODUCT");
+      const json = await res.json();
+      setProductFieldDefs((json.data || []).filter((f: any) => f.isActive));
+    } catch {
+      setProductFieldDefs([]);
+    }
+  }
+
+  async function saveProductCustomFields(productId: number, valuesMap: Record<number, ProductFieldValueInput>) {
+    const values = Object.values(valuesMap).filter((v) => v && v.fieldDefinitionId);
+    await apiRequest("PUT", `/api/products/${productId}/custom-fields`, { values });
   }
 
   async function fetchProducts(current: ProductFilters) {
@@ -271,7 +312,7 @@ export default function ProductsPage() {
   async function createProduct(e: React.FormEvent) {
     e.preventDefault();
     try {
-      await apiRequest("POST", "/api/products", {
+      const createdRes = await apiRequest("POST", "/api/products", {
         name: newProduct.name,
         description: newProduct.description || null,
         price: Number(newProduct.price),
@@ -284,8 +325,13 @@ export default function ProductsPage() {
         marginPct: newProduct.marginPct ? Number(newProduct.marginPct) : null,
         stock: meta.stockMode === "global" ? (newProduct.stock ? Number(newProduct.stock) : 0) : null,
       });
+      const createdJson = await createdRes.json();
+      if (productFieldDefs.length > 0) {
+        await saveProductCustomFields(createdJson?.data?.id, newProductCustomValues);
+      }
       toast({ title: "Producto creado" });
       setNewProduct(emptyProduct);
+      setNewProductCustomValues({});
       setProductDialog(false);
       await fetchProducts(filters);
     } catch (err: any) {
@@ -295,6 +341,31 @@ export default function ProductsPage() {
 
   function openEdit(product: ProductRow) {
     setEditProduct(product);
+    void (async () => {
+      try {
+        const r = await apiRequest("GET", `/api/products/${product.id}/custom-fields`);
+        const j = await r.json();
+        const map: Record<number, ProductFieldValueInput> = {};
+        for (const item of (j.data || [])) {
+          if (item?.value) {
+            map[item.id] = {
+              fieldDefinitionId: item.id,
+              valueText: item.value.valueText ?? null,
+              valueNumber: item.value.valueNumber ?? null,
+              valueBool: item.value.valueBool ?? null,
+              valueDate: item.value.valueDate ?? null,
+              valueJson: item.value.valueJson ?? null,
+              valueMoneyAmount: item.value.valueMoneyAmount ?? null,
+              valueMoneyDirection: item.value.valueMoneyDirection ?? null,
+              currency: item.value.currency ?? null,
+            };
+          }
+        }
+        setEditProductCustomValues(map);
+      } catch {
+        setEditProductCustomValues({});
+      }
+    })();
     setEditForm({
       name: product.name,
       description: product.description || "",
@@ -328,6 +399,9 @@ export default function ProductsPage() {
         marginPct: editForm.marginPct ? Number(editForm.marginPct) : null,
         stock: meta.stockMode === "global" ? (editForm.stock ? Number(editForm.stock) : 0) : null,
       });
+      if (editProduct?.id && productFieldDefs.length > 0) {
+        await saveProductCustomFields(editProduct.id, editProductCustomValues);
+      }
       toast({ title: "Producto actualizado" });
       setEditDialog(false);
       setEditProduct(null);
@@ -697,6 +771,9 @@ export default function ProductsPage() {
                           scanActive={scanEnabled}
                           onOpenKeyboardScan={() => setScanEnabled(true)}
                           onOpenCameraScan={() => setCameraScanOpen(true)}
+                          customFieldDefs={productFieldDefs}
+                          customValues={newProductCustomValues}
+                          onCustomValuesChange={setNewProductCustomValues}
                         />
                         <BarcodeListener enabled={scanEnabled} onCode={scanIntoProductForm} onCancel={() => setScanEnabled(false)} durationMs={10000} />
                         <CameraScanner open={cameraScanOpen} onClose={() => setCameraScanOpen(false)} onCode={scanIntoProductForm} timeoutMs={10000} />
@@ -806,6 +883,9 @@ export default function ProductsPage() {
             stockMode={meta.stockMode}
             onSubmit={updateProduct}
             submitText="Guardar cambios"
+            customFieldDefs={productFieldDefs}
+            customValues={editProductCustomValues}
+            onCustomValuesChange={setEditProductCustomValues}
           />
         </DialogContent>
       </Dialog>
@@ -857,13 +937,22 @@ type ProductFormProps = {
   stockMode: StockMode;
   onSubmit: (e: React.FormEvent) => Promise<void> | void;
   submitText: string;
+  customFieldDefs?: ProductFieldDef[];
+  customValues?: Record<number, ProductFieldValueInput>;
+  onCustomValuesChange?: (next: Record<number, ProductFieldValueInput>) => void;
 };
 
-function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onOpenKeyboardScan, onOpenCameraScan }: ProductFormProps) {
+function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onOpenKeyboardScan, onOpenCameraScan, customFieldDefs = [], customValues = {}, onCustomValuesChange }: ProductFormProps) {
   const marginMode = value.pricingMode === "MARGIN";
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
   const estimated = costPreview * (1 + marginPreview / 100);
+
+  const updateCustomValue = (fieldId: number, patch: Partial<ProductFieldValueInput>) => {
+    if (!onCustomValuesChange) return;
+    const current = customValues[fieldId] || { fieldDefinitionId: fieldId };
+    onCustomValuesChange({ ...customValues, [fieldId]: { ...current, ...patch, fieldDefinitionId: fieldId } });
+  };
 
   return (
     <form className="space-y-3" onSubmit={onSubmit}>
@@ -955,6 +1044,46 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal. Usá “Stock” del producto para ajustar por cada sucursal.</p>
+      )}
+      {customFieldDefs.length > 0 && (
+        <div className="space-y-2 border rounded-md p-3">
+          <p className="text-sm font-medium">Campos personalizados</p>
+          <DynamicFieldsForm
+            fields={customFieldDefs.map((field) => ({
+              id: field.id,
+              fieldKey: field.fieldKey || `campo_${field.id}`,
+              label: field.label,
+              fieldType: field.fieldType,
+              required: field.required,
+              config: field.config || {},
+            }))}
+            values={Object.fromEntries(Object.entries(customValues).map(([id, v]) => {
+              const field = customFieldDefs.find((f) => f.id === Number(id));
+              if (!field) return [id, null];
+              if (field.fieldType === "MONEY") return [id, v.valueMoneyAmount || ""];
+              if (field.fieldType === "NUMBER") return [id, v.valueNumber || ""];
+              if (field.fieldType === "BOOLEAN") return [id, Boolean(v.valueBool)];
+              if (field.fieldType === "DATE") return [id, v.valueDate || ""];
+              if (field.fieldType === "SELECT") return [id, (v.valueJson as any)?.value || ""];
+              return [id, v.valueText || ""];
+            }))}
+            onChange={(fieldId: number, val: unknown) => {
+              const field = customFieldDefs.find((f) => f.id === fieldId);
+              if (!field) return;
+              if (field.fieldType === "MONEY") return updateCustomValue(fieldId, { valueMoneyAmount: String(val || ""), valueMoneyDirection: (customValues[fieldId]?.valueMoneyDirection || 1), currency: String((field.config?.currency || "ARS")) });
+              if (field.fieldType === "NUMBER") return updateCustomValue(fieldId, { valueNumber: String(val || "") });
+              if (field.fieldType === "BOOLEAN") return updateCustomValue(fieldId, { valueBool: Boolean(val) });
+              if (field.fieldType === "DATE") return updateCustomValue(fieldId, { valueDate: String(val || "") });
+              if (field.fieldType === "SELECT") {
+                const option = (field.config?.options || []).find((o: any) => String(o.value) === String(val));
+                return updateCustomValue(fieldId, { valueJson: option || { value: val, label: val } });
+              }
+              if (field.fieldType === "MULTISELECT") return updateCustomValue(fieldId, { valueJson: Array.isArray(val) ? val : [] });
+              if (field.fieldType === "FILE") return;
+              return updateCustomValue(fieldId, { valueText: String(val || "") });
+            }}
+          />
+        </div>
       )}
       <Button type="submit" className="w-full">{submitText}</Button>
     </form>

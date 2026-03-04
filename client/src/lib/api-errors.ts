@@ -15,6 +15,7 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   PERMISSION_DENIED: "No tenés permisos para realizar esta acción.",
   PLAN_BLOCKED: "Tu plan no incluye esta función. Tocá “Mejorar plan” para solicitar el upgrade.",
   FEATURE_BLOCKED: "Tu plan no incluye esta función. Tocá “Mejorar plan” para solicitar el upgrade.",
+  PLAN_LIMIT_REACHED: "Alcanzaste el límite de tu plan para esta acción.",
   INVALID_PAYLOAD: "Datos inválidos. Revisá los campos e intentá de nuevo.",
   VALIDATION_ERROR: "Datos inválidos. Revisá los campos e intentá de nuevo.",
   BAD_REQUEST: "Datos inválidos. Revisá los campos e intentá de nuevo.",
@@ -53,8 +54,12 @@ export async function parseApiError(
     message = DEFAULT_MESSAGES.INTERNAL_ERROR;
   }
 
+  if (!parsed && raw.trim().startsWith("<") && res.status === 413) {
+    message = "El archivo supera el tamaño permitido por el servidor. Probá con una imagen de hasta 5 MB.";
+  }
+
   if (code === "UPLOAD_TOO_LARGE") {
-    const maxMb = formatMaxMb(options?.maxUploadBytes);
+    const maxMb = formatMaxMb(parsed?.maxBytes || options?.maxUploadBytes);
     message = maxMb
       ? `Archivo demasiado grande. Máximo ${maxMb} MB.`
       : "Archivo demasiado grande. Verificá el tamaño permitido.";

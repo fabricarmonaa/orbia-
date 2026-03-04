@@ -5,6 +5,7 @@ import {
   varchar,
   boolean,
   timestamp,
+  date,
   jsonb,
   text,
   numeric,
@@ -28,6 +29,7 @@ export const orderTypeDefinitions = pgTable(
     label: varchar("label", { length: 120 }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("uq_order_type_definitions_tenant_code").on(table.tenantId, table.code),
@@ -46,9 +48,11 @@ export const orderTypePresets = pgTable(
     orderTypeId: integer("order_type_id").references(() => orderTypeDefinitions.id).notNull(),
     code: varchar("code", { length: 80 }).notNull(),  // slug: "default", "garantia", etc.
     label: varchar("label", { length: 200 }).notNull(),
+    isDefault: boolean("is_default").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     uniqueIndex("uq_order_type_presets_tenant_type_code").on(table.tenantId, table.orderTypeId, table.code),
@@ -71,6 +75,7 @@ export const orderFieldDefinitions = pgTable(
     label: varchar("label", { length: 160 }).notNull(),
     fieldType: varchar("field_type", { length: 20 }).notNull(),
     required: boolean("required").notNull().default(false),
+    trackingLabel: varchar("tracking_label", { length: 160 }),
     sortOrder: integer("sort_order").notNull().default(0),
     config: jsonb("config").notNull().default({}),
     isActive: boolean("is_active").notNull().default(true),
@@ -78,6 +83,7 @@ export const orderFieldDefinitions = pgTable(
     // Etapa B: visibility in public tracking page
     visibleInTracking: boolean("visible_in_tracking").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     // Changed from (order_type_id, field_key) to (preset_id, field_key) to allow
@@ -99,18 +105,75 @@ export const orderFieldValues = pgTable(
     tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
     orderId: integer("order_id").references(() => orders.id).notNull(),
     fieldDefinitionId: integer("field_definition_id").references(() => orderFieldDefinitions.id).notNull(),
+    fieldKey: varchar("field_key", { length: 80 }),
     valueText: text("value_text"),
     valueNumber: numeric("value_number", { precision: 14, scale: 4 }),
+    valueBool: boolean("value_bool"),
+    valueDate: date("value_date"),
+    valueJson: jsonb("value_json"),
+    valueMoneyAmount: numeric("value_money_amount", { precision: 14, scale: 2 }),
+    valueMoneyDirection: integer("value_money_direction"),
+    currency: varchar("currency", { length: 3 }),
     // For FILE fields: "att:{attachment_id}" referencing order_attachments.id
     fileStorageKey: text("file_storage_key"),
     // Etapa B: per-value tracking visibility override
     // null = use field_definition.visible_in_tracking; true/false = explicit override
     visibleOverride: boolean("visible_override"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     index("idx_order_field_values_tenant_order").on(table.tenantId, table.orderId),
     uniqueIndex("uq_order_field_values_order_field").on(table.orderId, table.fieldDefinitionId),
+    uniqueIndex("uq_order_field_values_tenant_order_field_key").on(table.tenantId, table.orderId, table.fieldKey),
+  ]
+);
+
+
+
+export const productFieldDefinitions = pgTable(
+  "product_field_definitions",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    fieldKey: varchar("field_key", { length: 80 }).notNull(),
+    label: varchar("label", { length: 160 }).notNull(),
+    fieldType: varchar("field_type", { length: 20 }).notNull(),
+    required: boolean("required").notNull().default(false),
+    sortOrder: integer("sort_order").notNull().default(0),
+    config: jsonb("config").notNull().default({}),
+    isActive: boolean("is_active").notNull().default(true),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("uq_product_field_definitions_tenant_key").on(table.tenantId, table.fieldKey),
+    index("idx_product_field_definitions_tenant").on(table.tenantId, table.sortOrder, table.id),
+  ]
+);
+
+export const productFieldValues = pgTable(
+  "product_field_values",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").references(() => tenants.id).notNull(),
+    productId: integer("product_id").notNull(),
+    fieldDefinitionId: integer("field_definition_id").references(() => productFieldDefinitions.id).notNull(),
+    fieldKey: varchar("field_key", { length: 80 }),
+    valueText: text("value_text"),
+    valueNumber: numeric("value_number", { precision: 14, scale: 4 }),
+    valueBool: boolean("value_bool"),
+    valueDate: date("value_date"),
+    valueJson: jsonb("value_json"),
+    valueMoneyAmount: numeric("value_money_amount", { precision: 14, scale: 2 }),
+    valueMoneyDirection: integer("value_money_direction"),
+    currency: varchar("currency", { length: 3 }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_product_field_values_tenant_product").on(table.tenantId, table.productId),
+    uniqueIndex("uq_product_field_values_product_field").on(table.tenantId, table.productId, table.fieldDefinitionId),
+    uniqueIndex("uq_product_field_values_tenant_product_field_key").on(table.tenantId, table.productId, table.fieldKey),
   ]
 );
 
@@ -149,6 +212,23 @@ export const insertOrderFieldValueSchema = createInsertSchema(orderFieldValues).
 export type InsertOrderFieldValue = z.infer<typeof insertOrderFieldValueSchema>;
 export type OrderFieldValue = typeof orderFieldValues.$inferSelect;
 
+
+export const insertProductFieldDefinitionSchema = createInsertSchema(productFieldDefinitions).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertProductFieldDefinition = z.infer<typeof insertProductFieldDefinitionSchema>;
+export type ProductFieldDefinition = typeof productFieldDefinitions.$inferSelect;
+
+export const insertProductFieldValueSchema = createInsertSchema(productFieldValues).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertProductFieldValue = z.infer<typeof insertProductFieldValueSchema>;
+export type ProductFieldValue = typeof productFieldValues.$inferSelect;
+
+
 // ─────────────────────────────────────────────
 // Etapa C – File attachments for orders
 // Physical files stored in storage/tenants/{code}/orders/{id}/
@@ -169,6 +249,7 @@ export const orderAttachments = pgTable(
     // Path relative to process.cwd()/storage/
     storagePath: text("storage_path").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => [
     index("idx_order_attachments_order").on(table.orderId),
