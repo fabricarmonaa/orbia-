@@ -7,7 +7,7 @@ export function Pricing() {
     {
       name: "Económico",
       slogan: "Para arrancar ordenado",
-      description: "La base sólida para tu negocio.",
+      description: "Ideal para empezar prolijo, sin sumar complejidad.",
       price: "MDQ",
       highlighted: false,
       features: [
@@ -17,12 +17,12 @@ export function Pricing() {
         "Personalización parcial",
         "PDF con marca de agua"
       ],
-      whatsappLink: "https://wa.me/5492236979026?text=Hola,%20me%20interesa%20el%20plan%20Económico%20de%20Orbia%20para%20mi%20negocio."
+      whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     },
     {
       name: "Profesional",
       slogan: "Para negocios que ya funcionan",
-      description: "Todo lo que necesitas para escalar.",
+      description: "Más control operativo para vender mejor cada día.",
       price: "Pro",
       highlighted: true,
       features: [
@@ -32,25 +32,27 @@ export function Pricing() {
         "Caja completa y movimientos",
         "Resúmenes del mes detallados",
         "Documentos 100% a tu gusto",
-        "Tus redes en el link de pedidos"
+        "Tus redes en el link de pedidos",
+        "Proveedores",
+        "2 cajeros",
+        "1 sucursal"
       ],
-      whatsappLink: "https://wa.me/5492236979026?text=Hola,%20me%20interesa%20el%20plan%20Profesional%20de%20Orbia%20para%20mi%20negocio."
+      whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     },
     {
       name: "Escala",
       slogan: "Para locales con varias sedes",
-      description: "Potencia corporativa para PyMEs.",
+      description: "Pensado para equipos con operación en crecimiento.",
       price: "Multi",
       highlighted: false,
       features: [
         "Todo lo de Profesional, más:",
         "Hasta 5 sucursales",
+        "10 cajeros",
         "Control por cada sucursal",
-        "Generar Factura B (AFIP)",
-        "IA: Dictado por voz integrado",
-        "Soporte VIP presencial"
+        "IA: Dictado por voz integrado (modo BETA)"
       ],
-      whatsappLink: "https://wa.me/5492236979026?text=Hola,%20me%20interesa%20el%20plan%20Escala%20de%20Orbia%20para%20mis%20sucursales."
+      whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     }
   ];
 
@@ -114,7 +116,7 @@ export function Pricing() {
                   }`}
               >
                 <a href={plan.whatsappLink} target="_blank" rel="noopener noreferrer">
-                  Consultar Ahora
+                  Contratar un plan
                 </a>
               </Button>
             </motion.div>

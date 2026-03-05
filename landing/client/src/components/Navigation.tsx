@@ -76,7 +76,7 @@ export function Navigation() {
           {/* Desktop CTA */}
           <div className="hidden md:block">
             <Button 
-              onClick={() => openWhatsApp("Hola! Me interesa conocer más sobre ORBIA.")}
+              onClick={() => openWhatsApp("Quiero contratar un plan de Orbia")}
               className="bg-primary hover:bg-primary/90 text-white rounded-full px-6 shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all hover:-translate-y-0.5"
             >
               <MessageCircle className="w-4 h-4 mr-2" />
@@ -108,7 +108,7 @@ export function Navigation() {
               </button>
             ))}
             <Button 
-              onClick={() => openWhatsApp("Hola! Me interesa conocer más sobre ORBIA.")}
+              onClick={() => openWhatsApp("Quiero contratar un plan de Orbia")}
               className="w-full mt-4 bg-primary text-lg h-12 rounded-xl"
             >
               <MessageCircle className="w-5 h-5 mr-2" />
