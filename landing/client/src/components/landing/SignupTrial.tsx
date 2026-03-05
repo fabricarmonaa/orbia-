@@ -4,6 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { postPublicOnboard } from "@/lib/api";
+import { Checkbox } from "@/components/ui/checkbox";
+import { getAppOrigin } from "@/lib/app-origin";
 
 export function SignupTrial() {
   const [form, setForm] = useState({
@@ -16,10 +18,16 @@ export function SignupTrial() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<{ tenantCode: string; loginUrl: string } | null>(null);
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
+  const appOrigin = getAppOrigin();
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!acceptedTerms) {
+      setError("Tenés que aceptar los Términos y Condiciones para continuar.");
+      return;
+    }
     setLoading(true);
     try {
       const res = await postPublicOnboard(form);
@@ -70,8 +78,21 @@ export function SignupTrial() {
                 <div><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} required /></div>
                 <div><Label>Contraseña</Label><Input type="password" minLength={6} value={form.password} onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))} required /></div>
                 <div><Label>Rubro</Label><Input value={form.industry} onChange={(e) => setForm((s) => ({ ...s, industry: e.target.value }))} required /></div>
+                <div className="flex items-start gap-2">
+                  <Checkbox id="signup-accept-terms" checked={acceptedTerms} onCheckedChange={(v) => setAcceptedTerms(Boolean(v))} />
+                  <Label htmlFor="signup-accept-terms" className="text-sm leading-snug">
+                    Acepto los{" "}
+                    <a href={`${appOrigin}/legal/terms`} target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">
+                      Términos y Condiciones
+                    </a>
+                    {" "}y la{" "}
+                    <a href={`${appOrigin}/legal/privacy`} target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">
+                      Política de Privacidad
+                    </a>
+                  </Label>
+                </div>
                 {error ? <p className="text-sm text-red-600">{error}</p> : null}
-                <Button type="submit" className="w-full" disabled={loading}>{loading ? "Creando..." : "Iniciar prueba gratis"}</Button>
+                <Button type="submit" className="w-full" disabled={loading || !acceptedTerms}>{loading ? "Creando..." : "Iniciar prueba gratis"}</Button>
               </form>
             )}
           </CardContent>

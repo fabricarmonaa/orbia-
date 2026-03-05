@@ -4,7 +4,6 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Building2, Eye, EyeOff } from "lucide-react";
 import { login, getToken, getUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
@@ -20,7 +19,6 @@ export default function TenantLogin() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"admin" | "cashier">("admin");
   const [pin, setPin] = useState("");
-  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const { toast } = useToast();
   const { appBranding } = useBranding();
 
@@ -40,14 +38,6 @@ export default function TenantLogin() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!acceptedTerms) {
-      toast({
-        title: "Error",
-        description: "Tenés que aceptar los Términos y Condiciones para continuar.",
-        variant: "destructive",
-      });
-      return;
-    }
     setLoading(true);
     try {
       const endpoint = mode === "cashier" ? "/api/cashiers/login" : "/api/auth/login";
@@ -134,19 +124,10 @@ export default function TenantLogin() {
                   <Input id="pin" type="password" inputMode="numeric" maxLength={8} value={pin} onChange={(e) => setPin(e.target.value)} required data-testid="input-cashier-pin" />
                 </div>
               )}
-              <div className="flex items-start gap-2">
-                <Checkbox id="accept-terms" checked={acceptedTerms} onCheckedChange={(v) => setAcceptedTerms(Boolean(v))} />
-                <Label htmlFor="accept-terms" className="text-sm leading-snug">
-                  Acepto los{" "}
-                  <a href="/legal/terms" target="_blank" rel="noopener noreferrer" className="underline hover:text-primary">
-                    Términos y Condiciones
-                  </a>
-                </Label>
-              </div>
               <Button
                 type="submit"
                 className="w-full"
-                disabled={loading || !acceptedTerms}
+                disabled={loading}
                 data-testid="button-login"
               >
                 {loading ? "Ingresando..." : "Ingresar"}
