@@ -50,6 +50,7 @@ import {
   MapPin,
   Camera,
   Printer,
+  ShoppingCart,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
@@ -94,7 +95,7 @@ export default function OrdersPage() {
   const [, setLocation] = useLocation();
   const { hasFeature } = usePlan();
   const [orders, setOrders] = useState<(Order & { statusName?: string; statusColor?: string })[]>([]);
-  const [statuses, setStatuses] = useState<OrderStatus[]>([]);
+  const [statuses, setStatuses] = useState<(OrderStatus & { code?: string; label?: string })[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -128,7 +129,7 @@ export default function OrdersPage() {
     description: "",
     totalAmount: "",
     paidAmount: "",
-    statusId: "",
+    statusCode: "",
     requiresDelivery: false,
     deliveryAddress: "",
     deliveryCity: "",
@@ -249,7 +250,7 @@ export default function OrdersPage() {
         orderTypeCode: newOrder.type,
         totalAmount: newOrder.totalAmount ? parseFloat(newOrder.totalAmount) : null,
         paidAmount: newOrder.paidAmount ? parseFloat(newOrder.paidAmount) : null,
-        statusId: newOrder.statusId ? parseInt(newOrder.statusId) : null,
+        statusCode: newOrder.statusCode || null,
         requiresDelivery: newOrder.requiresDelivery,
         deliveryAddress: newOrder.requiresDelivery ? newOrder.deliveryAddress : null,
         deliveryCity: newOrder.requiresDelivery ? newOrder.deliveryCity : null,
@@ -261,7 +262,7 @@ export default function OrdersPage() {
       await apiRequest("POST", "/api/orders", payload);
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
-      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusId: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusCode: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
       setCustomFieldInputs({});
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -288,15 +289,20 @@ export default function OrdersPage() {
     } catch { }
   }
 
-  async function changeStatus(orderId: number, statusId: number) {
+  async function changeStatus(orderId: number, statusCode: string) {
     try {
-      await apiRequest("PATCH", `/api/orders/${orderId}/status`, { statusId });
+      await apiRequest("PATCH", `/api/orders/${orderId}/status`, { statusCode });
       toast({ title: "Estado actualizado" });
-      fetchData();
+      await fetchData();
       if (selectedOrder?.id === orderId) {
-        const res = await apiRequest("GET", `/api/orders/${orderId}/history`);
-        const data = await res.json();
-        setHistory(data.data || []);
+        const [historyRes, orderRes] = await Promise.all([
+          apiRequest("GET", `/api/orders/${orderId}/history`),
+          apiRequest("GET", `/api/orders/${orderId}`),
+        ]);
+        const historyData = await historyRes.json();
+        const orderData = await orderRes.json();
+        setHistory(historyData.data || []);
+        if (orderData?.data) setSelectedOrder(orderData.data);
       }
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -324,7 +330,12 @@ export default function OrdersPage() {
   async function printOrder() {
     if (!selectedOrder || !(selectedOrder as any).saleId) return;
     const printUrl = `${window.location.origin}/app/print/sale/${(selectedOrder as any).saleId}`;
-    window.open(printUrl, "_blank", "noopener,noreferrer");
+    const printWindow = window.open(printUrl, "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({ title: "No pudimos abrir el ticket", description: "Desbloqueá las ventanas emergentes para este sitio.", variant: "destructive" });
+      return;
+    }
+    printWindow.focus();
   }
 
 
@@ -371,7 +382,12 @@ export default function OrdersPage() {
 
   function getStatusInfo(statusId: number | null) {
     const s = statuses.find((st) => st.id === statusId);
-    return s || { name: "Sin estado", color: "#6B7280" };
+    return s || { name: "Sin estado", color: "#6B7280", unavailable: true };
+  }
+
+  function getStatusCodeById(statusId: number | null | undefined) {
+    if (!statusId) return "";
+    return statuses.find((st) => st.id === statusId)?.code || "";
   }
 
   function handleVoiceResult() {
@@ -501,13 +517,13 @@ export default function OrdersPage() {
                   )}
                   <div className="space-y-2">
                     <Label>Estado</Label>
-                    <Select value={newOrder.statusId} onValueChange={(v) => setNewOrder({ ...newOrder, statusId: v })}>
+                    <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
                       <SelectTrigger data-testid="select-order-status">
                         <SelectValue placeholder="Estado inicial" />
                       </SelectTrigger>
                       <SelectContent>
                         {statuses.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
+                          <SelectItem key={s.id} value={String(s.code || "")}>
                             {s.name}
                           </SelectItem>
                         ))}
@@ -861,7 +877,7 @@ export default function OrdersPage() {
                         style={{ backgroundColor: status.color || "#6B7280", color: "#fff" }}
                         data-testid={`badge-status-${order.id}`}
                       >
-                        {status.name}
+                        {(status as any).unavailable ? "Estado no disponible" : status.name}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {formatDate(order.createdAt)}
@@ -891,15 +907,16 @@ export default function OrdersPage() {
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <Label className="text-muted-foreground">Estado</Label>
                     <Select
-                      value={String(selectedOrder.statusId || "")}
-                      onValueChange={(v) => changeStatus(selectedOrder.id, parseInt(v))}
+                      value={getStatusCodeById(selectedOrder.statusId)}
+                      onValueChange={(v) => changeStatus(selectedOrder.id, v)}
+                      disabled={!getStatusCodeById(selectedOrder.statusId)}
                     >
                       <SelectTrigger className="w-40" data-testid="select-change-status">
-                        <SelectValue />
+                        <SelectValue placeholder={getStatusCodeById(selectedOrder.statusId) ? "Seleccionar estado" : "Estado no disponible"} />
                       </SelectTrigger>
                       <SelectContent>
                         {statuses.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
+                          <SelectItem key={s.id} value={String(s.code || "")}>
                             {s.name}
                           </SelectItem>
                         ))}

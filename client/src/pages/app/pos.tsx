@@ -286,7 +286,12 @@ export default function PosPage() {
 
   function openSalePrint(saleId: number) {
     const url = `/app/print/sale/${saleId}?autoprint=1`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const printWindow = window.open(url, "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({ title: "No pudimos abrir el ticket", description: "Desbloqueá las ventanas emergentes para este sitio.", variant: "destructive" });
+      return;
+    }
+    printWindow.focus();
   }
 
   async function submitSale() {

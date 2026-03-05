@@ -21,8 +21,7 @@ export async function resolveCanonicalOrderStatusId(params: { tenantId: number; 
   if (params.statusId) {
     const [def] = await db.select().from(statusDefinitions).where(and(eq(statusDefinitions.id, params.statusId), eq(statusDefinitions.tenantId, params.tenantId))).limit(1);
     if (def) {
-      const ensuredId = await ensureStatusExists(params.tenantId, def.code, def.entityType as StatusEntityType);
-      return ensuredId;
+      return await resolveOrderStatusIdByCode(params.tenantId, normalizeStatusCode(def.code));
     }
 
     const [legacy] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, params.statusId), eq(orderStatuses.tenantId, params.tenantId))).limit(1);

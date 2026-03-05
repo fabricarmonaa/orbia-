@@ -77,7 +77,7 @@ const createOrderSchema = z.object({
 
 const orderStatusSchema = z.object({
   statusId: z.coerce.number().int().positive().optional(),
-  statusCode: z.string().max(40).optional(),
+  statusCode: z.string().trim().min(1).max(40).optional(),
   note: z.string().transform((value) => sanitizeLongText(value, 200)).optional().nullable(),
 });
 
@@ -371,7 +371,12 @@ export function registerOrderRoutes(app: Express) {
       const orderId = req.params.id as unknown as number;
       const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
       const resolvedStatusId = await resolveCanonicalOrderStatusId({ tenantId, statusId: statusId || null, statusCode: statusCode || null });
-      if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
+      if (!statusId && !statusCode) {
+        return res.status(400).json({ error: "Debe enviar statusCode o statusId", code: "MISSING_STATUS" });
+      }
+      if (!resolvedStatusId) {
+        return res.status(400).json({ error: "Estado inválido", code: "INVALID_STATUS" });
+      }
       const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
       if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
       const order = scopeCheck.order;
