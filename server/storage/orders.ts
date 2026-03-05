@@ -72,10 +72,10 @@ export const orderStorage = {
     const [order] = await db.insert(orders).values(data).returning();
     return order;
   },
-  async updateOrderStatus(id: number, tenantId: number, statusId: number) {
+  async updateOrderStatus(id: number, tenantId: number, statusId: number | null, statusCode?: string | null) {
     await db
       .update(orders)
-      .set({ statusId, updatedAt: new Date() })
+      .set({ statusId, statusCode: statusCode || null, updatedAt: new Date() })
       .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
   },
   async updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date) {

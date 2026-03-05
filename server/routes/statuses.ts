@@ -6,7 +6,7 @@ import { validateBody, validateParams } from "../middleware/validate";
 import { sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
 import { statusDefinitions } from "@shared/schema";
-import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses, resolveOrderStatusIdByCode } from "../services/statuses";
+import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses } from "../services/statuses";
 
 const entityTypeSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]) });
 const idSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]), id: z.coerce.number().int().positive() });
@@ -30,7 +30,8 @@ export function registerStatusRoutes(app: Express) {
   app.get("/api/order-statuses", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      let data = await getStatuses(tenantId, "ORDER", false);
+      const includeInactive = String(req.query.includeInactive || "").toLowerCase() === "1" || String(req.query.includeInactive || "").toLowerCase() === "true";
+      let data = await getStatuses(tenantId, "ORDER", includeInactive);
 
       // Auto-seed 4 default statuses if the tenant has none
       if (data.length === 0) {
@@ -55,16 +56,10 @@ export function registerStatusRoutes(app: Express) {
             sortOrder: i + 1,
           }).onConflictDoNothing();
         }
-        data = await getStatuses(tenantId, "ORDER", false);
+        data = await getStatuses(tenantId, "ORDER", includeInactive);
       }
 
-      const mappedData = await Promise.all(
-        data.map(async (d: any) => {
-          const legacyId = await resolveOrderStatusIdByCode(tenantId, d.code);
-          return { ...d, name: d.label, id: legacyId || d.id };
-        })
-      );
-      res.json({ data: mappedData });
+      res.json({ data: data.map((row) => ({ ...row, code: normalizeStatusCode(row.code) })) });
     } catch (err: any) {
       console.error("[order-statuses]", err);
       res.status(500).json({ error: "No se pudieron cargar los estados", code: "STATUS_ERROR" });

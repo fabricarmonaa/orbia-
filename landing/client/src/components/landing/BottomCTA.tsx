@@ -2,7 +2,7 @@ import { Button } from "@/components/ui/button";
 import { MessageCircle } from "lucide-react";
 
 export function BottomCTA() {
-  const whatsappLink = "https://wa.me/5491123456789?text=Hola,%20quiero%20empezar%20con%20Orbia%20hoy.";
+  const whatsappLink = "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia";
 
   return (
     <section className="py-24 bg-primary relative overflow-hidden">

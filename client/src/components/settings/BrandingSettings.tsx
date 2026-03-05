@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -77,6 +77,10 @@ export function BrandingSettings({
   layoutPresets,
   planCode,
 }: BrandingSettingsProps) {
+  const [trackingHoursError, setTrackingHoursError] = useState<string>("");
+  const minHours = minTrackingHours > 0 ? minTrackingHours : 1;
+  const maxHours = maxTrackingHours > 0 ? maxTrackingHours : 24;
+  const trackingPlanText = useMemo(() => `Tu plan permite entre ${minHours} y ${maxHours} horas.`, [minHours, maxHours]);
   const isEconomic = (planCode || "").toUpperCase() === "ECONOMICO";
 
   return (
@@ -129,25 +133,39 @@ export function BrandingSettings({
                 <Label>
                   Duración del enlace de seguimiento
                   <span className="text-xs text-muted-foreground ml-1">
-                    (máx. {maxTrackingHours > 0 ? `${maxTrackingHours}h` : "según tu plan"})
+                    (entre {minHours}h y {maxHours}h)
                   </span>
                 </Label>
                 <Input
                   type="number"
-                  min={minTrackingHours > 0 ? minTrackingHours : 1}
-                  max={maxTrackingHours > 0 ? maxTrackingHours : 24}
+                  min={minHours}
+                  max={maxHours}
                   value={config.trackingExpirationHours}
                   onChange={(e) => {
-                    const v = parseInt(e.target.value) || (minTrackingHours > 0 ? minTrackingHours : 1);
+                    const raw = parseInt(e.target.value);
+                    if (Number.isNaN(raw)) {
+                      setTrackingHoursError("");
+                      setConfig({ ...config, trackingExpirationHours: minHours });
+                      return;
+                    }
+                    if (raw > maxHours) {
+                      setTrackingHoursError(`Máximo permitido: ${maxHours}h`);
+                    } else if (raw < minHours) {
+                      setTrackingHoursError(`Mínimo permitido: ${minHours}h`);
+                    } else {
+                      setTrackingHoursError("");
+                    }
                     setConfig({
                       ...config,
-                      trackingExpirationHours: Math.min(Math.max(v, minTrackingHours > 0 ? minTrackingHours : 1), maxTrackingHours > 0 ? maxTrackingHours : 24),
+                      trackingExpirationHours: Math.min(Math.max(raw, minHours), maxHours),
                     });
                   }}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Económico: hasta 24 h · Profesional: hasta 168 h · Escala: hasta 720 h
-                </p>
+                {trackingHoursError ? (
+                  <p className="text-xs text-destructive">{trackingHoursError}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{trackingPlanText}</p>
+                )}
               </div>
             </div>
 

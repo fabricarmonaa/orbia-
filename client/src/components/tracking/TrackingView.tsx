@@ -7,6 +7,8 @@ export interface TrackingOrderData {
   orderNumber: number;
   type: string;
   status: string;
+  statusCode?: string | null;
+  statusLabel?: string | null;
   statusColor: string;
   customerName: string;
   createdAt: string;
@@ -63,6 +65,17 @@ function getContrastText(hex: string) {
   return lum > 0.5 ? "#1a1a1a" : "#ffffff";
 }
 
+function prettifyStatusCode(code?: string | null) {
+  const normalized = String(code || "").trim();
+  if (!normalized) return "";
+  return normalized
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
   if (loading) {
     return (
@@ -89,6 +102,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   }
 
   const layout = order.trackingLayout || "classic";
+  const renderedStatus = order.statusLabel || order.status || prettifyStatusCode(order.statusCode) || "Sin estado";
   const colors = branding.colors;
   const bgColor = colors.background || "#ffffff";
   const textColor = colors.text || getContrastText(bgColor);
@@ -135,35 +149,39 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
             className="text-sm"
             data-testid="badge-tracking-status"
           >
-            {order.status}
+            {renderedStatus}
           </Badge>
         </div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 text-sm">
+          <div className="space-y-1">
             <p className="text-muted-foreground">Tipo</p>
             <p className="font-medium">{order.type}</p>
           </div>
-          <div>
+          <div className="space-y-1">
             <p className="text-muted-foreground">Cliente</p>
             <p className="font-medium">{order.customerName || "-"}</p>
           </div>
-          <div>
+          <div className="space-y-1">
             <p className="text-muted-foreground">Creado</p>
             <p className="font-medium">{formatDate(order.createdAt)}</p>
           </div>
           {order.closedAt && (
-            <div>
+            <div className="space-y-1">
               <p className="text-muted-foreground">Cerrado</p>
               <p className="font-medium">{formatDate(order.closedAt)}</p>
             </div>
           )}
           {order.customFields?.map((field, idx) => (
-            <div key={idx} className="col-span-2">
-              <p className="text-muted-foreground">{field.label}: <span className="font-medium text-foreground">{field.value || "-"}</span></p>
-              {field.downloadUrl ? (
-                <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a>
-              ) : null}
-              <p className="text-xs text-muted-foreground">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p>
+            <div key={idx} className="col-span-1 md:col-span-2 rounded-md border bg-muted/20 p-3 space-y-2">
+              <p className="text-muted-foreground">
+                {field.label}: <span className="font-medium text-foreground">{field.value || "-"}</span>
+              </p>
+              <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+                {field.downloadUrl ? (
+                  <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a>
+                ) : <span />}
+                <p className="text-xs text-muted-foreground/80">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p>
+              </div>
             </div>
           ))}
         </div>

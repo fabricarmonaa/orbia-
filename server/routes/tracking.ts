@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
 import { orderAttachments } from "@shared/schema";
+import { getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
 
@@ -24,12 +25,21 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const { order } = resolved as { order: NonNullable<Awaited<ReturnType<typeof storage.getOrderByTrackingId>>> };
 
   const tenantId = order.tenantId;
-  const statuses = await storage.getOrderStatuses(tenantId);
-  const currentStatus = statuses.find((s) => s.id === order.statusId);
-  const history = await storage.getOrderHistory(order.id, tenantId);
-  const publicComments = await storage.getPublicOrderComments(order.id);
-  const config = await storage.getConfig(tenantId);
-  const branding = await storage.getTenantBranding(tenantId);
+  const [definitions, defaultStatus, history, publicComments, config, branding] = await Promise.all([
+    getStatuses(tenantId, "ORDER", true),
+    getDefaultStatus(tenantId, "ORDER"),
+    storage.getOrderHistory(order.id, tenantId),
+    storage.getPublicOrderComments(order.id),
+    storage.getConfig(tenantId),
+    storage.getTenantBranding(tenantId),
+  ]);
+
+  const definitionsByCode = new Map(definitions.map((s) => [s.code, s]));
+  const currentCode = normalizeStatusCode(String(order.statusCode || ""));
+  const resolvedCurrent = definitionsByCode.get(currentCode)
+    || (defaultStatus ? definitionsByCode.get(defaultStatus.code) : undefined)
+    || defaultStatus
+    || null;
   // Objective E: only show tenant logo — no Orbia fallback (TrackingView handles null with placeholder icon)
   const logoUrl = branding.logoUrl || null;
   // Objective C: build ToS URL using tenantSlug from JOIN (no extra query)
@@ -37,9 +47,10 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const tosUrl = tenantSlug ? `/t/${tenantSlug}/tos` : null;
 
   const historyFormatted = history.map((h) => {
-    const s = statuses.find((st) => st.id === h.statusId);
+    const maybeCode = normalizeStatusCode(String((h as any).statusCode || (h as any).status_code || ""));
+    const s = maybeCode ? definitionsByCode.get(maybeCode) : null;
     return {
-      status: s?.name || "Desconocido",
+      status: s?.label || s?.code || "Desconocido",
       color: s?.color || "#6B7280",
       date: h.createdAt,
       note: h.note,
@@ -84,8 +95,10 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
       data: {
         orderNumber: order.orderNumber,
         type: order.type,
-        status: currentStatus?.name || "Sin estado",
-        statusColor: currentStatus?.color || "#6B7280",
+        status: resolvedCurrent?.label || resolvedCurrent?.code || "Sin estado",
+        statusCode: resolvedCurrent?.code || currentCode || null,
+        statusLabel: resolvedCurrent?.label || null,
+        statusColor: resolvedCurrent?.color || "#6B7280",
         customerName: order.customerName || "",
         createdAt: order.createdAt,
         scheduledAt: order.scheduledAt,
@@ -122,7 +135,10 @@ export function registerTrackingRoutes(app: Express) {
       const result = await buildTrackingPayload(req.params.trackingId);
       return res.status(result.status).json(result.body);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[tracking:public]", { trackingId: req.params.trackingId, message: err?.message || String(err) });
+      }
+      res.status(500).json({ error: "No se pudo resolver el tracking", code: "TRACKING_ERROR" });
     }
   });
 
@@ -131,7 +147,10 @@ export function registerTrackingRoutes(app: Express) {
       const result = await buildTrackingPayload(req.params.trackingId);
       return res.status(result.status).json(result.body);
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[tracking:public]", { trackingId: req.params.trackingId, message: err?.message || String(err) });
+      }
+      res.status(500).json({ error: "No se pudo resolver el tracking", code: "TRACKING_ERROR" });
     }
   });
 
@@ -168,7 +187,10 @@ export function registerTrackingRoutes(app: Express) {
       res.setHeader("Cache-Control", "public, max-age=300");
       fs.createReadStream(absolutePath).pipe(res);
     } catch (err: any) {
-      res.status(500).json({ error: "No se pudo descargar el archivo" });
+      if (process.env.NODE_ENV !== "production") {
+        console.error("[tracking:attachment]", { trackingId: req.params.trackingId, attachmentId: req.params.attachmentId, message: err?.message || String(err) });
+      }
+      res.status(500).json({ error: "No se pudo descargar el archivo", code: "TRACKING_ATTACHMENT_ERROR" });
     }
   });
 }

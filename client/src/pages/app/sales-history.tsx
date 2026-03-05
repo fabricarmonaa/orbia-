@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { useToast } from "@/hooks/use-toast";
 
 type SaleRow = {
   id: number;
@@ -38,6 +39,7 @@ type SaleDetail = {
 const defaultLimit = 50;
 
 export default function SalesHistoryPage() {
+  const { toast } = useToast();
   const [rows, setRows] = useState<SaleRow[]>([]);
   const [meta, setMeta] = useState({ limit: defaultLimit, offset: 0, total: 0 });
   const [loading, setLoading] = useState(false);
@@ -114,7 +116,12 @@ export default function SalesHistoryPage() {
 
   function printSale(saleId: number) {
     const url = `/app/print/sale/${saleId}`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const printWindow = window.open(url, "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({ title: "No pudimos abrir el ticket", description: "Desbloqueá las ventanas emergentes para este sitio.", variant: "destructive" });
+      return;
+    }
+    printWindow.focus();
   }
 
   useEffect(() => {

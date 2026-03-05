@@ -52,6 +52,7 @@ export const orders = pgTable(
     customerEmail: varchar("customer_email", { length: 255 }),
     description: text("description"),
     statusId: integer("status_id").references(() => orderStatuses.id, { onDelete: "set null" }),
+    statusCode: varchar("status_code", { length: 40 }),
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
     paidAmount: numeric("paid_amount", { precision: 12, scale: 2 }).notNull().default("0"),
     paymentStatus: varchar("payment_status", { length: 20 }).notNull().default("UNPAID"),
@@ -85,6 +86,7 @@ export const orders = pgTable(
     index("idx_orders_tenant").on(table.tenantId),
     index("idx_orders_tenant_created").on(table.tenantId, table.createdAt),
     index("idx_orders_tenant_status_created").on(table.tenantId, table.statusId, table.createdAt),
+    index("idx_orders_tenant_status_code_created").on(table.tenantId, table.statusCode, table.createdAt),
     index("idx_orders_tenant_tracking").on(table.tenantId, table.publicTrackingId),
     index("idx_orders_tracking").on(table.publicTrackingId),
   ]

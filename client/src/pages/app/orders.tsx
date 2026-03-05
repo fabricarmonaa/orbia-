@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { apiRequest, useAuth } from "@/lib/auth";
+import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
 import { usePlan } from "@/lib/plan";
 import { VoiceCommand } from "@/components/voice-command";
@@ -50,6 +50,7 @@ import {
   MapPin,
   Camera,
   Printer,
+  ShoppingCart,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
@@ -93,8 +94,8 @@ export default function OrdersPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { hasFeature } = usePlan();
-  const [orders, setOrders] = useState<(Order & { statusName?: string; statusColor?: string })[]>([]);
-  const [statuses, setStatuses] = useState<OrderStatus[]>([]);
+  const [orders, setOrders] = useState<Array<Order & { statusCode?: string | null; statusName?: string; statusColor?: string }>>([]);
+  const [statuses, setStatuses] = useState<(OrderStatus & { code?: string; label?: string })[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -128,7 +129,7 @@ export default function OrdersPage() {
     description: "",
     totalAmount: "",
     paidAmount: "",
-    statusId: "",
+    statusCode: "",
     requiresDelivery: false,
     deliveryAddress: "",
     deliveryCity: "",
@@ -142,9 +143,18 @@ export default function OrdersPage() {
     fetchData();
     void loadPresetsForType(newOrder.type || "PEDIDO");
     // Check if cash session is currently open
-    apiRequest("GET", "/api/cash/sessions/current")
-      .then((r) => r.json())
-      .then((d) => setHasCashOpen(!!(d.data?.id)))
+    fetch("/api/cash/sessions/current", {
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    })
+      .then(async (r) => {
+        if (r.status === 204) {
+          setHasCashOpen(false);
+          return;
+        }
+        if (!r.ok) throw new Error("No se pudo consultar caja");
+        const d = await r.json().catch(() => ({ data: null }));
+        setHasCashOpen(!!(d.data?.id));
+      })
       .catch(() => setHasCashOpen(false));
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
@@ -184,6 +194,11 @@ export default function OrdersPage() {
   }
 
   async function loadFieldsForPreset(presetId: number) {
+    if (!Number.isFinite(presetId) || presetId <= 0) {
+      setPresetFields([]);
+      setCustomFieldInputs({});
+      return;
+    }
     try {
       const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
       const json = await res.json();
@@ -205,13 +220,18 @@ export default function OrdersPage() {
     try {
       const [ordersRes, statusesRes, branchesRes] = await Promise.all([
         apiRequest("GET", "/api/orders"),
-        apiRequest("GET", "/api/order-statuses"),
+        apiRequest("GET", "/api/order-statuses?includeInactive=1"),
         apiRequest("GET", "/api/branches").catch(() => ({ json: () => ({ data: [] }) })),
       ]);
       const ordersData = await ordersRes.json();
       const statusesData = await statusesRes.json();
       const branchesData = await branchesRes.json();
-      setOrders(ordersData.data || []);
+      const nextOrders = ordersData.data || [];
+      setOrders(nextOrders);
+      if (selectedOrder) {
+        const refreshedSelected = nextOrders.find((o: Order) => o.id === selectedOrder.id);
+        if (refreshedSelected) setSelectedOrder(refreshedSelected);
+      }
       setStatuses(statusesData.data || []);
       setBranches(branchesData.data || []);
     } catch (err: any) {
@@ -249,7 +269,7 @@ export default function OrdersPage() {
         orderTypeCode: newOrder.type,
         totalAmount: newOrder.totalAmount ? parseFloat(newOrder.totalAmount) : null,
         paidAmount: newOrder.paidAmount ? parseFloat(newOrder.paidAmount) : null,
-        statusId: newOrder.statusId ? parseInt(newOrder.statusId) : null,
+        statusCode: newOrder.statusCode || null,
         requiresDelivery: newOrder.requiresDelivery,
         deliveryAddress: newOrder.requiresDelivery ? newOrder.deliveryAddress : null,
         deliveryCity: newOrder.requiresDelivery ? newOrder.deliveryCity : null,
@@ -261,7 +281,7 @@ export default function OrdersPage() {
       await apiRequest("POST", "/api/orders", payload);
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
-      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusId: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusCode: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
       setCustomFieldInputs({});
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -288,15 +308,15 @@ export default function OrdersPage() {
     } catch { }
   }
 
-  async function changeStatus(orderId: number, statusId: number) {
+  async function changeStatus(orderId: number, statusCode: string) {
     try {
-      await apiRequest("PATCH", `/api/orders/${orderId}/status`, { statusId });
+      await apiRequest("PATCH", `/api/orders/${orderId}/status`, { statusCode });
       toast({ title: "Estado actualizado" });
-      fetchData();
+      await fetchData();
       if (selectedOrder?.id === orderId) {
-        const res = await apiRequest("GET", `/api/orders/${orderId}/history`);
-        const data = await res.json();
-        setHistory(data.data || []);
+        const historyRes = await apiRequest("GET", `/api/orders/${orderId}/history`);
+        const historyData = await historyRes.json();
+        setHistory(historyData.data || []);
       }
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -324,7 +344,12 @@ export default function OrdersPage() {
   async function printOrder() {
     if (!selectedOrder || !(selectedOrder as any).saleId) return;
     const printUrl = `${window.location.origin}/app/print/sale/${(selectedOrder as any).saleId}`;
-    window.open(printUrl, "_blank", "noopener,noreferrer");
+    const printWindow = window.open(printUrl, "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({ title: "No pudimos abrir el ticket", description: "Desbloqueá las ventanas emergentes para este sitio.", variant: "destructive" });
+      return;
+    }
+    printWindow.focus();
   }
 
 
@@ -360,7 +385,7 @@ export default function OrdersPage() {
       (o.customerName || "").toLowerCase().includes(search.toLowerCase()) ||
       String(o.orderNumber).includes(search) ||
       (o.description || "").toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || String(o.statusId) === filterStatus;
+    const matchStatus = filterStatus === "all" || String((o as any).statusCode || "") === filterStatus;
     return matchSearch && matchStatus;
   });
 
@@ -369,9 +394,10 @@ export default function OrdersPage() {
     return branches.find((b) => b.id === branchId)?.name || null;
   }
 
-  function getStatusInfo(statusId: number | null) {
-    const s = statuses.find((st) => st.id === statusId);
-    return s || { name: "Sin estado", color: "#6B7280" };
+  function getStatusInfo(statusCode: string | null | undefined) {
+    const code = String(statusCode || "").trim().toUpperCase();
+    const s = statuses.find((st) => String((st as any).code || "").toUpperCase() === code);
+    return s || { code, name: code || "Sin estado", label: code || "Sin estado", color: "#6B7280", isActive: false };
   }
 
   function handleVoiceResult() {
@@ -460,6 +486,7 @@ export default function OrdersPage() {
             >
               <DialogHeader>
                 <DialogTitle>Crear Pedido</DialogTitle>
+                <DialogDescription>Completá los datos del pedido y seleccioná el estado inicial.</DialogDescription>
               </DialogHeader>
               <form onSubmit={createOrder} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -483,7 +510,13 @@ export default function OrdersPage() {
                       <Select
                         value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
                         onValueChange={(v) => {
-                          const pid = parseInt(v);
+                          const pid = Number(v);
+                          if (!Number.isFinite(pid) || pid <= 0) {
+                            setNewOrder({ ...newOrder, orderPresetId: undefined });
+                            setPresetFields([]);
+                            setCustomFieldInputs({});
+                            return;
+                          }
                           setNewOrder({ ...newOrder, orderPresetId: pid });
                           void loadFieldsForPreset(pid);
                         }}
@@ -501,14 +534,14 @@ export default function OrdersPage() {
                   )}
                   <div className="space-y-2">
                     <Label>Estado</Label>
-                    <Select value={newOrder.statusId} onValueChange={(v) => setNewOrder({ ...newOrder, statusId: v })}>
+                    <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
                       <SelectTrigger data-testid="select-order-status">
                         <SelectValue placeholder="Estado inicial" />
                       </SelectTrigger>
                       <SelectContent>
-                        {statuses.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
-                            {s.name}
+                        {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
+                          <SelectItem key={s.id} value={String(s.code || "")}>
+                            {(s as any).label || s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -788,9 +821,9 @@ export default function OrdersPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
-            {statuses.map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
+            {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
+              <SelectItem key={s.id} value={String((s as any).code || "")}>
+                {(s as any).label || s.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -816,7 +849,7 @@ export default function OrdersPage() {
       ) : (
         <div className="space-y-2">
           {filteredOrders.map((order) => {
-            const status = getStatusInfo(order.statusId);
+            const status = getStatusInfo((order as any).statusCode);
             return (
               <Card
                 key={order.id}
@@ -861,7 +894,7 @@ export default function OrdersPage() {
                         style={{ backgroundColor: status.color || "#6B7280", color: "#fff" }}
                         data-testid={`badge-status-${order.id}`}
                       >
-                        {status.name}
+                        {((status as any).label || status.name)}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {formatDate(order.createdAt)}
@@ -891,16 +924,18 @@ export default function OrdersPage() {
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <Label className="text-muted-foreground">Estado</Label>
                     <Select
-                      value={String(selectedOrder.statusId || "")}
-                      onValueChange={(v) => changeStatus(selectedOrder.id, parseInt(v))}
+                      value={String((selectedOrder as any).statusCode || "")}
+                      onValueChange={(v) => { void changeStatus(selectedOrder.id, v); }}
                     >
-                      <SelectTrigger className="w-40" data-testid="select-change-status">
-                        <SelectValue />
+                      <SelectTrigger className="w-56" data-testid="select-change-status">
+                        <SelectValue placeholder="Seleccionar estado" />
                       </SelectTrigger>
                       <SelectContent>
-                        {statuses.map((s) => (
-                          <SelectItem key={s.id} value={String(s.id)}>
-                            {s.name}
+                        {statuses
+                          .filter((s) => (s as any).isActive !== false)
+                          .map((s) => (
+                          <SelectItem key={s.id} value={String(s.code || "")}>
+                            {(s as any).label || s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1183,7 +1218,7 @@ export default function OrdersPage() {
                         </p>
                       ) : (
                         history.map((h) => {
-                          const s = getStatusInfo(h.statusId);
+                          const s = getStatusInfo((h as any).statusCode || (h as any).status_code || "");
                           return (
                             <div key={h.id} className="flex items-center gap-3 p-2">
                               <div
@@ -1191,7 +1226,7 @@ export default function OrdersPage() {
                                 style={{ backgroundColor: s.color || "#6B7280" }}
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium">{s.name}</p>
+                                <p className="text-sm font-medium">{(s as any).label || s.name}</p>
                                 {h.note && (
                                   <p className="text-xs text-muted-foreground">{h.note}</p>
                                 )}

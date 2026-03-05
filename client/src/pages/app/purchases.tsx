@@ -32,7 +32,6 @@ interface ProviderRow {
   address?: string | null;
   phone?: string | null;
   email?: string | null;
-  contactName?: string | null;
   notes?: string | null;
   active: boolean;
 }
@@ -67,7 +66,7 @@ export default function PurchasesPage() {
   const [providerId, setProviderId] = useState<string>("");
 
   const [providerOpen, setProviderOpen] = useState(false);
-  const [newProvider, setNewProvider] = useState({ name: "", address: "", phone: "", email: "", contactName: "", notes: "" });
+  const [newProvider, setNewProvider] = useState({ name: "", address: "", phone: "", email: "", notes: "" });
   const [savingProvider, setSavingProvider] = useState(false);
 
   const [file, setFile] = useState<File | null>(null);
@@ -181,7 +180,7 @@ export default function PurchasesPage() {
       if (!res.ok) throw new Error(json.error || "Error al crear proveedor");
       toast({ title: "Proveedor creado" });
       setProviderOpen(false);
-      setNewProvider({ name: "", address: "", phone: "", email: "", contactName: "", notes: "" });
+      setNewProvider({ name: "", address: "", phone: "", email: "", notes: "" });
       await loadProviders();
     } catch (e: any) {
       toast({ title: "Error", description: e.message, variant: "destructive" });

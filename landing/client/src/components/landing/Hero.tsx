@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import imgDashboard from "@assets/image_1772153971674.png";
 
 export function Hero() {
-  const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Hola,%20quiero%20una%20demo%20de%20Orbia.";
+  const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia";
 
   return (
     <section className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden">
@@ -44,7 +44,7 @@ export function Hero() {
               <Button asChild variant="outline" size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold border-2 border-border hover:bg-muted transition-all duration-300">
                 <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
                   <MessageCircle className="mr-2 h-6 w-6 text-primary" />
-                  Solicitar demo
+                  Contratar un plan
                 </a>
               </Button>
             </div>

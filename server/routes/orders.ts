@@ -7,7 +7,7 @@ import { refreshMetricsForDate } from "../services/metrics-refresh";
 import { getIdempotencyKey, hashPayload, getIdempotentResponse, saveIdempotentResponse } from "../services/idempotency";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { validateBody, validateParams, validateQuery } from "../middleware/validate";
-import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusId, normalizeDeliveryStatus } from "../services/statuses";
+import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusCode, normalizeDeliveryStatus, resolveOrderStatusDefinitionByCode, getStatuses } from "../services/statuses";
 import { db } from "../db";
 import { and, count, eq } from "drizzle-orm";
 import { orderFieldValues, orders, orderStatusHistory, cashMovements } from "@shared/schema";
@@ -77,7 +77,7 @@ const createOrderSchema = z.object({
 
 const orderStatusSchema = z.object({
   statusId: z.coerce.number().int().positive().optional(),
-  statusCode: z.string().max(40).optional(),
+  statusCode: z.string().trim().min(1).max(40).optional(),
   note: z.string().transform((value) => sanitizeLongText(value, 200)).optional().nullable(),
 });
 
@@ -89,6 +89,24 @@ const orderCommentSchema = z.object({
 const linkSaleSchema = z.object({
   saleId: z.coerce.number().int().positive(),
 });
+
+
+async function ensureOrderStatusResolved(tenantId: number, order: any) {
+  if (!order) return order;
+  const currentCode = String(order.statusCode || "").trim();
+  if (currentCode) {
+    const valid = await resolveOrderStatusDefinitionByCode(tenantId, currentCode, false);
+    if (valid) return order;
+  }
+
+  const fallback = await getDefaultStatus(tenantId, "ORDER");
+  if (!fallback) return order;
+  const fallbackStatusId = await resolveOrderStatusIdByCode(tenantId, fallback.code);
+  await db.update(orders)
+    .set({ statusCode: fallback.code, ...(fallbackStatusId ? { statusId: fallbackStatusId } : {}), updatedAt: new Date() })
+    .where(and(eq(orders.id, order.id), eq(orders.tenantId, tenantId)));
+  return await storage.getOrderById(order.id, tenantId);
+}
 
 const updateOrderSchema = z.object({
   type: sanitizeOptionalShort(30).optional(),
@@ -116,7 +134,8 @@ export function registerOrderRoutes(app: Express) {
       const result = (req.auth!.scope === "BRANCH" && req.auth!.branchId)
         ? await storage.getOrdersByBranch(tenantId, req.auth!.branchId, pagination)
         : await storage.getOrders(tenantId, pagination);
-      res.json({ data: result.data, items: result.data, meta: result.meta });
+      const normalizedOrders = await Promise.all((result.data || []).map((row) => ensureOrderStatusResolved(tenantId, row)));
+      res.json({ data: normalizedOrders, items: normalizedOrders, meta: result.meta });
     } catch (err: any) {
       if (err instanceof HttpError) {
         return res.status(err.status).json({ error: { code: err.code, message: err.message } });
@@ -148,9 +167,12 @@ export function registerOrderRoutes(app: Express) {
       const orderNumber = await storage.getNextOrderNumber(tenantId);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (payload.branchId || null);
       const defaultOrderStatus = await getDefaultStatus(tenantId, "ORDER");
-      const resolvedCreateStatusId = (await resolveCanonicalOrderStatusId({ tenantId, statusId: payload.statusId || null, statusCode: payload.statusCode || null }))
-        || (defaultOrderStatus ? await resolveOrderStatusIdByCode(tenantId, defaultOrderStatus.code) : null)
-        || null;
+      const resolvedCreateStatusCode = (await resolveCanonicalOrderStatusCode({ tenantId, statusId: payload.statusId || null, statusCode: payload.statusCode || null, activeOnly: true }))
+        || (defaultOrderStatus?.code ?? null);
+      if (!resolvedCreateStatusCode) {
+        return res.status(400).json({ error: "No hay estado default configurado para pedidos", code: "MISSING_DEFAULT_STATUS" });
+      }
+      const resolvedCreateStatusId = await resolveOrderStatusIdByCode(tenantId, resolvedCreateStatusCode);
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
       const customPayload = payload.customFields || [];
       const validatedCustom = customPayload.length > 0
@@ -175,6 +197,7 @@ export function registerOrderRoutes(app: Express) {
           customerPhone: payload.customerPhone || null,
           customerEmail: payload.customerEmail || null,
           description: payload.description || null,
+          statusCode: resolvedCreateStatusCode,
           statusId: resolvedCreateStatusId,
           totalAmount: payload.totalAmount !== undefined && payload.totalAmount !== null ? String(payload.totalAmount) : null,
           paidAmount: String(paidNum.toFixed(2)),
@@ -370,21 +393,37 @@ export function registerOrderRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const orderId = req.params.id as unknown as number;
       const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
-      const resolvedStatusId = await resolveCanonicalOrderStatusId({ tenantId, statusId: statusId || null, statusCode: statusCode || null });
-      if (!resolvedStatusId) return res.status(400).json({ error: "statusId o statusCode requerido" });
+      if (!statusCode && !statusId) {
+        return res.status(400).json({ error: "statusCode es requerido", code: "MISSING_STATUS_CODE" });
+      }
+      const resolvedStatusCode = await resolveCanonicalOrderStatusCode({ tenantId, statusId: statusId || null, statusCode: statusCode || null, activeOnly: true });
+      if (!resolvedStatusCode) {
+        return res.status(400).json({ error: "statusCode inválido para ORDER", code: "INVALID_STATUS_CODE" });
+      }
+      const resolvedStatusId = await resolveOrderStatusIdByCode(tenantId, resolvedStatusCode);
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[orders:status]", { tenantId, branchId: req.auth!.branchId || null, orderId, incomingStatusCode: statusCode || null, incomingStatusId: statusId || null, resolvedStatusCode, resolvedStatusId });
+      }
       const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
       if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
       const order = scopeCheck.order;
+      const targetDefinition = await resolveOrderStatusDefinitionByCode(tenantId, resolvedStatusCode, false);
+      if (!targetDefinition || !targetDefinition.isActive) {
+        return res.status(400).json({ error: "statusCode inválido para ORDER", code: "INVALID_STATUS_CODE" });
+      }
+      if (targetDefinition.isLocked || targetDefinition.isFinal) {
+        return res.status(400).json({ error: "El estado seleccionado no permite cambios manuales", code: "STATUS_LOCKED" });
+      }
 
       await changeOrderStatusWithHistory({
         tenantId,
         orderId,
+        statusCode: resolvedStatusCode,
         statusId: resolvedStatusId,
         changedById: req.auth!.userId,
         note: note || null,
       });
-      const status = await storage.getOrderStatusById(resolvedStatusId, tenantId);
-      if (status?.isFinal) {
+      if (targetDefinition.isFinal) {
         const config = await storage.getConfig(tenantId);
         const hours = config?.trackingExpirationHours || 24;
         const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
@@ -393,7 +432,8 @@ export function registerOrderRoutes(app: Express) {
         }
       }
       await refreshMetricsForDate(tenantId, new Date());
-      res.json({ ok: true });
+      const updatedOrder = await storage.getOrderById(orderId, tenantId);
+      res.json({ ok: true, data: updatedOrder });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
@@ -492,7 +532,21 @@ export function registerOrderRoutes(app: Express) {
       }
 
       const data = await storage.getOrderHistory(orderId, tenantId);
-      res.json({ data });
+      const [definitions, legacyStatuses] = await Promise.all([
+        getStatuses(tenantId, "ORDER", true),
+        storage.getOrderStatuses(tenantId),
+      ]);
+      const legacyById = new Map<number, string>();
+      for (const legacy of legacyStatuses) legacyById.set(legacy.id, String(legacy.name || ""));
+      const definitionsByCode = new Map(definitions.map((d) => [d.code, d]));
+      const normalized = data.map((row: any) => {
+        const fallbackCode = legacyById.get(Number(row.statusId || 0)) || "";
+        const normalizedCode = fallbackCode ? fallbackCode.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) : null;
+        const statusCode = normalizedCode && definitionsByCode.has(normalizedCode) ? normalizedCode : null;
+        const def = statusCode ? definitionsByCode.get(statusCode) : null;
+        return { ...row, statusCode, statusLabel: def?.label || null };
+      });
+      res.json({ data: normalized });
     } catch (err: any) {
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
@@ -512,9 +566,9 @@ export function registerOrderRoutes(app: Express) {
       const [tenant, branding, statuses] = await Promise.all([
         storage.getTenantById(tenantId),
         storage.getTenantBranding(tenantId),
-        storage.getOrderStatuses(tenantId),
+        getStatuses(tenantId, "ORDER", true),
       ]);
-      const status = statuses.find((s) => s.id === order.statusId);
+      const status = statuses.find((s) => s.code === order.statusCode);
 
       if (!order.publicTrackingId) {
         const config = await storage.getConfig(tenantId);
@@ -541,7 +595,7 @@ export function registerOrderRoutes(app: Express) {
             customerName: order.customerName,
             customerPhone: order.customerPhone,
             createdAt: order.createdAt,
-            status: status?.name || "Sin estado",
+            status: status?.label || "Sin estado",
             statusColor: status?.color || "#6B7280",
             description: order.description,
             deliveryAddress: order.deliveryAddress,
@@ -572,9 +626,9 @@ export function registerOrderRoutes(app: Express) {
       const [tenant, branding, statuses] = await Promise.all([
         storage.getTenantById(tenantId),
         storage.getTenantBranding(tenantId),
-        storage.getOrderStatuses(tenantId),
+        getStatuses(tenantId, "ORDER", true),
       ]);
-      const status = statuses.find((s) => s.id === order.statusId);
+      const status = statuses.find((s) => s.code === order.statusCode);
 
       if (!order.publicTrackingId) {
         const config = await storage.getConfig(tenantId);
@@ -600,7 +654,7 @@ export function registerOrderRoutes(app: Express) {
         total: String(order.totalAmount || "0"),
         qrUrl: trackUrl,
         notes: order.description,
-        footerText: status?.name ? `Estado: ${status.name}` : undefined,
+        footerText: status?.label ? `Estado: ${status.label}` : undefined,
       });
 
       res.setHeader("X-Frame-Options", "SAMEORIGIN");

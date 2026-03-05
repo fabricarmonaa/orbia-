@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ScanLine } from "lucide-react";
+import { ScanLine, X } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 import { usePOSCart } from "@/hooks/usePOS";
 import CameraScanner from "@/components/addons/CameraScanner";
@@ -140,6 +140,21 @@ export default function PosPage() {
       setCustomerResults([]);
     }
   }
+
+  useEffect(() => {
+    if (pendingSale || selectedCustomer) return;
+    const value = customerQuery.trim();
+    if (!value) {
+      setCustomerResults([]);
+      setCustomerSearchOpen(false);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void searchCustomers(value);
+      setCustomerSearchOpen(true);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [customerQuery, pendingSale, selectedCustomer]);
 
   function addToCart(product: ProductRow) {
     const available = Number(product.stockTotal ?? 0);
@@ -286,7 +301,29 @@ export default function PosPage() {
 
   function openSalePrint(saleId: number) {
     const url = `/app/print/sale/${saleId}?autoprint=1`;
-    window.open(url, "_blank", "noopener,noreferrer");
+    const printWindow = window.open(url, "_blank", "noopener,noreferrer");
+    if (!printWindow) {
+      toast({ title: "No pudimos abrir el ticket", description: "Desbloqueá las ventanas emergentes para este sitio.", variant: "destructive" });
+      return;
+    }
+    printWindow.focus();
+  }
+
+
+  function cancelPendingSaleFlow() {
+    localStorage.removeItem("pendingSaleFromOrder");
+    sessionStorage.removeItem("pendingSaleFromOrder");
+    setPendingSale(null);
+    if (selectedCustomer?.name) {
+      setCustomerQuery(selectedCustomer.name);
+    } else {
+      setCustomerQuery(pendingCustomerName || "");
+    }
+    setPendingCustomerDni("");
+    setPendingCustomerPhone("");
+    setSelectedCustomer(null);
+    setCustomerResults([]);
+    setCustomerSearchOpen(false);
   }
 
   async function submitSale() {
@@ -405,7 +442,18 @@ export default function PosPage() {
           <CardContent className="space-y-3">
             {pendingSale && (
               <Card className="border-primary/30 bg-primary/5">
-                <CardHeader><CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle></CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Cancelar venta desde pedido"
+                    onClick={cancelPendingSaleFlow}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div><Label>Cliente</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
