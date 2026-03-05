@@ -206,13 +206,18 @@ export default function OrdersPage() {
     try {
       const [ordersRes, statusesRes, branchesRes] = await Promise.all([
         apiRequest("GET", "/api/orders"),
-        apiRequest("GET", "/api/order-statuses"),
+        apiRequest("GET", "/api/order-statuses?includeInactive=1"),
         apiRequest("GET", "/api/branches").catch(() => ({ json: () => ({ data: [] }) })),
       ]);
       const ordersData = await ordersRes.json();
       const statusesData = await statusesRes.json();
       const branchesData = await branchesRes.json();
-      setOrders(ordersData.data || []);
+      const nextOrders = ordersData.data || [];
+      setOrders(nextOrders);
+      if (selectedOrder) {
+        const refreshedSelected = nextOrders.find((o: Order) => o.id === selectedOrder.id);
+        if (refreshedSelected) setSelectedOrder(refreshedSelected);
+      }
       setStatuses(statusesData.data || []);
       setBranches(branchesData.data || []);
     } catch (err: any) {
@@ -295,14 +300,9 @@ export default function OrdersPage() {
       toast({ title: "Estado actualizado" });
       await fetchData();
       if (selectedOrder?.id === orderId) {
-        const [historyRes, orderRes] = await Promise.all([
-          apiRequest("GET", `/api/orders/${orderId}/history`),
-          apiRequest("GET", `/api/orders/${orderId}`),
-        ]);
+        const historyRes = await apiRequest("GET", `/api/orders/${orderId}/history`);
         const historyData = await historyRes.json();
-        const orderData = await orderRes.json();
         setHistory(historyData.data || []);
-        if (orderData?.data) setSelectedOrder(orderData.data);
       }
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -382,7 +382,7 @@ export default function OrdersPage() {
 
   function getStatusInfo(statusId: number | null) {
     const s = statuses.find((st) => st.id === statusId);
-    return s || { name: "Sin estado", color: "#6B7280", unavailable: true };
+    return s || { name: "Sin estado", color: "#6B7280", isActive: false };
   }
 
   function getStatusCodeById(statusId: number | null | undefined) {
@@ -522,7 +522,7 @@ export default function OrdersPage() {
                         <SelectValue placeholder="Estado inicial" />
                       </SelectTrigger>
                       <SelectContent>
-                        {statuses.map((s) => (
+                        {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
                           <SelectItem key={s.id} value={String(s.code || "")}>
                             {s.name}
                           </SelectItem>
@@ -804,7 +804,7 @@ export default function OrdersPage() {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
-            {statuses.map((s) => (
+            {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
               <SelectItem key={s.id} value={String(s.id)}>
                 {s.name}
               </SelectItem>
@@ -877,7 +877,7 @@ export default function OrdersPage() {
                         style={{ backgroundColor: status.color || "#6B7280", color: "#fff" }}
                         data-testid={`badge-status-${order.id}`}
                       >
-                        {(status as any).unavailable ? "Estado no disponible" : status.name}
+                        {status.name}{(status as any).isActive === false && status.name !== "Sin estado" ? " (inactivo)" : ""}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {formatDate(order.createdAt)}
@@ -909,15 +909,16 @@ export default function OrdersPage() {
                     <Select
                       value={getStatusCodeById(selectedOrder.statusId)}
                       onValueChange={(v) => changeStatus(selectedOrder.id, v)}
-                      disabled={!getStatusCodeById(selectedOrder.statusId)}
                     >
                       <SelectTrigger className="w-40" data-testid="select-change-status">
-                        <SelectValue placeholder={getStatusCodeById(selectedOrder.statusId) ? "Seleccionar estado" : "Estado no disponible"} />
+                        <SelectValue placeholder="Seleccionar estado" />
                       </SelectTrigger>
                       <SelectContent>
-                        {statuses.map((s) => (
+                        {statuses
+                          .filter((s) => (s as any).isActive !== false || s.id === selectedOrder.statusId)
+                          .map((s) => (
                           <SelectItem key={s.id} value={String(s.code || "")}>
-                            {s.name}
+                            {(s as any).isActive === false ? `${s.name} (inactivo)` : s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>

@@ -5,7 +5,7 @@ import { tenantAuth, requireTenantAdmin, blockBranchScope } from "../auth";
 import { validateBody, validateParams } from "../middleware/validate";
 import { sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
-import { statusDefinitions } from "@shared/schema";
+import { orderStatuses, statusDefinitions } from "@shared/schema";
 import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses, resolveOrderStatusIdByCode } from "../services/statuses";
 
 const entityTypeSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]) });
@@ -30,7 +30,8 @@ export function registerStatusRoutes(app: Express) {
   app.get("/api/order-statuses", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
-      let data = await getStatuses(tenantId, "ORDER", false);
+      const includeInactive = String(req.query.includeInactive || "").toLowerCase() === "1" || String(req.query.includeInactive || "").toLowerCase() === "true";
+      let data = await getStatuses(tenantId, "ORDER", includeInactive);
 
       // Auto-seed 4 default statuses if the tenant has none
       if (data.length === 0) {
@@ -55,13 +56,38 @@ export function registerStatusRoutes(app: Express) {
             sortOrder: i + 1,
           }).onConflictDoNothing();
         }
-        data = await getStatuses(tenantId, "ORDER", false);
+        data = await getStatuses(tenantId, "ORDER", includeInactive);
+      }
+
+      const legacyRows = await db.select().from(orderStatuses).where(eq(orderStatuses.tenantId, tenantId));
+      const definitionsByCode = new Map(data.map((d: any) => [normalizeStatusCode(d.code), d]));
+
+      // Bridge legacy statuses that exist in order_statuses but are missing in status_definitions
+      for (const legacy of legacyRows) {
+        const legacyCode = normalizeStatusCode(legacy.name || "");
+        if (!legacyCode || definitionsByCode.has(legacyCode)) continue;
+        const [created] = await db.insert(statusDefinitions).values({
+          tenantId,
+          entityType: "ORDER",
+          code: legacyCode,
+          label: legacy.name || legacyCode,
+          color: legacy.color || "#6B7280",
+          isFinal: !!legacy.isFinal,
+          isLocked: false,
+          isDefault: false,
+          isActive: true,
+          sortOrder: legacy.sortOrder || (data.length + 1),
+        }).onConflictDoNothing().returning();
+        if (created) {
+          definitionsByCode.set(legacyCode, created as any);
+          data.push(created as any);
+        }
       }
 
       const mappedData = await Promise.all(
         data.map(async (d: any) => {
-          const legacyId = await resolveOrderStatusIdByCode(tenantId, d.code);
-          return { ...d, name: d.label, id: legacyId || d.id };
+          const legacyId = await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(d.code));
+          return { ...d, code: normalizeStatusCode(d.code), name: d.label, id: legacyId || d.id };
         })
       );
       res.json({ data: mappedData });

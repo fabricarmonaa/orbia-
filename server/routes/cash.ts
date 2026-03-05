@@ -119,6 +119,18 @@ export function registerCashRoutes(app: Express) {
     }
   });
 
+
+  app.get("/api/cash/sessions/current", tenantAuth, enforceBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (req.query.branchId ? parseInt(req.query.branchId as string) : null);
+      const session = await storage.getOpenSession(tenantId, branchId);
+      res.json({ data: session || null });
+    } catch {
+      res.status(500).json({ error: "No se pudo obtener la sesión", code: "CASH_SESSION_READ_ERROR" });
+    }
+  });
+
   app.get("/api/cash/movements", tenantAuth, enforceBranchScope, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;

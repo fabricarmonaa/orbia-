@@ -90,6 +90,20 @@ const linkSaleSchema = z.object({
   saleId: z.coerce.number().int().positive(),
 });
 
+
+async function ensureOrderStatusResolved(tenantId: number, order: any) {
+  if (!order) return order;
+  const hasCurrentStatus = order.statusId ? await storage.getOrderStatusById(order.statusId, tenantId) : null;
+  if (hasCurrentStatus) return order;
+
+  const defaultStatus = await getDefaultStatus(tenantId, "ORDER");
+  const fallbackStatusId = defaultStatus ? await resolveOrderStatusIdByCode(tenantId, defaultStatus.code) : null;
+  if (!fallbackStatusId) return order;
+
+  await storage.updateOrderStatus(order.id, tenantId, fallbackStatusId);
+  return await storage.getOrderById(order.id, tenantId);
+}
+
 const updateOrderSchema = z.object({
   type: sanitizeOptionalShort(30).optional(),
   orderTypeCode: sanitizeOptionalShort(30).optional(),
@@ -116,7 +130,8 @@ export function registerOrderRoutes(app: Express) {
       const result = (req.auth!.scope === "BRANCH" && req.auth!.branchId)
         ? await storage.getOrdersByBranch(tenantId, req.auth!.branchId, pagination)
         : await storage.getOrders(tenantId, pagination);
-      res.json({ data: result.data, items: result.data, meta: result.meta });
+      const normalizedOrders = await Promise.all((result.data || []).map((row) => ensureOrderStatusResolved(tenantId, row)));
+      res.json({ data: normalizedOrders, items: normalizedOrders, meta: result.meta });
     } catch (err: any) {
       if (err instanceof HttpError) {
         return res.status(err.status).json({ error: { code: err.code, message: err.message } });
@@ -371,6 +386,9 @@ export function registerOrderRoutes(app: Express) {
       const orderId = req.params.id as unknown as number;
       const { statusId, statusCode, note } = req.body as z.infer<typeof orderStatusSchema>;
       const resolvedStatusId = await resolveCanonicalOrderStatusId({ tenantId, statusId: statusId || null, statusCode: statusCode || null });
+      if (process.env.NODE_ENV !== "production") {
+        console.info("[orders:status]", { tenantId, branchId: req.auth!.branchId || null, orderId, incomingStatusCode: statusCode || null, incomingStatusId: statusId || null, resolvedStatusId });
+      }
       if (!statusId && !statusCode) {
         return res.status(400).json({ error: "Debe enviar statusCode o statusId", code: "MISSING_STATUS" });
       }
@@ -398,7 +416,8 @@ export function registerOrderRoutes(app: Express) {
         }
       }
       await refreshMetricsForDate(tenantId, new Date());
-      res.json({ ok: true });
+      const updatedOrder = await storage.getOrderById(orderId, tenantId);
+      res.json({ ok: true, data: updatedOrder });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
