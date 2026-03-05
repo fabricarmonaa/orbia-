@@ -3,12 +3,11 @@ import { getAppOrigin } from "@/lib/app-origin";
 const API_BASE = getAppOrigin();
 
 export async function postPublicOnboard(payload: {
-  tenantName: string;
-  adminName: string;
-  dni?: string;
+  companyName: string;
+  ownerName: string;
   email: string;
-  phone?: string;
   password: string;
+  industry: string;
 }) {
   const res = await fetch(`${API_BASE}/api/public/onboard`, {
     method: "POST",
@@ -20,5 +19,5 @@ export async function postPublicOnboard(payload: {
   if (!res.ok) {
     throw new Error(json?.error || "No se pudo crear la cuenta");
   }
-  return json as { ok: true; tenantCode: string; tenantSlug: string; loginUrl: string };
+  return json as { ok: true; tenantCode: string; tenantSlug?: string; loginUrl: string };
 }

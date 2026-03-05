@@ -6,6 +6,7 @@ import { branches, orderTypeDefinitions, orderTypePresets, plans, statusDefiniti
 export type PublicSignupInput = {
   tenantName: string;
   adminName: string;
+  industry?: string | null;
   dni?: string | null;
   email: string;
   phone?: string | null;
@@ -139,6 +140,7 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
     await tx.insert(tenantConfig).values({
       tenantId: tenant.id,
       businessName: input.tenantName,
+      businessType: input.industry || null,
       currency: "ARS",
       trackingExpirationHours: 24,
       language: "es",

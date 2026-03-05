@@ -6,11 +6,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import logoOrbia from "@assets/WhatsApp_Image_2026-02-25_at_15.35.49-removebg-preview_1772154794159.png";
 import { getAppOrigin } from "@/lib/app-origin";
 
-type NavbarProps = {
-  onStartTrial?: () => void;
-};
-
-export function Navbar({ onStartTrial }: NavbarProps) {
+export function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
@@ -66,8 +62,8 @@ export function Navbar({ onStartTrial }: NavbarProps) {
                 Iniciar sesión
               </a>
             </Button>
-            <Button className="rounded-full px-6 shadow-md shadow-primary/20 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300" onClick={onStartTrial}>
-              Iniciá tu prueba gratis
+            <Button asChild className="rounded-full px-6 shadow-md shadow-primary/20 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
+              <a href="#signup">Iniciá tu prueba gratis</a>
             </Button>
           </div>
 
@@ -109,11 +105,8 @@ export function Navbar({ onStartTrial }: NavbarProps) {
                     Iniciar sesión
                   </a>
                 </Button>
-                <Button className="w-full rounded-full" onClick={() => {
-                  setMobileMenuOpen(false);
-                  onStartTrial?.();
-                }}>
-                  Iniciá tu prueba gratis
+                <Button asChild className="w-full rounded-full">
+                  <a href="#signup" onClick={() => setMobileMenuOpen(false)}>Iniciá tu prueba gratis</a>
                 </Button>
               </div>
             </div>

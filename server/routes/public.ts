@@ -14,12 +14,11 @@ const signupSchema = z.object({
 });
 
 const onboardSchema = z.object({
-  tenantName: z.string().min(2).max(200),
-  adminName: z.string().min(2).max(200),
-  dni: z.string().max(20).optional(),
+  companyName: z.string().min(2).max(200),
+  ownerName: z.string().min(2).max(200),
   email: z.string().email().max(255),
-  phone: z.string().max(50).optional(),
   password: z.string().min(6).max(120),
+  industry: z.string().min(2).max(120),
 });
 
 export function registerPublicRoutes(app: Express) {
@@ -27,12 +26,11 @@ export function registerPublicRoutes(app: Express) {
     try {
       const payload = onboardSchema.parse(req.body || {});
       const created = await createPublicTrialSignup({
-        tenantName: payload.tenantName.trim(),
-        adminName: payload.adminName.trim(),
-        dni: payload.dni?.trim() || null,
+        tenantName: payload.companyName.trim(),
+        adminName: payload.ownerName.trim(),
         email: payload.email.trim().toLowerCase(),
-        phone: payload.phone?.trim() || null,
         password: payload.password,
+        industry: payload.industry.trim(),
       });
 
       return res.status(201).json({

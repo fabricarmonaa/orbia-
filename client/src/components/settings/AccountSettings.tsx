@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,7 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deletePassword, setDeletePassword] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [tenantCode, setTenantCode] = useState("");
   if (!user) return null;
   const currentUser = user;
 
@@ -87,6 +88,31 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   const strengthLabel = strength.score < 40 ? "Débil" : strength.score < 65 ? "Media" : strength.score < 85 ? "Fuerte" : "Excelente";
 
   const initials = currentUser.fullName?.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() || "U";
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await apiRequest("GET", "/api/tenant/info");
+        const json = await res.json().catch(() => ({}));
+        if (!active) return;
+        setTenantCode(String(json?.data?.code || ""));
+      } catch {
+        if (!active) return;
+        setTenantCode("");
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  async function copyTenantCode() {
+    if (!tenantCode) return;
+    await navigator.clipboard.writeText(tenantCode);
+    toast({ title: "Código copiado" });
+  }
 
   async function handleAvatarUpload(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -152,6 +178,14 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
   return (<Card><CardHeader><h3 className="font-semibold">Perfil de usuario</h3><p className="text-sm text-muted-foreground">Información básica de tu cuenta</p></CardHeader><CardContent className="space-y-6">
     {currentUser.passwordWeak ? <div className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-sm">Tu contraseña actual es débil. Recomendamos actualizarla.</div> : null}
     <div className="flex items-center gap-4"><Avatar className="h-14 w-14"><AvatarImage src={currentUser.avatarUrl || undefined} alt={currentUser.fullName} /><AvatarFallback>{initials}</AvatarFallback></Avatar><div><p className="font-medium">{currentUser.fullName}</p><p className="text-sm text-muted-foreground">{currentUser.email}</p><p className="text-xs text-muted-foreground mt-1">Rol: {currentUser.role}</p></div></div>
+
+<div className="space-y-3 border rounded-md p-4">
+      <h4 className="font-medium">Código de empresa</h4>
+      <div className="flex flex-col sm:flex-row gap-2">
+        <Input value={tenantCode} readOnly placeholder="Cargando..." />
+        <Button type="button" variant="outline" onClick={copyTenantCode} disabled={!tenantCode}>Copiar</Button>
+      </div>
+    </div>
 
     <div className="space-y-2"><Label htmlFor="avatar-upload">Cambiar foto</Label><Input id="avatar-upload" ref={inputRef} type="file" accept="image/*" onChange={handleAvatarUpload} disabled={uploading} /><Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>{uploading ? "Subiendo..." : "Seleccionar foto"}</Button></div>
 
