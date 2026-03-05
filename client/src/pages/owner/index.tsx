@@ -60,6 +60,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBranding } from "@/context/BrandingContext";
 import { parseApiError } from "@/lib/api-errors";
+import { getPlanDisplayName } from "@/lib/plan-display";
 import type { Tenant, Plan } from "@shared/schema";
 
 function getSubscriptionStatus(tenant: Tenant): {
@@ -1411,7 +1412,7 @@ export default function OwnerDashboard() {
                         <CardContent className="py-4 space-y-3">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <p className="font-semibold leading-none">{plan.name}</p>
+                              <p className="font-semibold leading-none">{getPlanDisplayName(plan.planCode, plan.name)}</p>
                               <p className="text-xs text-muted-foreground mt-1">{plan.planCode}</p>
                             </div>
                             <Badge variant="outline">{String((plan as any).currency || "ARS")}</Badge>

@@ -1,7 +1,11 @@
 import type { Express } from "express";
 import { z } from "zod";
+import path from "path";
+import fs from "fs";
 import { createPublicTrialSignup } from "../services/public-signup";
 import { strictSignupLimiter } from "../middleware/http-rate-limit";
+import { storage } from "../storage";
+import { getPlanDisplayName } from "@shared/plan-display";
 
 const signupSchema = z.object({
   companyName: z.string().min(2).max(200),
@@ -22,6 +26,40 @@ const onboardSchema = z.object({
 });
 
 export function registerPublicRoutes(app: Express) {
+  app.get("/legal/terms", async (_req, res) => {
+    const filePath = path.join(process.cwd(), "uploads", "Terminos-y condiciones-ORBIA.pdf");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Archivo no encontrado", code: "FILE_NOT_FOUND" });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    return res.sendFile(filePath);
+  });
+
+  app.get("/legal/privacy", async (_req, res) => {
+    const filePath = path.join(process.cwd(), "uploads", "Politica-de-privacidad-ORBIA.pdf");
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Archivo no encontrado", code: "FILE_NOT_FOUND" });
+    }
+    res.setHeader("Content-Type", "application/pdf");
+    return res.sendFile(filePath);
+  });
+
+  app.get("/api/public/plans", async (_req, res) => {
+    try {
+      const plans = await storage.getPlans();
+      const data = plans.map((plan) => ({
+        code: plan.planCode,
+        displayName: getPlanDisplayName(plan.planCode, plan.name),
+        price: plan.priceMonthly,
+        currency: plan.currency || "ARS",
+        description: plan.description || null,
+      }));
+      return res.json({ data });
+    } catch {
+      return res.status(500).json({ error: "No se pudo obtener planes", code: "PUBLIC_PLANS_ERROR" });
+    }
+  });
+
   app.post("/api/public/onboard", strictSignupLimiter, async (req, res) => {
     try {
       const payload = onboardSchema.parse(req.body || {});

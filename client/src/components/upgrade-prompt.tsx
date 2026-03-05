@@ -25,7 +25,7 @@ const featureNames: Record<string, string> = {
 
 const planUpgradeSuggestions: Record<string, string> = {
   ECONOMICO: "Profesional",
-  PROFESIONAL: "Escala",
+  PROFESIONAL: "PyMe",
 };
 
 export function UpgradePrompt({ feature, title, description }: UpgradePromptProps) {
