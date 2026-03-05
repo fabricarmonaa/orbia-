@@ -22,7 +22,7 @@ const landingOrigins = [
 export function corsGuard(req: Request, res: Response, next: NextFunction) {
   const origin = req.headers.origin;
   const isPublicTracking = req.path.startsWith("/api/public/tracking");
-  const isPublicSignup = req.path === "/api/public/signup";
+  const isPublicSignup = req.path === "/api/public/signup" || req.path === "/api/public/onboard";
 
   if (origin) {
     const isAllowed = allowedOrigins.has(origin);

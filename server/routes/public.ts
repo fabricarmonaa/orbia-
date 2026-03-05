@@ -13,17 +13,57 @@ const signupSchema = z.object({
   industry: z.string().max(120).optional(),
 });
 
+const onboardSchema = z.object({
+  tenantName: z.string().min(2).max(200),
+  adminName: z.string().min(2).max(200),
+  dni: z.string().max(20).optional(),
+  email: z.string().email().max(255),
+  phone: z.string().max(50).optional(),
+  password: z.string().min(6).max(120),
+});
+
 export function registerPublicRoutes(app: Express) {
+  app.post("/api/public/onboard", strictSignupLimiter, async (req, res) => {
+    try {
+      const payload = onboardSchema.parse(req.body || {});
+      const created = await createPublicTrialSignup({
+        tenantName: payload.tenantName.trim(),
+        adminName: payload.adminName.trim(),
+        dni: payload.dni?.trim() || null,
+        email: payload.email.trim().toLowerCase(),
+        phone: payload.phone?.trim() || null,
+        password: payload.password,
+      });
+
+      return res.status(201).json({
+        ok: true,
+        tenantCode: created.tenantCode,
+        tenantSlug: created.tenantSlug,
+        appOrigin: created.appOrigin,
+        loginUrl: created.loginUrl,
+        next: { loginUrl: created.loginUrl },
+      });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "ONBOARD_INVALID", details: err.issues });
+      }
+      if (err?.message === "EMAIL_ALREADY_REGISTERED") {
+        return res.status(409).json({ error: "El email ya está registrado", code: "EMAIL_ALREADY_REGISTERED" });
+      }
+      return res.status(Number(err?.statusCode || 500)).json({ error: "No se pudo completar el onboarding", code: "ONBOARD_ERROR" });
+    }
+  });
+
   app.post("/api/public/signup", strictSignupLimiter, async (req, res) => {
     try {
       const payload = signupSchema.parse(req.body || {});
       const created = await createPublicTrialSignup({
-        companyName: payload.companyName.trim(),
-        ownerName: payload.ownerName.trim(),
+        tenantName: payload.companyName.trim(),
+        adminName: payload.ownerName.trim(),
         email: payload.email.trim().toLowerCase(),
+        dni: payload.dni?.trim() || null,
         phone: payload.phone?.trim() || null,
         password: payload.password,
-        industry: payload.industry?.trim() || null,
       });
 
       return res.status(201).json({ ok: true, ...created });

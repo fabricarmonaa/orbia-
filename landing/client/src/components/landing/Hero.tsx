@@ -3,7 +3,11 @@ import { ArrowRight, MessageCircle } from "lucide-react";
 import { motion } from "framer-motion";
 import imgDashboard from "@assets/image_1772153971674.png";
 
-export function Hero() {
+type HeroProps = {
+  onStartTrial?: () => void;
+};
+
+export function Hero({ onStartTrial }: HeroProps) {
   const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia";
 
   return (
@@ -35,11 +39,11 @@ export function Hero() {
             </p>
 
             <div className="flex flex-col sm:flex-row gap-4 justify-center lg:justify-start">
-              <Button asChild size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold shadow-2xl shadow-primary/30 hover:shadow-primary/40 hover:-translate-y-1 transition-all duration-300 bg-primary">
-                <a href="#signup">
+              <Button size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold shadow-2xl shadow-primary/30 hover:shadow-primary/40 hover:-translate-y-1 transition-all duration-300 bg-primary" onClick={onStartTrial}>
+                <span>
                   Iniciá tu prueba gratis
                   <ArrowRight className="ml-2 h-6 w-6" />
-                </a>
+                </span>
               </Button>
               <Button asChild variant="outline" size="lg" className="rounded-2xl px-10 h-16 text-lg font-bold border-2 border-border hover:bg-muted transition-all duration-300">
                 <a href={whatsappLink} target="_blank" rel="noopener noreferrer">

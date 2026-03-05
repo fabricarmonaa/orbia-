@@ -32,7 +32,7 @@ export default function TenantLogin() {
     }
 
     const params = new URLSearchParams(window.location.search);
-    const fromQuery = params.get("tenantCode") || params.get("tenant_code");
+    const fromQuery = params.get("tenant") || params.get("tenantCode") || params.get("tenant_code");
     if (fromQuery) setTenantCode(fromQuery);
   }, []);
 
