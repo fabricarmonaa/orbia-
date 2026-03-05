@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
+import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 
 export interface TrackingOrderData {
@@ -31,6 +31,7 @@ export interface TrackingOrderData {
   }>;
   trackingLayout: string;
   trackingTosText?: string | null;
+  tosUrl?: string | null;
 }
 
 interface TrackingViewProps {
@@ -292,11 +293,80 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     </Card>
   );
 
-  const tosSection = order.trackingTosText && (
-    <div className="text-xs p-3 rounded-md" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>
-      {order.trackingTosText}
+  const hasLinks = branding.links?.instagram || branding.links?.whatsapp || branding.links?.web;
+  const socialLinksSection = hasLinks && (
+    <div className="flex justify-center items-center gap-4 py-2">
+      {branding.links.instagram && (
+        <a
+          href={branding.links.instagram}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="p-2 rounded-full transition-opacity hover:opacity-80"
+          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
+          title="Instagram"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" />
+          </svg>
+        </a>
+      )}
+      {branding.links.whatsapp && (
+        <a
+          href={branding.links.whatsapp}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="p-2 rounded-full transition-opacity hover:opacity-80"
+          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
+          title="WhatsApp"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+            <path d="M11.99 2A10 10 0 1 0 22 12 10 10 0 0 0 11.99 2zM12 20.35a8.38 8.38 0 0 1-4.27-1.16L3.4 20l1.1-4.14A8.34 8.34 0 0 1 3.65 12a8.35 8.35 0 1 1 8.35 8.35zm4.61-5.65c-.25-.13-1.49-.74-1.72-.82-.23-.08-.4-.13-.57.12-.17.26-.64.82-.79 1-.15.17-.3.2-.55.07A6.87 6.87 0 0 1 10 12.63c-.4-.68-.04-1.05.2-1.53.08-.17.18-.32.26-.48.09-.16.04-.3-.01-.43-.05-.13-.57-1.38-.79-1.89-.2-.5-.42-.43-.57-.44h-.48c-.17 0-.46.06-.7.31-.24.26-.92.9-9.2 2.22s1.42 2.75 1.61 3.01c.21.28 1.94 2.97 4.71 4.14 2 1.04 2.88 1.13 3.93 1.05.9-.06 2.06-.82 2.37-1.63.31-.8.31-1.49.22-1.63-.1-.14-.36-.2-.61-.31z" />
+          </svg>
+        </a>
+      )}
+      {branding.links.web && (
+        <a
+          href={branding.links.web}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="p-2 rounded-full transition-opacity hover:opacity-80 flex items-center justify-center gap-1.5"
+          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
+          title="Sitio Web"
+        >
+          <Globe className="w-5 h-5" />
+        </a>
+      )}
     </div>
   );
+
+  // Objective C: show ToS as a link button to the separate TOS page;
+  // fallback to inline text for tenants without a slug
+  const tosSection = (() => {
+    if (order.tosUrl) {
+      return (
+        <div className="flex justify-center pt-1">
+          <a
+            href={order.tosUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-opacity hover:opacity-80"
+            style={{ borderColor: `${colors.primary}40`, color: mutedText }}
+            data-testid="link-tracking-tos"
+          >
+            <span>T&amp;érminos y condiciones</span>
+          </a>
+        </div>
+      );
+    }
+    if (order.trackingTosText) {
+      return (
+        <div className="text-xs p-3 rounded-md" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>
+          {order.trackingTosText}
+        </div>
+      );
+    }
+    return null;
+  })();
 
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
@@ -305,6 +375,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
         {orderInfoSection}
         {historySection}
         {commentsSection}
+        {socialLinksSection}
         {tosSection}
         {mode === "public" && (
           <p className="text-center text-xs py-4" style={{ color: mutedText }}>

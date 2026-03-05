@@ -4,7 +4,7 @@ import { and, count, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
-import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
+import { purchases, purchaseItems, products, stockLevels, stockMovements, cashMovements } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
@@ -27,6 +27,7 @@ const manualItemSchema = z.object({
 
 const manualPurchaseSchema = z.object({
   supplierName: z.string().min(1).max(200).transform((v) => sanitizeShortText(v, 200)),
+  providerId: z.coerce.number().int().positive().optional().nullable(),
   currency: z.string().max(10).optional().default("ARS").transform((v) => sanitizeShortText(v, 10).toUpperCase()),
   items: z.array(manualItemSchema).min(1),
   notes: z.string().max(1000).optional().nullable().transform((v) => (v ? sanitizeLongText(v, 1000) : null)),
@@ -70,7 +71,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
 
         let total = 0;
         for (const item of payload.items) {
-          const [product] = await tx.select({ id: products.id, name: products.name, sku: products.sku }).from(products).where(and(eq(products.tenantId, tenantId), eq(products.id, item.productId))).limit(1);
+          const [product] = await tx.select({ id: products.id, name: products.name, sku: products.sku, stock: products.stock }).from(products).where(and(eq(products.tenantId, tenantId), eq(products.id, item.productId))).limit(1);
           if (!product) throw Object.assign(new Error("PRODUCT_NOT_FOUND"), { code: "PRODUCT_NOT_FOUND", productId: item.productId });
           const lineTotal = Number(item.quantity) * Number(item.unitPrice);
           total += lineTotal;
@@ -99,6 +100,9 @@ export function registerPurchaseCrudRoutes(app: Express) {
           } else {
             await tx.insert(stockLevels).values({ tenantId, productId: product.id, branchId, quantity: String(nextQty), averageCost: String(nextAvg) });
           }
+          // Also keep the global product.stock column in sync so the products page reflects purchases
+          const currentGlobalStock = Number(product.stock || 0);
+          await tx.update(products).set({ stock: currentGlobalStock + qty }).where(eq(products.id, product.id));
           await tx.insert(stockMovements).values({
             tenantId,
             productId: product.id,
@@ -116,9 +120,28 @@ export function registerPurchaseCrudRoutes(app: Express) {
         }
 
         const [finalPurchase] = await tx.update(purchases).set({ totalAmount: String(total.toFixed(2)), updatedAt: new Date() }).where(eq(purchases.id, purchase.id)).returning();
-        return finalPurchase;
+
+        // Objetivo A: registrar egreso de caja atomicamente dentro del mismo tx
+        const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
+        if (openSession) {
+          await tx.insert(cashMovements).values({
+            tenantId,
+            branchId: branchId ?? null,
+            sessionId: openSession.id,
+            type: "egreso",
+            amount: String(total.toFixed(2)),
+            method: "efectivo",
+            category: "Compras",
+            description: `Compra #${purchase.id}${payload.providerName ? ` - ${payload.providerName}` : ""}`,
+            entityType: "PURCHASE",
+            entityId: purchase.id,
+            createdById: userId ?? null,
+          });
+        }
+
+        return { purchase: finalPurchase, hasCashMovement: !!openSession };
       });
-      return res.status(201).json({ data: created });
+      return res.status(201).json({ data: created.purchase, cashWarning: created.hasCashMovement ? undefined : "Sin sesi\u00f3n de caja abierta: el egreso no fue registrado" });
     } catch (err: any) {
       console.error("[purchases] PURCHASE_CREATE_ERROR", err);
       if (err?.code === "PRODUCT_NOT_FOUND") return res.status(404).json({ error: "Producto no encontrado", code: "PRODUCT_NOT_FOUND", productId: err.productId });
@@ -150,6 +173,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
           tenantId,
           branchId,
           providerName: payload.supplierName,
+          providerId: payload.providerId ?? null,
           purchaseDate: new Date(),
           currency: payload.currency,
           notes: payload.notes || null,
@@ -228,8 +252,27 @@ export function registerPurchaseCrudRoutes(app: Express) {
         const [updatedPurchase] = await tx.update(purchases).set({ totalAmount: String(total.toFixed(2)), updatedAt: new Date() }).where(eq(purchases.id, purchase.id)).returning();
         const [itemCountRow] = await tx.select({ c: count() }).from(purchaseItems).where(and(eq(purchaseItems.purchaseId, purchase.id), eq(purchaseItems.tenantId, tenantId)));
 
+        // Objetivo A: registrar egreso de caja atomicamente dentro del mismo tx
+        const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
+        if (openSession) {
+          await tx.insert(cashMovements).values({
+            tenantId,
+            branchId: branchId ?? null,
+            sessionId: openSession.id,
+            type: "egreso",
+            amount: String(total.toFixed(2)),
+            method: "efectivo",
+            category: "Compras",
+            description: `Compra manual #${purchase.id} - ${payload.supplierName}`,
+            entityType: "PURCHASE",
+            entityId: purchase.id,
+            createdById: userId ?? null,
+          });
+        }
+
         return {
           purchaseId: purchase.id,
+          hasCashMovement: !!openSession,
           purchase: {
             id: purchase.id,
             number: String(purchase.id),
@@ -244,7 +287,10 @@ export function registerPurchaseCrudRoutes(app: Express) {
         };
       });
 
-      return res.status(201).json(created);
+      return res.status(201).json({
+        ...created,
+        cashWarning: created.hasCashMovement ? undefined : "Sin sesi\u00f3n de caja abierta: el egreso no fue registrado",
+      });
     } catch (err: any) {
       console.error("[purchases] PURCHASE_MANUAL_ERROR", err);
       if (migrationMissingError(err)) return res.status(500).json({ error: "Faltan migraciones de compras, ejecutar migrations/*.sql", code: "MIGRATION_MISSING" });

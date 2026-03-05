@@ -114,8 +114,7 @@ export default function SalesHistoryPage() {
 
   function printSale(saleId: number) {
     const url = `/app/print/sale/${saleId}`;
-    const popup = window.open(url, "_blank", "noopener,noreferrer");
-    if (!popup) window.location.href = url;
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   useEffect(() => {
@@ -231,7 +230,7 @@ export default function SalesHistoryPage() {
                   <p className="font-medium">{detail.sale.saleNumber}</p>
                   <p className="text-muted-foreground">{new Date(detail.sale.saleDatetime).toLocaleString()}</p>
                 </div>
-                <Button onClick={() => printSale(detail.sale.id)}>Imprimir</Button>
+                <Button type="button" onClick={(e) => { e.preventDefault(); printSale(detail.sale.id); }}>Imprimir</Button>
               </div>
 
               <div className="rounded-md border overflow-hidden">

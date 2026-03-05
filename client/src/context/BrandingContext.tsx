@@ -65,7 +65,7 @@ const defaultTenantBranding: TenantBranding = {
   },
   texts: {
     trackingHeader: "Seguimiento de tu pedido",
-    trackingFooter: "Gracias por tu compra",
+    trackingFooter: "",
   },
   links: {
     instagram: "",

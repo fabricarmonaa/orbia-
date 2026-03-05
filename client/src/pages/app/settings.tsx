@@ -24,7 +24,7 @@ import { OperationsSettings } from "@/components/settings/OperationsSettings";
 import { AdvancedSettings } from "@/components/settings/AdvancedSettings";
 
 import { OrderPresetsSettings } from "@/components/settings/OrderPresetsSettings";
-import { PriceListPdfSettings } from "@/components/pdfs/PriceListPdfSettings";
+import PriceListPdfSettings from "@/components/pdfs/PriceListPdfSettings";
 
 interface Config {
   businessName: string;
@@ -195,7 +195,7 @@ export default function SettingsPage() {
         body: formData,
       });
       if (!res.ok) {
-        const info = await parseApiError(res, { maxUploadBytes: 1000000 });
+        const info = await parseApiError(res, { maxUploadBytes: 3000000 });
         throw new Error(info.message);
       }
       const data = await res.json();

@@ -10,11 +10,18 @@ import { validateBody, validateParams, validateQuery } from "../middleware/valid
 import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusId, normalizeDeliveryStatus } from "../services/statuses";
 import { db } from "../db";
 import { and, count, eq } from "drizzle-orm";
-import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
+import { orderFieldValues, orders, orderStatusHistory, cashMovements } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
 import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
 import { generatePublicToken } from "../utils/public-token";
+
+/** Decimal-safe payment status calculation (tolerates floating-point rounding) */
+function calcPaymentStatus(paid: number, total: number): "UNPAID" | "PARTIAL" | "PAID" {
+  if (paid <= 0) return "UNPAID";
+  if (paid >= total - 0.01) return "PAID";
+  return "PARTIAL";
+}
 
 const idParamSchema = z.object({ id: z.coerce.number().int().positive() });
 const ordersListQuerySchema = z.object({
@@ -58,6 +65,7 @@ const createOrderSchema = z.object({
   statusId: z.coerce.number().int().positive().optional().nullable(),
   statusCode: z.string().max(40).optional().nullable(),
   totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
+  paidAmount: z.coerce.number().min(0).optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
   requiresDelivery: z.boolean().optional(),
   deliveryAddress: sanitizeOptionalLong(200).nullable(),
@@ -93,6 +101,7 @@ const updateOrderSchema = z.object({
   ).nullable().optional(),
   description: sanitizeOptionalLong(500).nullable().optional(),
   totalAmount: z.union([z.number(), z.string()]).optional().nullable(),
+  paidAmount: z.coerce.number().min(0).optional().nullable(),
   customFields: z.array(customFieldSchema).optional(),
   orderPresetId: z.coerce.number().int().positive().optional().nullable(),
 });
@@ -148,7 +157,16 @@ export function registerOrderRoutes(app: Express) {
         ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, payload.orderPresetId)
         : null;
 
+      // Validate paid vs total (cross-field)
+      const totalNum = payload.totalAmount !== undefined && payload.totalAmount !== null ? Number(payload.totalAmount) : 0;
+      const paidNum = payload.paidAmount !== undefined && payload.paidAmount !== null ? Number(payload.paidAmount) : 0;
+      if (paidNum < 0) return res.status(400).json({ error: "El monto pagado no puede ser negativo", code: "PAID_NEGATIVE" });
+      if (paidNum > totalNum + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
+
       const data = await db.transaction(async (tx) => {
+        // Look up open cash session inside transaction scope
+        const openSession = paidNum > 0 ? await storage.getOpenSession(tenantId, branchId ?? null) : null;
+
         const [created] = await tx.insert(orders).values({
           tenantId,
           orderNumber,
@@ -159,6 +177,8 @@ export function registerOrderRoutes(app: Express) {
           description: payload.description || null,
           statusId: resolvedCreateStatusId,
           totalAmount: payload.totalAmount !== undefined && payload.totalAmount !== null ? String(payload.totalAmount) : null,
+          paidAmount: String(paidNum.toFixed(2)),
+          paymentStatus: calcPaymentStatus(paidNum, totalNum || paidNum),
           branchId,
           createdById: req.auth!.userId,
           createdByScope: req.auth!.scope || "TENANT",
@@ -195,10 +215,34 @@ export function registerOrderRoutes(app: Express) {
           }
         }
 
-        return created;
+        // Objective B: register cash INGRESO atomically inside the same tx
+        let hasCashMovement = false;
+        if (paidNum > 0 && openSession) {
+          const desc = calcPaymentStatus(paidNum, totalNum || paidNum) === "PARTIAL"
+            ? `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}/${totalNum.toFixed(2)}`
+            : `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}`;
+          await tx.insert(cashMovements).values({
+            tenantId,
+            branchId: branchId ?? null,
+            sessionId: openSession.id,
+            type: "ingreso",
+            amount: String(paidNum.toFixed(2)),
+            method: "efectivo",
+            category: "Pedidos",
+            description: desc,
+            orderId: created.id,
+            entityType: "ORDER",
+            entityId: created.id,
+            createdById: req.auth!.userId ?? null,
+          });
+          hasCashMovement = true;
+        }
+
+        return { order: created, hasCashMovement };
       });
       await refreshMetricsForDate(tenantId, new Date());
-      const responseBody = { data };
+      const responseBody: Record<string, unknown> = { data: data.order };
+      if (!data.hasCashMovement && paidNum > 0) responseBody.cashWarning = "Sin sesi\u00f3n de caja abierta: el ingreso no fue registrado";
       if (idemKey) {
         await saveIdempotentResponse({
           tenantId,
@@ -218,7 +262,8 @@ export function registerOrderRoutes(app: Express) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
       }
-      res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
+      console.error("[POST /api/orders] Unhandled error:", err?.message || err, err?.stack);
+      res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR", _debug: err?.message });
     }
   });
 
@@ -251,16 +296,59 @@ export function registerOrderRoutes(app: Express) {
           return res.status(400).json({ error: { code: "ORDER_TYPE_CHANGE_BLOCKED", message: "No se puede cambiar el tipo con custom fields existentes" } });
         }
       }
-      await db.update(orders).set({
-        type: nextType,
-        customerName: payload.customerName !== undefined ? (payload.customerName || null) : current.customerName,
-        customerPhone: payload.customerPhone !== undefined ? (payload.customerPhone || null) : current.customerPhone,
-        customerEmail: payload.customerEmail !== undefined ? (payload.customerEmail || null) : current.customerEmail,
-        description: payload.description !== undefined ? (payload.description || null) : current.description,
-        totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
-        orderPresetId: payload.orderPresetId !== undefined ? (payload.orderPresetId || null) : current.orderPresetId,
-        updatedAt: new Date(),
-      }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+
+      // Validate paidAmount if provided
+      const newTotal = payload.totalAmount !== undefined && payload.totalAmount !== null
+        ? Number(payload.totalAmount)
+        : Number(current.totalAmount || 0);
+      const newPaid = payload.paidAmount !== undefined && payload.paidAmount !== null
+        ? Number(payload.paidAmount)
+        : Number(current.paidAmount || 0);
+      if (newPaid < 0) return res.status(400).json({ error: "El monto pagado no puede ser negativo", code: "PAID_NEGATIVE" });
+      if (newPaid > newTotal + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
+      const currentPaid = Number(current.paidAmount || 0);
+      const diff = parseFloat((newPaid - currentPaid).toFixed(2));
+
+      const updateResult = await db.transaction(async (tx) => {
+        await tx.update(orders).set({
+          type: nextType,
+          customerName: payload.customerName !== undefined ? (payload.customerName || null) : current.customerName,
+          customerPhone: payload.customerPhone !== undefined ? (payload.customerPhone || null) : current.customerPhone,
+          customerEmail: payload.customerEmail !== undefined ? (payload.customerEmail || null) : current.customerEmail,
+          description: payload.description !== undefined ? (payload.description || null) : current.description,
+          totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
+          paidAmount: String(newPaid.toFixed(2)),
+          paymentStatus: calcPaymentStatus(newPaid, newTotal),
+          orderPresetId: payload.orderPresetId !== undefined ? (payload.orderPresetId || null) : current.orderPresetId,
+          updatedAt: new Date(),
+        }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+
+        // Objective B: register adjustment INGRESO atomically when paidAmount increases
+        let hasCashMovement = false;
+        if (diff > 0.001) {
+          const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : (current.branchId || null);
+          const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
+          if (openSession) {
+            const orderNum = current.orderNumber;
+            await tx.insert(cashMovements).values({
+              tenantId,
+              branchId: branchId ?? null,
+              sessionId: openSession.id,
+              type: "ingreso",
+              amount: String(diff.toFixed(2)),
+              method: "efectivo",
+              category: "Pedidos",
+              description: `Ajuste pago pedido #${orderNum}: +${diff.toFixed(2)}`,
+              orderId: id,
+              entityType: "ORDER",
+              entityId: id,
+              createdById: req.auth!.userId ?? null,
+            });
+            hasCashMovement = true;
+          }
+        }
+        return { hasCashMovement };
+      });
 
       const targetPresetId = payload.orderPresetId !== undefined ? payload.orderPresetId : current.orderPresetId;
       if (payload.customFields) {

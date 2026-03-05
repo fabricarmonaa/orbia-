@@ -1,474 +1,462 @@
-import { useEffect, useState } from "react";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+/**
+ * Configuración de PDFs — Lista de Precios y Presupuesto
+ * Reemplaza la antigua "Factura B" con una pestaña de configuración de Presupuesto.
+ */
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { ArrowUp, ArrowDown, RefreshCcw, Download, Save } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { usePlan } from "@/lib/plan";
+import { Badge } from "@/components/ui/badge";
 import {
-  getPdfSettings,
-  updatePdfSettings,
-  resetPdfSettings,
-  fetchPdfPreview,
-  getPdfDownloadUrl,
-  downloadPdfWithAuth,
-  type PdfSettings,
-  type PdfColumnKey,
-  type PdfDocumentType,
-  type InvoiceColumnKey,
-} from "@/lib/pdfs";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { getPdfSettings, updatePdfSettings, resetPdfSettings, type PdfSettings } from "@/lib/pdfs";
+import { Loader2, RotateCcw, Save, FileText, List } from "lucide-react";
 
-const columnLabels: Record<PdfColumnKey, string> = {
-  name: "Producto",
-  sku: "SKU",
+// ── Types ──────────────────────────────────────────────────────────
+type ColumnKey = "name" | "sku" | "description" | "price" | "stock_total" | "branch_stock";
+
+const COLUMN_LABELS: Record<ColumnKey, string> = {
+  name: "Nombre del producto",
+  sku: "Código (SKU)",
   description: "Descripción",
   price: "Precio",
   stock_total: "Stock total",
   branch_stock: "Stock por sucursal",
 };
 
-const priceListTemplateOptions = [
-  { value: "CLASSIC", label: "Clásico" },
-  { value: "MODERN", label: "Moderno" },
-  { value: "MINIMAL", label: "Minimal" },
-];
+const ALL_COLUMNS: ColumnKey[] = ["name", "sku", "description", "price", "stock_total", "branch_stock"];
 
-const invoiceTemplateOptions = [
-  { value: "B_STANDARD", label: "B estándar" },
-  { value: "B_COMPACT", label: "B compacto" },
-];
+// ── Live PDF Preview ─────────────────────────────────────────────
+function PdfPreview({ type }: { type: "price_list" | "presupuesto" }) {
+  const today = new Date().toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
 
-const invoiceColumnLabels: Record<InvoiceColumnKey, string> = {
-  code: "Código",
-  quantity: "Cantidad",
-  product: "Producto",
-  price: "Precio",
-  discount: "Bonif",
-  total: "Importe",
-};
+  const priceListItems = [
+    { name: "Producto Ejemplo A", sku: "SKU-001", price: "$1.500,00", stock: "12" },
+    { name: "Servicio Ejemplo B", sku: "SKU-002", price: "$3.200,00", stock: "—" },
+    { name: "Producto Ejemplo C", sku: "SKU-003", price: "$850,00", stock: "5" },
+  ];
 
-export function PriceListPdfSettings() {
-  const [settings, setSettings] = useState<PdfSettings | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [previewKey, setPreviewKey] = useState(Date.now());
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [loadingPreview, setLoadingPreview] = useState(false);
-  const { toast } = useToast();
-  const { plan, loading: loadingPlan } = usePlan();
-  const isEscala = (plan?.planCode || "").toUpperCase() === "ESCALA";
-  const isEconomic = (plan?.planCode || "").toUpperCase() === "ECONOMICO";
-
-  useEffect(() => {
-    if (loadingPlan) return;
-    fetchSettings();
-  }, [loadingPlan, isEscala, isEconomic]);
-
-  async function fetchSettings() {
-    try {
-      const data = await getPdfSettings();
-      if (!isEscala && data.documentType === "INVOICE_B") data.documentType = "PRICE_LIST";
-      if (data.documentType === "INVOICE_B" && !["B_STANDARD", "B_COMPACT"].includes(data.templateKey)) {
-        data.templateKey = "B_STANDARD";
-      }
-      if (data.documentType === "PRICE_LIST" && !["CLASSIC", "MODERN", "MINIMAL"].includes(data.templateKey)) {
-        data.templateKey = "CLASSIC";
-      }
-      if (isEconomic) data.showLogo = false;
-      setSettings(data);
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    if (!settings) return;
-    let active = true;
-    setLoadingPreview(true);
-    fetchPdfPreview(settings.documentType as PdfDocumentType)
-      .then((blob) => {
-        if (!active) return;
-        const url = URL.createObjectURL(blob);
-        setPreviewUrl((prev) => {
-          if (prev) URL.revokeObjectURL(prev);
-          return url;
-        });
-      })
-      .catch((err: any) => {
-        toast({ title: "Error", description: err.message, variant: "destructive" });
-      })
-      .finally(() => {
-        if (active) setLoadingPreview(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [settings?.documentType, previewKey]);
-
-  useEffect(() => {
-    if (!settings) return;
-    const isInvoice = settings.documentType === "INVOICE_B";
-    const allowed = isInvoice ? ["B_STANDARD", "B_COMPACT"] : ["CLASSIC", "MODERN", "MINIMAL"];
-    if (!allowed.includes(settings.templateKey)) {
-      setSettings({ ...settings, templateKey: isInvoice ? "B_STANDARD" : "CLASSIC" });
-    }
-  }, [settings]);
-
-  function updateColumnOrder(listKey: "columns" | "invoiceColumns", index: number, direction: "up" | "down") {
-    if (!settings) return;
-    const next = [...settings[listKey]];
-    const target = direction === "up" ? index - 1 : index + 1;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target], next[index]];
-    setSettings({ ...settings, [listKey]: next });
-  }
-
-  async function saveSettings() {
-    if (!settings) return;
-    setSaving(true);
-    try {
-      const data = await updatePdfSettings(settings);
-      setSettings(data);
-      toast({ title: "PDF guardado" });
-      setPreviewKey(Date.now());
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function resetSettings() {
-    if (!confirm("¿Restaurar configuración por defecto?")) return;
-    setSaving(true);
-    try {
-      const data = await resetPdfSettings();
-      setSettings(data);
-      toast({ title: "Restaurado a valores por defecto" });
-      setPreviewKey(Date.now());
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function handleDownload() {
-    if (!settings) return;
-    try {
-      await downloadPdfWithAuth(getPdfDownloadUrl(settings.documentType), "documento.pdf");
-      toast({ title: "PDF descargado" });
-    } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
-    }
-  }
-
-  if (loading || !settings) {
-    return null;
-  }
-
-  const isInvoice = settings.documentType === "INVOICE_B";
-  const availableTemplates = isInvoice ? invoiceTemplateOptions : priceListTemplateOptions;
+  const quoteItems = [
+    { name: "Producto Ejemplo A", qty: "2", price: "$1.500,00", subtotal: "$3.000,00" },
+    { name: "Servicio Ejemplo B", qty: "1", price: "$3.200,00", subtotal: "$3.200,00" },
+  ];
 
   return (
-    <Card>
-      <CardHeader>
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="font-semibold">PDFs del negocio</h3>
-            <p className="text-sm text-muted-foreground">Configura diseño, columnas y preview</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => setPreviewKey(Date.now())} data-testid="button-refresh-pdf-preview">
-              <RefreshCcw className="w-4 h-4 mr-2" />
-              Actualizar preview
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleDownload}>
-              <Download className="w-4 h-4 mr-2" />
-              Descargar PDF
-            </Button>
-          </div>
+    <div className="bg-white rounded-xl border shadow-sm overflow-hidden font-sans text-sm">
+      {/* Header */}
+      <div className="bg-slate-800 px-5 py-3 flex items-center justify-between">
+        <div>
+          <p className="text-white font-bold text-base">Mi Negocio</p>
+          <p className="text-slate-300 text-xs">Slogan o descripción</p>
         </div>
-      </CardHeader>
-      <CardContent className="space-y-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="space-y-4 lg:col-span-2">
-            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label>Tipo de documento</Label>
-                <Select
-                  value={settings.documentType}
-                  onValueChange={(value) => setSettings({ ...settings, documentType: value as PdfDocumentType })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="PRICE_LIST">Lista de precios</SelectItem>
-                    {isEscala && <SelectItem value="INVOICE_B">Factura B</SelectItem>}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Template</Label>
-                <Select
-                  value={settings.templateKey}
-                  onValueChange={(value) => setSettings({ ...settings, templateKey: value as any })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {availableTemplates.map((opt) => (
-                      <SelectItem key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Tamaño de página</Label>
-                <Select
-                  value={settings.pageSize}
-                  onValueChange={(value) => setSettings({ ...settings, pageSize: value as any })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="A4">A4</SelectItem>
-                    <SelectItem value="LETTER">Carta</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Orientación</Label>
-                <Select
-                  value={settings.orientation}
-                  onValueChange={(value) => setSettings({ ...settings, orientation: value as any })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="portrait">Vertical</SelectItem>
-                    <SelectItem value="landscape">Horizontal</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
+        <p className="text-slate-400 text-xs">{today}</p>
+      </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Encabezado</Label>
-                <Input
-                  value={settings.headerText || ""}
-                  onChange={(e) => setSettings({ ...settings, headerText: e.target.value })}
-                  placeholder="Ej: Lista de Precios Mayorista"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Sub-encabezado</Label>
-                <Input
-                  value={settings.subheaderText || ""}
-                  onChange={(e) => setSettings({ ...settings, subheaderText: e.target.value })}
-                  placeholder="Ej: Vigencia Marzo 2024"
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-2">
-                <Label>Footer</Label>
-                <Input
-                  value={settings.footerText || ""}
-                  onChange={(e) => setSettings({ ...settings, footerText: e.target.value })}
-                  placeholder="Ej: Precios sujetos a cambios sin previo aviso - www.miempresa.com"
-                />
-              </div>
-            </div>
+      {/* Title bar */}
+      <div className="bg-slate-700 px-5 py-1.5">
+        <p className="text-white font-semibold text-xs tracking-wide">
+          {type === "price_list" ? "LISTA DE PRECIOS" : "PRESUPUESTO"}
+        </p>
+      </div>
 
-            {isInvoice && (
-              <>
-                <Separator />
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Título del documento</Label>
-                    <Input
-                      value={settings.documentTitle || ""}
-                      onChange={(e) => setSettings({ ...settings, documentTitle: e.target.value })}
-                      placeholder="Ej: FACTURA B"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Razón social</Label>
-                    <Input
-                      value={settings.fiscalName || ""}
-                      onChange={(e) => setSettings({ ...settings, fiscalName: e.target.value })}
-                      placeholder="Ej: Mi Empresa S.A."
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>CUIT</Label>
-                    <Input
-                      value={settings.fiscalCuit || ""}
-                      onChange={(e) => setSettings({ ...settings, fiscalCuit: e.target.value })}
-                      placeholder="Ej: 30-12345678-9"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>IIBB</Label>
-                    <Input
-                      value={settings.fiscalIibb || ""}
-                      onChange={(e) => setSettings({ ...settings, fiscalIibb: e.target.value })}
-                      placeholder="Ej: 901-123456-1"
-                    />
-                  </div>
-                  <div className="space-y-2 sm:col-span-2">
-                    <Label>Domicilio</Label>
-                    <Input
-                      value={settings.fiscalAddress || ""}
-                      onChange={(e) => setSettings({ ...settings, fiscalAddress: e.target.value })}
-                      placeholder="Ej: Calle 123, Piso 1"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Ciudad</Label>
-                    <Input
-                      value={settings.fiscalCity || ""}
-                      onChange={(e) => setSettings({ ...settings, fiscalCity: e.target.value })}
-                      placeholder="Ej: CABA, Buenos Aires"
-                    />
-                  </div>
-                  <div className="flex items-center gap-3 sm:col-span-2">
-                    <Switch
-                      checked={settings.showFooterTotals ?? true}
-                      onCheckedChange={(checked) => setSettings({ ...settings, showFooterTotals: checked })}
-                    />
-                    <span className="text-sm text-muted-foreground">Mostrar total al pie</span>
-                  </div>
-                </div>
-              </>
-            )}
+      {/* Customer row (presupuesto only) */}
+      {type === "presupuesto" && (
+        <div className="bg-slate-50 border-b px-5 py-2 text-xs text-slate-600">
+          Cliente: Juan Pérez  ·  Tel: 11 1234-5678  ·  Validez: 7 días
+        </div>
+      )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {!isInvoice && (
-                <div className="space-y-2">
-                  <Label>Etiqueta precio</Label>
-                  <Input
-                    value={settings.priceColumnLabel}
-                    onChange={(e) => setSettings({ ...settings, priceColumnLabel: e.target.value })}
-                  />
-                </div>
-              )}
-              <div className="space-y-2">
-                <Label>Símbolo moneda</Label>
-                <Input
-                  value={settings.currencySymbol}
-                  onChange={(e) => setSettings({ ...settings, currencySymbol: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <Separator />
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={settings.showLogo}
-                  onCheckedChange={(checked) => setSettings({ ...settings, showLogo: checked })}
-                />
-                <span className="text-sm text-muted-foreground">Mostrar logo</span>
-              </div>
-              {!isInvoice && (
+      {/* Table */}
+      <div className="px-5 pt-3 pb-4">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr>
+              {type === "price_list" ? (
                 <>
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={settings.showDescription}
-                      onCheckedChange={(checked) => setSettings({ ...settings, showDescription: checked })}
-                    />
-                    <span className="text-sm text-muted-foreground">Mostrar descripción</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={settings.showSku}
-                      onCheckedChange={(checked) => setSettings({ ...settings, showSku: checked })}
-                    />
-                    <span className="text-sm text-muted-foreground">Mostrar SKU</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <Switch
-                      checked={settings.showBranchStock}
-                      onCheckedChange={(checked) => setSettings({ ...settings, showBranchStock: checked })}
-                    />
-                    <span className="text-sm text-muted-foreground">Stock por sucursal</span>
-                  </div>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-left font-semibold">Producto / Servicio</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-left font-semibold">Descripción</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-right font-semibold">Precio</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-right font-semibold">Stock</th>
+                </>
+              ) : (
+                <>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-left font-semibold">Producto / Servicio</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-right font-semibold">Cantidad</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-right font-semibold">Precio unit.</th>
+                  <th className="border border-slate-300 bg-slate-800 text-white px-2 py-1.5 text-right font-semibold">Subtotal</th>
                 </>
               )}
+            </tr>
+          </thead>
+          <tbody>
+            {type === "price_list"
+              ? priceListItems.map((item, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                  <td className="border border-slate-200 px-2 py-1.5 font-medium">{item.name}</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-slate-500">Lorem ipsum breve</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-right">{item.price}</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-right">{item.stock}</td>
+                </tr>
+              ))
+              : quoteItems.map((item, i) => (
+                <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50"}>
+                  <td className="border border-slate-200 px-2 py-1.5 font-medium">{item.name}</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-right">{item.qty}</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-right">{item.price}</td>
+                  <td className="border border-slate-200 px-2 py-1.5 text-right font-semibold">{item.subtotal}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+
+        {/* Totals (presupuesto only) */}
+        {type === "presupuesto" && (
+          <div className="flex justify-end mt-2 gap-1 flex-col items-end">
+            <div className="flex gap-4 text-xs text-slate-500 bg-slate-50 border px-3 py-1 rounded">
+              <span>Subtotal</span><span>$6.200,00</span>
             </div>
-
-            <Separator />
-
-            <div className="space-y-3">
-              <Label>Orden de columnas</Label>
-              <div className="space-y-2">
-                {(isInvoice ? settings.invoiceColumns : settings.columns).map((col, index) => (
-                  <div key={col} className="flex items-center justify-between border rounded-md px-3 py-2">
-                    <span className="text-sm">
-                      {isInvoice
-                        ? invoiceColumnLabels[col as InvoiceColumnKey]
-                        : columnLabels[col as PdfColumnKey]}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        type="button"
-                        onClick={() => updateColumnOrder(isInvoice ? "invoiceColumns" : "columns", index, "up")}
-                        disabled={index === 0}
-                      >
-                        <ArrowUp className="w-4 h-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        type="button"
-                        onClick={() => updateColumnOrder(isInvoice ? "invoiceColumns" : "columns", index, "down")}
-                        disabled={index === (isInvoice ? settings.invoiceColumns.length : settings.columns.length) - 1}
-                      >
-                        <ArrowDown className="w-4 h-4" />
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Button onClick={saveSettings} disabled={saving} data-testid="button-save-pdf-settings">
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? "Guardando..." : "Guardar PDF"}
-              </Button>
-              <Button variant="outline" onClick={resetSettings} disabled={saving}>
-                Restaurar defaults
-              </Button>
+            <div className="flex gap-4 text-xs font-bold bg-slate-800 text-white px-3 py-1.5 rounded">
+              <span>TOTAL</span><span>$6.200,00</span>
             </div>
           </div>
+        )}
 
-          <div className="border rounded-md overflow-hidden h-[520px] flex items-center justify-center bg-muted/20">
-            {loadingPreview && (
-              <p className="text-sm text-muted-foreground">Generando preview...</p>
-            )}
-            {!loadingPreview && previewUrl && (
-              <iframe title="Preview PDF" src={previewUrl} className="w-full h-full" />
-            )}
-          </div>
+        {/* Footer */}
+        <p className="text-center text-slate-400 text-[10px] mt-4 pt-2 border-t border-slate-100">
+          Términos y condiciones · Válido sujeto a disponibilidad de stock.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared config fields ──────────────────────────────────────────
+function SharedFields({
+  settings,
+  onChange,
+}: {
+  settings: Partial<PdfSettings>;
+  onChange: (patch: Partial<PdfSettings>) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>Tamaño de página</Label>
+          <Select value={settings.pageSize || "A4"} onValueChange={(v) => onChange({ pageSize: v as any })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="A4">A4</SelectItem>
+              <SelectItem value="LETTER">Carta</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
-      </CardContent>
-    </Card>
+        <div className="space-y-1.5">
+          <Label>Orientación</Label>
+          <Select value={settings.orientation || "portrait"} onValueChange={(v) => onChange({ orientation: v as any })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="portrait">Vertical</SelectItem>
+              <SelectItem value="landscape">Horizontal</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label>Nombre del negocio / encabezado</Label>
+        <Input
+          value={settings.headerText || ""}
+          onChange={(e) => onChange({ headerText: e.target.value })}
+          placeholder="Mi Negocio"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Subtítulo / descripción breve</Label>
+        <Input
+          value={settings.subheaderText || ""}
+          onChange={(e) => onChange({ subheaderText: e.target.value })}
+          placeholder="Mayorista · Rosario"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label>Texto al pie del documento</Label>
+        <Textarea
+          rows={2}
+          value={settings.footerText || ""}
+          onChange={(e) => onChange({ footerText: e.target.value })}
+          placeholder="Términos y condiciones · Válido sujeto a disponibilidad de stock."
+        />
+      </div>
+      <div className="flex items-center justify-between py-1">
+        <Label>Mostrar logo del negocio</Label>
+        <Switch checked={!!settings.showLogo} onCheckedChange={(v) => onChange({ showLogo: v })} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <div className="space-y-1.5">
+          <Label>Símbolo moneda</Label>
+          <Input value={settings.currencySymbol || "$"} onChange={(e) => onChange({ currencySymbol: e.target.value })} maxLength={5} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>Etiqueta columna precio</Label>
+          <Input value={settings.priceColumnLabel || ""} onChange={(e) => onChange({ priceColumnLabel: e.target.value })} placeholder="Precio" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Price list specific fields ────────────────────────────────────
+function PriceListFields({
+  settings,
+  onChange,
+}: {
+  settings: Partial<PdfSettings>;
+  onChange: (patch: Partial<PdfSettings>) => void;
+}) {
+  const columns = (settings.columns as ColumnKey[]) || ["name", "description", "price", "stock_total"];
+
+  function toggleColumn(key: ColumnKey) {
+    const next = columns.includes(key) ? columns.filter((c) => c !== key) : [...columns, key];
+    onChange({ columns: next as any });
+  }
+
+  return (
+    <div className="space-y-4 pt-2">
+      <div>
+        <Label className="mb-2 block">Columnas visibles</Label>
+        <div className="flex flex-wrap gap-2">
+          {ALL_COLUMNS.map((col) => (
+            <button
+              key={col}
+              type="button"
+              onClick={() => toggleColumn(col)}
+              className={`text-xs px-2.5 py-1 rounded-full border transition-colors font-medium ${columns.includes(col)
+                  ? "bg-foreground text-background border-foreground"
+                  : "bg-muted text-muted-foreground border-border"
+                }`}
+            >
+              {COLUMN_LABELS[col]}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="flex items-center justify-between">
+        <Label>Mostrar descripción</Label>
+        <Switch checked={!!settings.showDescription} onCheckedChange={(v) => onChange({ showDescription: v })} />
+      </div>
+      <div className="flex items-center justify-between">
+        <Label>Mostrar código (SKU)</Label>
+        <Switch checked={!!settings.showSku} onCheckedChange={(v) => onChange({ showSku: v })} />
+      </div>
+      <div className="flex items-center justify-between">
+        <Label>Mostrar stock por sucursal</Label>
+        <Switch checked={!!settings.showBranchStock} onCheckedChange={(v) => onChange({ showBranchStock: v })} />
+      </div>
+    </div>
+  );
+}
+
+// ── Presupuesto specific ──────────────────────────────────────────
+function PresupuestoFields({
+  settings,
+  onChange,
+}: {
+  settings: Partial<PdfSettings>;
+  onChange: (patch: Partial<PdfSettings>) => void;
+}) {
+  return (
+    <div className="space-y-4 pt-2">
+      <div className="rounded-lg border bg-blue-50/60 p-3 text-sm text-blue-800">
+        <p className="font-semibold mb-1">¿Cómo funciona el Presupuesto?</p>
+        <p className="text-xs leading-relaxed">
+          El presupuesto se genera desde <strong>Productos → Seleccionar → Generar presupuesto</strong>.
+          Incluye datos del cliente, cantidades, subtotal por ítem y totales con descuento.
+          Configurá acá el encabezado, pie y opciones visuales que se van a aplicar en todos los presupuestos.
+        </p>
+      </div>
+      <div className="flex items-center justify-between">
+        <Label>Mostrar descripción de productos</Label>
+        <Switch checked={!!settings.showDescription} onCheckedChange={(v) => onChange({ showDescription: v })} />
+      </div>
+      <div className="flex items-center justify-between">
+        <Label>Mostrar código (SKU)</Label>
+        <Switch checked={!!settings.showSku} onCheckedChange={(v) => onChange({ showSku: v })} />
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════
+// MAIN PAGE COMPONENT
+// ══════════════════════════════════════════════════════════════════
+export default function PriceListPdfSettings() {
+  const { toast } = useToast();
+  const [settings, setSettings] = useState<PdfSettings | null>(null);
+  const [draft, setDraft] = useState<Partial<PdfSettings>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [activeTab, setActiveTab] = useState<"price_list" | "presupuesto">("price_list");
+
+  useEffect(() => {
+    getPdfSettings()
+      .then((s) => {
+        setSettings(s);
+        setDraft(s as any);
+        if ((s.documentType as string) === "PRESUPUESTO") setActiveTab("presupuesto");
+      })
+      .catch(() => toast({ title: "No se pudieron cargar las configuraciones", variant: "destructive" }))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const merged = { ...settings, ...draft } as PdfSettings;
+
+  function patchDraft(patch: Partial<PdfSettings>) {
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      const saved = await updatePdfSettings({
+        ...draft,
+        documentType: activeTab === "presupuesto" ? "PRESUPUESTO" : "PRICE_LIST",
+      });
+      setSettings(saved as any);
+      toast({ title: "Configuración guardada" });
+    } catch (err: any) {
+      toast({ title: "Error al guardar", description: err.message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleReset() {
+    if (!window.confirm("¿Restablecer configuración de PDFs a los valores predeterminados?")) return;
+    setSaving(true);
+    try {
+      const fresh = await resetPdfSettings();
+      setSettings(fresh as any);
+      setDraft(fresh as any);
+      toast({ title: "Configuración restablecida" });
+    } catch {
+      toast({ title: "Error al restablecer", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Page header */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div>
+          <h2 className="text-xl font-bold tracking-tight">Configuración de PDFs</h2>
+          <p className="text-sm text-muted-foreground">
+            Personalizá cómo se ven tus listas de precios y presupuestos exportados.
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" size="sm" onClick={handleReset} disabled={saving}>
+            <RotateCcw className="h-4 w-4 mr-1.5" />
+            Restablecer
+          </Button>
+          <Button size="sm" onClick={handleSave} disabled={saving}>
+            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Save className="h-4 w-4 mr-1.5" />}
+            Guardar
+          </Button>
+        </div>
+      </div>
+
+      {/* Document type tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="price_list" className="flex items-center gap-1.5">
+            <List className="w-4 h-4" />
+            Lista de Precios
+          </TabsTrigger>
+          <TabsTrigger value="presupuesto" className="flex items-center gap-1.5">
+            <FileText className="w-4 h-4" />
+            Presupuesto
+          </TabsTrigger>
+        </TabsList>
+
+        {/* ── PRICE LIST ── */}
+        <TabsContent value="price_list">
+          <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
+            {/* Config */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <List className="w-4 h-4" /> Lista de Precios — Opciones
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <SharedFields settings={merged} onChange={patchDraft} />
+                <div className="border-t pt-4">
+                  <PriceListFields settings={merged} onChange={patchDraft} />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Preview */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs">Vista previa</Badge>
+                <p className="text-xs text-muted-foreground">Representación aproximada del PDF generado</p>
+              </div>
+              <PdfPreview type="price_list" />
+            </div>
+          </div>
+        </TabsContent>
+
+        {/* ── PRESUPUESTO ── */}
+        <TabsContent value="presupuesto">
+          <div className="grid grid-cols-1 xl:grid-cols-[420px_1fr] gap-6 items-start">
+            {/* Config */}
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm flex items-center gap-2">
+                  <FileText className="w-4 h-4" /> Presupuesto — Opciones
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <SharedFields settings={merged} onChange={patchDraft} />
+                <div className="border-t pt-4">
+                  <PresupuestoFields settings={merged} onChange={patchDraft} />
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Preview */}
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary" className="text-xs">Vista previa</Badge>
+                <p className="text-xs text-muted-foreground">Representación aproximada del PDF generado</p>
+              </div>
+              <PdfPreview type="presupuesto" />
+            </div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
   );
 }

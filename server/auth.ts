@@ -143,8 +143,12 @@ export async function getTenantPlan(tenantId: number): Promise<TenantPlanInfo | 
   const computedLimits: PlanLimits = {
     // Spread JSON first; then override with legacy column values when the JSON key is absent
     ...baseLimits,
+    // Normalize branches: support both key names
     branches_max: baseLimits.branches_max ?? legacyMaxBranches,
-    max_branches: baseLimits.max_branches ?? legacyMaxBranches,
+    max_branches: baseLimits.max_branches ?? baseLimits.branches_max ?? legacyMaxBranches,
+    // Normalize cashiers: support both key names (cashiers_max is what seed writes, max_cashiers is what routes read)
+    cashiers_max: baseLimits.cashiers_max ?? baseLimits.max_cashiers ?? 0,
+    max_cashiers: baseLimits.max_cashiers ?? baseLimits.cashiers_max ?? 0,
   } as PlanLimits;
 
   return {

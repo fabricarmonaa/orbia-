@@ -6,7 +6,7 @@ import { validateBody, validateParams } from "../middleware/validate";
 import { sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
 import { statusDefinitions } from "@shared/schema";
-import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses } from "../services/statuses";
+import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses, resolveOrderStatusIdByCode } from "../services/statuses";
 
 const entityTypeSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]) });
 const idSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]), id: z.coerce.number().int().positive() });
@@ -26,12 +26,58 @@ const patchSchema = createSchema.partial().extend({
 });
 
 export function registerStatusRoutes(app: Express) {
+  // ── Public alias: all tenant users (incl. cashiers) can fetch ORDER statuses ──
+  app.get("/api/order-statuses", tenantAuth, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      let data = await getStatuses(tenantId, "ORDER", false);
+
+      // Auto-seed 4 default statuses if the tenant has none
+      if (data.length === 0) {
+        const defaults = [
+          { code: "PENDIENTE", label: "Pendiente", isDefault: true, color: "#f59e0b" },
+          { code: "EN_PROCESO", label: "En proceso", isDefault: false, color: "#3b82f6" },
+          { code: "LISTO", label: "Listo", isDefault: false, color: "#10b981" },
+          { code: "ENTREGADO", label: "Entregado", isFinal: true, isDefault: false, color: "#6b7280" },
+        ];
+        for (let i = 0; i < defaults.length; i++) {
+          const s = defaults[i];
+          await db.insert(statusDefinitions).values({
+            tenantId,
+            entityType: "ORDER",
+            code: s.code,
+            label: s.label,
+            color: s.color,
+            isDefault: s.isDefault,
+            isFinal: (s as any).isFinal || false,
+            isLocked: false,
+            isActive: true,
+            sortOrder: i + 1,
+          }).onConflictDoNothing();
+        }
+        data = await getStatuses(tenantId, "ORDER", false);
+      }
+
+      const mappedData = await Promise.all(
+        data.map(async (d: any) => {
+          const legacyId = await resolveOrderStatusIdByCode(tenantId, d.code);
+          return { ...d, name: d.label, id: legacyId || d.id };
+        })
+      );
+      res.json({ data: mappedData });
+    } catch (err: any) {
+      console.error("[order-statuses]", err);
+      res.status(500).json({ error: "No se pudieron cargar los estados", code: "STATUS_ERROR" });
+    }
+  });
+
   app.get("/api/statuses/:entityType", tenantAuth, requireTenantAdmin, blockBranchScope, validateParams(entityTypeSchema), async (req, res) => {
     const tenantId = req.auth!.tenantId!;
     const entityType = req.params.entityType as "ORDER" | "PRODUCT" | "DELIVERY";
     const data = await getStatuses(tenantId, entityType, true);
     res.json({ data });
   });
+
 
   app.post("/api/statuses/:entityType", tenantAuth, requireTenantAdmin, blockBranchScope, validateParams(entityTypeSchema), validateBody(createSchema), async (req, res) => {
     const tenantId = req.auth!.tenantId!;

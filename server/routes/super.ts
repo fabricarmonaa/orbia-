@@ -206,10 +206,17 @@ export function registerSuperRoutes(app: Express) {
     try {
       const planCode = String(req.params.planCode || "").trim().toUpperCase();
       const payload = planPutSchema.parse(req.body || {});
+      // Fetch current plan to merge limits (avoid wiping existing fields not sent)
+      const existingPlans = await storage.getPlans();
+      const existingPlan = existingPlans.find((p) => (p.planCode || "").toUpperCase() === planCode);
+      const existingLimits = (existingPlan?.limitsJson as Record<string, number> | null) ?? {};
+      const mergedLimits = payload.limits
+        ? { ...existingLimits, ...payload.limits }
+        : existingLimits;
       const updated = await storage.updatePlanByCode(planCode, {
         description: payload.description,
         priceMonthly: payload.priceMonthly !== undefined ? String(payload.priceMonthly) : undefined,
-        limitsJson: payload.limits,
+        limitsJson: mergedLimits,
       } as any);
       if (!updated) {
         return res.status(404).json({ error: "Plan no encontrado", code: "PLAN_NOT_FOUND" });
@@ -856,7 +863,7 @@ export function registerSuperRoutes(app: Express) {
       if (!totp.secret || !totp.secret.trim()) {
         return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
       }
-            if (!(await verifySuperTotpToken(totp.secret, token))) {
+      if (!(await verifySuperTotpToken(totp.secret, token))) {
         return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
       await db.update(superAdminTotp).set({ enabled: true, verifiedAt: new Date(), updatedAt: new Date() }).where(eq(superAdminTotp.superAdminId, req.auth!.userId));
@@ -887,7 +894,7 @@ export function registerSuperRoutes(app: Express) {
       if (!totp.secret || !totp.secret.trim()) {
         return res.status(401).json({ error: "2FA inválido: secreto no configurado", code: "SUPERADMIN_2FA_MISCONFIGURED" });
       }
-            if (!(await verifySuperTotpToken(totp.secret, token))) {
+      if (!(await verifySuperTotpToken(totp.secret, token))) {
         return res.status(401).json({ error: "Código inválido", code: "SUPERADMIN_2FA_INVALID" });
       }
 

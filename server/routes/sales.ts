@@ -322,7 +322,10 @@ export function registerSaleRoutes(app: Express) {
       ]);
       const branch = sale.branchId ? allBranches.find((b) => b.id === sale.branchId) : null;
       const token = await ensureSalePublicToken(sale.id, tenantId);
-      const publicUrl = `${process.env.PUBLIC_APP_URL || process.env.APP_ORIGIN || ""}/tracking/${token}`;
+      const appBase = (process.env.PUBLIC_APP_URL || "https://app.orbiapanel.com").replace(/\/$/, "");
+      const publicUrl = `${appBase}/tracking/${token}`;
+      // Only include QR when there is a customer — without one the tracking link has no recipient
+      const hasCustomer = Boolean(sale.customerId);
       const customerData = customer[0] || null;
 
       return res.json({
@@ -355,7 +358,7 @@ export function registerSaleRoutes(app: Express) {
             total: item.lineTotal,
             code: item.skuSnapshot,
           })),
-          qr: { publicUrl },
+          qr: hasCustomer ? { publicUrl } : { publicUrl: null },
 
           // backward compatibility
           tenant: {
@@ -414,17 +417,19 @@ export function registerSaleRoutes(app: Express) {
         storage.getTenantById(sale.tenantId),
         sale.customerId
           ? db
-              .select({ name: customers.name, doc: customers.doc, phone: customers.phone })
-              .from(customers)
-              .where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, sale.tenantId)))
-              .limit(1)
-              .then((rows) => rows[0] ?? null)
+            .select({ name: customers.name, doc: customers.doc, phone: customers.phone })
+            .from(customers)
+            .where(and(eq(customers.id, sale.customerId), eq(customers.tenantId, sale.tenantId)))
+            .limit(1)
+            .then((rows) => rows[0] ?? null)
           : Promise.resolve(null),
       ]);
 
       const slug = (tenant as any)?.slug || null;
-      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
-      const trackUrl = `${base || ""}/tracking/${sale.publicToken || sale.id}${slug ? "" : ""}`;
+      const pdfBase = (process.env.PUBLIC_APP_URL || "https://app.orbiapanel.com").trim().replace(/\/$/, "");
+      const trackUrl = sale.publicToken ? `${pdfBase}/tracking/${sale.publicToken}` : null;
+      // Only include QR when a customer is associated — without one the tracking link has no recipient
+      const qrUrlForPdf = sale.customerId && trackUrl ? trackUrl : null;
 
       const pdf = await buildThermalTicketPdf({
         widthMm: width,
@@ -441,7 +446,7 @@ export function registerSaleRoutes(app: Express) {
         discount: String(sale.discountAmount || "0"),
         surcharge: String(sale.surchargeAmount || "0"),
         total: String(sale.totalAmount || "0"),
-        qrUrl: trackUrl,
+        qrUrl: qrUrlForPdf,
         notes: sale.notes,
       });
 

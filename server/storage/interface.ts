@@ -38,6 +38,7 @@ import type {
 export interface IStorage {
   getPlans(): Promise<Plan[]>;
   getPlanById(id: number): Promise<Plan | undefined>;
+  getPlanByCode(planCode: string): Promise<Plan | null>;
   createPlan(data: InsertPlan): Promise<Plan>;
   updatePlanByCode(planCode: string, data: Partial<InsertPlan>): Promise<Plan | undefined>;
   listSubscriptions(): Promise<Array<{ tenantId: number; tenantName: string; tenantCode: string; planCode: string | null; status: string | null; startsAt: Date | null; expiresAt: Date | null }>>;
@@ -256,17 +257,10 @@ export interface IStorage {
     priceColumnLabel: string;
     currencySymbol: string;
     columns: string[];
-    invoiceColumns: string[];
-    documentTitle: string;
-    fiscalName: string | null;
-    fiscalCuit: string | null;
-    fiscalIibb: string | null;
-    fiscalAddress: string | null;
-    fiscalCity: string | null;
-    showFooterTotals: boolean;
     styles: Record<string, unknown>;
     updatedAt: Date;
   }>;
+
   upsertTenantPdfSettings(tenantId: number, payload: Partial<InsertTenantPdfSettings>): Promise<TenantPdfSettings>;
   resetTenantPdfSettings(tenantId: number): Promise<{
     id: number | null;
@@ -285,17 +279,10 @@ export interface IStorage {
     priceColumnLabel: string;
     currencySymbol: string;
     columns: string[];
-    invoiceColumns: string[];
-    documentTitle: string;
-    fiscalName: string | null;
-    fiscalCuit: string | null;
-    fiscalIibb: string | null;
-    fiscalAddress: string | null;
-    fiscalCity: string | null;
-    showFooterTotals: boolean;
     styles: Record<string, unknown>;
     updatedAt: Date;
   }>;
+
 
   getTenantMonthlySummary(tenantId: number, year: number, month: number): Promise<TenantMonthlySummary | undefined>;
   upsertTenantMonthlySummary(data: InsertTenantMonthlySummary): Promise<TenantMonthlySummary>;

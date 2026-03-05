@@ -14,16 +14,21 @@ export function normalizeDeliveryStatus(input?: string | null) {
 export async function resolveCanonicalOrderStatusId(params: { tenantId: number; statusId?: number | null; statusCode?: string | null }) {
   if (params.statusCode) {
     const normalizedCode = normalizeStatusCode(params.statusCode);
-    await ensureStatusExists(params.tenantId, "ORDER", normalizedCode);
+    // ensureStatusExists may return null for legacy tenants — resolve directly
     return await resolveOrderStatusIdByCode(params.tenantId, normalizedCode);
   }
 
   if (params.statusId) {
+    const [def] = await db.select().from(statusDefinitions).where(and(eq(statusDefinitions.id, params.statusId), eq(statusDefinitions.tenantId, params.tenantId))).limit(1);
+    if (def) {
+      const ensuredId = await ensureStatusExists(params.tenantId, def.code, def.entityType as StatusEntityType);
+      return ensuredId;
+    }
+
     const [legacy] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, params.statusId), eq(orderStatuses.tenantId, params.tenantId))).limit(1);
     if (!legacy) return null;
     const normalizedLegacyCode = normalizeStatusCode(legacy.name || "");
-    const canonical = await ensureStatusExists(params.tenantId, "ORDER", normalizedLegacyCode);
-    return await resolveOrderStatusIdByCode(params.tenantId, canonical.code);
+    return legacy.id ?? null;
   }
 
   return null;
@@ -73,16 +78,30 @@ export async function ensureStatusExists(tenantId: number, entityType: StatusEnt
       eq(statusDefinitions.code, normalized),
       eq(statusDefinitions.isActive, true),
     ));
-  if (!row) throw new Error("STATUS_NOT_FOUND");
-  return row;
+  // Return null gracefully instead of throwing when status_definitions is empty (legacy tenants)
+  return row ?? null;
 }
 
 export async function resolveOrderStatusIdByCode(tenantId: number, code: string) {
-  const status = await ensureStatusExists(tenantId, "ORDER", code);
+  // Try canonical status_definitions table first (may be empty for legacy tenants)
+  const [defRow] = await db
+    .select()
+    .from(statusDefinitions)
+    .where(and(
+      eq(statusDefinitions.tenantId, tenantId),
+      eq(statusDefinitions.entityType, "ORDER"),
+      eq(statusDefinitions.code, code),
+      eq(statusDefinitions.isActive, true),
+    ));
+
+  // Whether we found a status_definition or not, try to match in order_statuses by name
   const [orderStatus] = await db
     .select()
     .from(orderStatuses)
-    .where(and(eq(orderStatuses.tenantId, tenantId), sql`LEFT(REGEXP_REPLACE(UPPER(${orderStatuses.name}), '[^A-Z0-9]+', '_', 'g'), 40) = ${status.code}`));
+    .where(and(
+      eq(orderStatuses.tenantId, tenantId),
+      sql`LEFT(REGEXP_REPLACE(UPPER(${orderStatuses.name}), '[^A-Z0-9]+', '_', 'g'), 40) = ${defRow?.code ?? code}`
+    ));
   return orderStatus?.id ?? null;
 }
 

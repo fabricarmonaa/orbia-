@@ -277,6 +277,7 @@ export function registerImportRoutes(app: Express) {
       if (err?.message === "IMPORT_NO_VALID_ROWS") {
         return res.status(400).json({ error: "No hay filas válidas para importar", code: "IMPORT_NO_VALID_ROWS" });
       }
+      console.error("[IMPORT PURCHASES COMMIT 500 ERROR]:", err);
       return res.status(500).json({ error: "No se pudo completar la importación", code: "IMPORT_COMMIT_ERROR" });
     } finally {
       cleanupUploadedFile(req);
@@ -359,6 +360,10 @@ export function registerImportRoutes(app: Express) {
           summary.imported_count += 1;
         }
 
+        if (summary.imported_count === 0) {
+          throw new Error("IMPORT_NO_VALID_ROWS");
+        }
+
         await tx.insert(importJobs).values({
           tenantId,
           entity: "products",
@@ -371,7 +376,13 @@ export function registerImportRoutes(app: Express) {
       });
 
       return res.json({ summary, errors: rowErrors });
-    } catch {
+    } catch (err: any) {
+      if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
+        return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });
+      }
+      if (err?.message === "IMPORT_NO_VALID_ROWS") {
+        return res.status(400).json({ error: "No hay filas válidas para importar", code: "IMPORT_NO_VALID_ROWS" });
+      }
       return res.status(500).json({ error: "No se pudo completar la importación", code: "IMPORT_COMMIT_ERROR" });
     } finally {
       cleanupUploadedFile(req);
@@ -439,6 +450,10 @@ export function registerImportRoutes(app: Express) {
           summary.imported_count += 1;
         }
 
+        if (summary.imported_count === 0) {
+          throw new Error("IMPORT_NO_VALID_ROWS");
+        }
+
         await tx.insert(importJobs).values({
           tenantId,
           entity: "customers",
@@ -451,7 +466,13 @@ export function registerImportRoutes(app: Express) {
       });
 
       return res.json({ summary, errors: rowErrors });
-    } catch {
+    } catch (err: any) {
+      if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
+        return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });
+      }
+      if (err?.message === "IMPORT_NO_VALID_ROWS") {
+        return res.status(400).json({ error: "No hay filas válidas para importar", code: "IMPORT_NO_VALID_ROWS" });
+      }
       return res.status(500).json({ error: "No se pudo completar la importación", code: "IMPORT_COMMIT_ERROR" });
     } finally {
       cleanupUploadedFile(req);

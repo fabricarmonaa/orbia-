@@ -32,7 +32,7 @@ const tenantConfigSchema = z.object({
   businessType: z.string().trim().max(80).optional(),
   businessDescription: z.string().trim().max(500).optional(),
   currency: z.string().trim().max(10).optional(),
-  trackingExpirationHours: z.coerce.number().int().min(1).max(168).optional(),
+  trackingExpirationHours: z.coerce.number().int().min(1).max(720).optional(),
   language: z.string().trim().max(10).optional(),
   trackingLayout: z.string().trim().max(40).optional(),
   trackingPrimaryColor: z.string().trim().max(30).optional(),

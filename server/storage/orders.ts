@@ -1,9 +1,10 @@
 import { db } from "../db";
 import { eq, and, desc, sql, count, lt, or } from "drizzle-orm";
 import {
-  orders, orderStatuses, orderStatusHistory, orderComments,
+  orders, orderStatuses, orderStatusHistory, orderComments, tenants,
   type InsertOrder, type InsertOrderStatus, type InsertOrderStatusHistory, type InsertOrderComment,
 } from "@shared/schema";
+import { getTableColumns } from "drizzle-orm";
 import { resolvePagination } from "../utils/pagination";
 
 export const orderStorage = {
@@ -35,9 +36,9 @@ export const orderStorage = {
           eq(orders.tenantId, tenantId),
           cursor
             ? or(
-                lt(orders.createdAt, new Date(cursor.createdAt)),
-                and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
-              )
+              lt(orders.createdAt, new Date(cursor.createdAt)),
+              and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+            )
             : undefined,
         )
       )
@@ -57,11 +58,15 @@ export const orderStorage = {
     return order;
   },
   async getOrderByTrackingId(trackingId: string) {
-    const [order] = await db
-      .select()
+    const [row] = await db
+      .select({
+        ...getTableColumns(orders),
+        tenantSlug: tenants.slug,
+      })
       .from(orders)
+      .leftJoin(tenants, eq(tenants.id, orders.tenantId))
       .where(eq(orders.publicTrackingId, trackingId));
-    return order;
+    return row ?? null;
   },
   async createOrder(data: InsertOrder) {
     const [order] = await db.insert(orders).values(data).returning();
@@ -141,9 +146,9 @@ export const orderStorage = {
           eq(orders.branchId, branchId),
           cursor
             ? or(
-                lt(orders.createdAt, new Date(cursor.createdAt)),
-                and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
-              )
+              lt(orders.createdAt, new Date(cursor.createdAt)),
+              and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+            )
             : undefined,
         )
       )

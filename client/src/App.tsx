@@ -17,6 +17,7 @@ import PublicTosPage from "@/pages/public-tos";
 import { SessionLifecycleManager } from "@/components/session-lifecycle-manager";
 import { PwaRuntime } from "@/components/pwa-runtime";
 import { AuthGuard } from "@/components/auth-guard";
+import { OnboardingProvider } from "@/components/onboarding/OnboardingProvider";
 
 function Router() {
   return (
@@ -48,7 +49,9 @@ function App() {
             <SessionLifecycleManager />
             <PwaRuntime />
             <AuthGuard />
-            <Router />
+            <OnboardingProvider>
+              <Router />
+            </OnboardingProvider>
           </BrandingProvider>
         </ThemeProvider>
       </TooltipProvider>

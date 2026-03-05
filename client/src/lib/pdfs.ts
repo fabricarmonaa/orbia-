@@ -1,12 +1,11 @@
 import { apiRequest, getToken } from "@/lib/auth";
 import { parseApiError } from "@/lib/api-errors";
 
-export type PdfTemplateKey = "CLASSIC" | "MODERN" | "MINIMAL" | "B_STANDARD" | "B_COMPACT";
+export type PdfTemplateKey = "CLASSIC" | "MODERN" | "MINIMAL";
 export type PdfPageSize = "A4" | "LETTER";
 export type PdfOrientation = "portrait" | "landscape";
-export type PdfDocumentType = "PRICE_LIST" | "INVOICE_B";
+export type PdfDocumentType = "PRICE_LIST" | "PRESUPUESTO";
 export type PdfColumnKey = "name" | "sku" | "description" | "price" | "stock_total" | "branch_stock";
-export type InvoiceColumnKey = "code" | "quantity" | "product" | "price" | "discount" | "total";
 
 export interface PdfStyles {
   fontSize?: number;
@@ -31,14 +30,6 @@ export interface PdfSettings {
   priceColumnLabel: string;
   currencySymbol: string;
   columns: PdfColumnKey[];
-  invoiceColumns: InvoiceColumnKey[];
-  documentTitle?: string | null;
-  fiscalName?: string | null;
-  fiscalCuit?: string | null;
-  fiscalIibb?: string | null;
-  fiscalAddress?: string | null;
-  fiscalCity?: string | null;
-  showFooterTotals?: boolean;
   styles: PdfStyles;
   updatedAt?: string;
 }
@@ -94,14 +85,6 @@ async function fetchPdfBlob(url: string, method: "GET" | "POST", payload?: unkno
   return res.blob();
 }
 
-export async function fetchPdfPreview(documentType: PdfDocumentType): Promise<Blob> {
-  return fetchPdfBlob("/api/pdfs/preview", "POST", { documentType });
-}
-
-export async function previewPriceListPdf(payload: PriceListExportPayload): Promise<Blob> {
-  return fetchPdfBlob("/api/pdfs/price-list/preview", "POST", payload);
-}
-
 export async function downloadPriceListPdf(payload: PriceListExportPayload, filename = "lista-precios.pdf") {
   const blob = await fetchPdfBlob("/api/pdfs/price-list/download", "POST", payload);
   const objectUrl = URL.createObjectURL(blob);
@@ -112,12 +95,17 @@ export async function downloadPriceListPdf(payload: PriceListExportPayload, file
   URL.revokeObjectURL(objectUrl);
 }
 
-export function getPdfDownloadUrl(documentType: PdfDocumentType) {
-  return `/api/pdfs/download?documentType=${documentType}`;
-}
-
-export async function downloadPdfWithAuth(url: string, filename: string) {
-  const blob = await fetchPdfBlob(url, "GET");
+export async function downloadQuotePdf(
+  payload: {
+    customer?: { name?: string; company?: string; phone?: string; email?: string };
+    items: Array<{ id: number; name: string; description?: string | null; price: number; quantity: number; sku?: string | null }>;
+    discount?: number;
+    notes?: string;
+    validity?: number;
+  },
+  filename = "presupuesto.pdf",
+) {
+  const blob = await fetchPdfBlob("/api/pdfs/quote", "POST", payload);
   const objectUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = objectUrl;

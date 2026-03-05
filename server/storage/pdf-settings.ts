@@ -17,14 +17,6 @@ export const DEFAULT_PDF_SETTINGS = {
   priceColumnLabel: "Precio",
   currencySymbol: "$",
   columns: ["name", "description", "price", "stock_total", "branch_stock"],
-  invoiceColumns: ["code", "quantity", "product", "price", "discount", "total"],
-  documentTitle: "Factura B",
-  fiscalName: null as string | null,
-  fiscalCuit: null as string | null,
-  fiscalIibb: null as string | null,
-  fiscalAddress: null as string | null,
-  fiscalCity: null as string | null,
-  showFooterTotals: true,
   styles: {
     fontSize: 10,
     headerSize: 16,
@@ -50,17 +42,18 @@ export const pdfSettingsStorage = {
         id: null,
         tenantId,
         ...DEFAULT_PDF_SETTINGS,
-        columns: DEFAULT_PDF_SETTINGS.columns,
-        styles: DEFAULT_PDF_SETTINGS.styles,
         updatedAt: new Date(),
       };
     }
+
+    // Coerce legacy INVOICE_B document type to PRICE_LIST
+    const documentType = row.documentType === "INVOICE_B" ? "PRICE_LIST" : (row.documentType || DEFAULT_PDF_SETTINGS.documentType);
 
     return {
       id: row.id,
       tenantId,
       templateKey: row.templateKey,
-      documentType: row.documentType,
+      documentType,
       pageSize: row.pageSize,
       orientation: row.orientation,
       showLogo: row.showLogo,
@@ -75,16 +68,6 @@ export const pdfSettingsStorage = {
       columns: Array.isArray(row.columnsJson) && row.columnsJson.length > 0
         ? row.columnsJson
         : DEFAULT_PDF_SETTINGS.columns,
-      invoiceColumns: Array.isArray(row.invoiceColumnsJson) && row.invoiceColumnsJson.length > 0
-        ? row.invoiceColumnsJson
-        : DEFAULT_PDF_SETTINGS.invoiceColumns,
-      documentTitle: row.documentTitle ?? DEFAULT_PDF_SETTINGS.documentTitle,
-      fiscalName: row.fiscalName ?? DEFAULT_PDF_SETTINGS.fiscalName,
-      fiscalCuit: row.fiscalCuit ?? DEFAULT_PDF_SETTINGS.fiscalCuit,
-      fiscalIibb: row.fiscalIibb ?? DEFAULT_PDF_SETTINGS.fiscalIibb,
-      fiscalAddress: row.fiscalAddress ?? DEFAULT_PDF_SETTINGS.fiscalAddress,
-      fiscalCity: row.fiscalCity ?? DEFAULT_PDF_SETTINGS.fiscalCity,
-      showFooterTotals: row.showFooterTotals ?? DEFAULT_PDF_SETTINGS.showFooterTotals,
       styles: mergeDefaults(DEFAULT_PDF_SETTINGS.styles, row.stylesJson as Record<string, unknown>),
       updatedAt: row.updatedAt,
     };
@@ -114,14 +97,6 @@ export const pdfSettingsStorage = {
           priceColumnLabel: payload.priceColumnLabel ?? existing.priceColumnLabel,
           currencySymbol: payload.currencySymbol ?? existing.currencySymbol,
           columnsJson: payload.columnsJson ?? existing.columnsJson,
-          invoiceColumnsJson: payload.invoiceColumnsJson ?? existing.invoiceColumnsJson,
-          documentTitle: payload.documentTitle ?? existing.documentTitle,
-          fiscalName: payload.fiscalName ?? existing.fiscalName,
-          fiscalCuit: payload.fiscalCuit ?? existing.fiscalCuit,
-          fiscalIibb: payload.fiscalIibb ?? existing.fiscalIibb,
-          fiscalAddress: payload.fiscalAddress ?? existing.fiscalAddress,
-          fiscalCity: payload.fiscalCity ?? existing.fiscalCity,
-          showFooterTotals: payload.showFooterTotals ?? existing.showFooterTotals,
           stylesJson: payload.stylesJson ?? existing.stylesJson,
           updatedAt: new Date(),
         })
@@ -148,14 +123,6 @@ export const pdfSettingsStorage = {
         priceColumnLabel: payload.priceColumnLabel || DEFAULT_PDF_SETTINGS.priceColumnLabel,
         currencySymbol: payload.currencySymbol || DEFAULT_PDF_SETTINGS.currencySymbol,
         columnsJson: payload.columnsJson ?? DEFAULT_PDF_SETTINGS.columns,
-        invoiceColumnsJson: payload.invoiceColumnsJson ?? DEFAULT_PDF_SETTINGS.invoiceColumns,
-        documentTitle: payload.documentTitle ?? DEFAULT_PDF_SETTINGS.documentTitle,
-        fiscalName: payload.fiscalName ?? DEFAULT_PDF_SETTINGS.fiscalName,
-        fiscalCuit: payload.fiscalCuit ?? DEFAULT_PDF_SETTINGS.fiscalCuit,
-        fiscalIibb: payload.fiscalIibb ?? DEFAULT_PDF_SETTINGS.fiscalIibb,
-        fiscalAddress: payload.fiscalAddress ?? DEFAULT_PDF_SETTINGS.fiscalAddress,
-        fiscalCity: payload.fiscalCity ?? DEFAULT_PDF_SETTINGS.fiscalCity,
-        showFooterTotals: payload.showFooterTotals ?? DEFAULT_PDF_SETTINGS.showFooterTotals,
         stylesJson: mergeDefaults(DEFAULT_PDF_SETTINGS.styles, payload.stylesJson as Record<string, unknown>),
       })
       .returning();

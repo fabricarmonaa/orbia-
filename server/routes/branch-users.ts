@@ -40,6 +40,18 @@ export function registerBranchUserRoutes(app: Express) {
           return res.status(403).json({ error: `Límite por sucursal alcanzado (${perBranchLimit})`, code: "PLAN_LIMIT_REACHED", limit: "max_staff_per_branch" });
         }
       }
+      // Also enforce global cashiers cap (cashiers_max) across the entire tenant
+      const globalCashierMax = Number((plan?.limits as any)?.cashiers_max ?? -1);
+      if (globalCashierMax >= 0) {
+        const [totalRow] = await db.select({ c: count() }).from(users).where(and(eq(users.tenantId, tenantId), eq(users.scope, "BRANCH"), eq(users.isActive, true)));
+        if (Number(totalRow?.c || 0) >= globalCashierMax) {
+          return res.status(403).json({
+            error: `Tu plan permite máximo ${globalCashierMax} cajero${globalCashierMax === 1 ? "" : "s"}. Mejorá tu plan para agregar más.`,
+            code: "PLAN_LIMIT_REACHED",
+            limit: "cashiers_max",
+          });
+        }
+      }
 
       const existingUser = await storage.getUserByEmail(email, tenantId);
       if (existingUser) {

@@ -25,7 +25,6 @@ import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
-import Joyride, { Step, CallBackProps, STATUS } from "react-joyride";
 import { Button } from "@/components/ui/button";
 
 function SubscriptionBanner() {
@@ -56,74 +55,6 @@ function SubscriptionBanner() {
 export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
   const [location, setLocation] = useLocation();
-  const [runTour, setRunTour] = useState(false);
-
-  const tourSteps: Step[] = [
-    {
-      target: "body",
-      placement: "center",
-      content: (
-        <div className="text-left">
-          <h3 className="font-bold text-lg mb-2">Bienvenido a Orbia</h3>
-          <p className="text-sm text-muted-foreground">
-            Estamos configurando tu entorno de trabajo. Este breve recorrido te mostrará dónde encontrar las herramientas clave para gestionar tu negocio.
-          </p>
-        </div>
-      ),
-      disableBeacon: true,
-    },
-    {
-      target: ".joyride-sidebar",
-      content: (
-        <div className="text-left">
-          <h3 className="font-bold mb-1">Menú Principal</h3>
-          <p className="text-sm text-muted-foreground">Desde aquí podés acceder a todos los módulos: control de caja, productos, clientes y analíticas en tiempo real.</p>
-        </div>
-      ),
-      placement: "right",
-    },
-    {
-      target: "[data-testid='nav-ventas']",
-      content: (
-        <div className="text-left">
-          <h3 className="font-bold mb-1">Punto de Venta (POS)</h3>
-          <p className="text-sm text-muted-foreground">Tu módulo más importante. Entrá aquí para facturar, buscar productos rápido o escanear códigos de barra.</p>
-        </div>
-      ),
-      placement: "right",
-    },
-    {
-      target: ".joyride-user-profile",
-      content: (
-        <div className="text-left">
-          <h3 className="font-bold mb-1">Ajustes y Perfil</h3>
-          <p className="text-sm text-muted-foreground">Gestioná los datos de tu empresa, tu plan actual o cerrá sesión desde este menú.</p>
-        </div>
-      ),
-      placement: "right",
-    },
-  ];
-
-  useEffect(() => {
-    if (!user) return;
-    const key = `orbia:onboarding:dismissed:${user.id}`;
-    const dismissed = localStorage.getItem(key) === "1";
-    const ownerLike = ["admin", "owner"].includes(String((user as any).role || "").toLowerCase());
-    if (ownerLike && !dismissed) {
-      // Small delay so sidebar renders before tour targets it
-      setTimeout(() => setRunTour(true), 500);
-    }
-  }, [user?.id]);
-
-  const handleJoyrideCallback = (data: CallBackProps) => {
-    const { status } = data;
-    const finishedStatuses: string[] = [STATUS.FINISHED, STATUS.SKIPPED];
-
-    if (finishedStatuses.includes(status)) {
-      if (user?.id) localStorage.setItem(`orbia:onboarding:dismissed:${user.id}`, "1");
-      setRunTour(false);
-    }
-  };
 
   useEffect(() => {
     if (!isAuthenticated || user?.isSuperAdmin) {
@@ -192,39 +123,6 @@ export default function AppLayout() {
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>
           </main>
-          <Joyride
-            steps={tourSteps}
-            run={runTour}
-            continuous
-            showProgress
-            showSkipButton
-            callback={handleJoyrideCallback}
-            styles={{
-              options: {
-                primaryColor: 'hsl(var(--primary))',
-                textColor: 'hsl(var(--foreground))',
-                backgroundColor: 'hsl(var(--card))',
-                overlayColor: 'rgba(0, 0, 0, 0.6)',
-              },
-              tooltipContainer: {
-                textAlign: 'left',
-              },
-              buttonNext: {
-                backgroundColor: 'hsl(var(--primary))',
-                borderRadius: 'var(--radius)',
-              },
-              buttonBack: {
-                color: 'hsl(var(--muted-foreground))',
-              }
-            }}
-            locale={{
-              back: 'Anterior',
-              close: 'Cerrar',
-              last: 'Finalizar',
-              next: 'Siguiente',
-              skip: 'Saltar tour'
-            }}
-          />
           <GlobalVoiceFab />
         </div>
       </div>

@@ -71,22 +71,16 @@ export async function printTicket(data: TicketData, size: TicketSize) {
     qrImage = await QRCode.toDataURL(normalized.qr.publicUrl, { margin: 1, width: mode === "A4" ? 220 : mode === "TICKET_80" ? 160 : 140 });
   }
 
-  const html = renderToStaticMarkup(
-    React.createElement(TicketLayout, {
-      mode,
-      variant: "SALE",
-      data: {
-        ...normalized,
-        qr: { ...(normalized.qr || {}), imageDataUrl: qrImage },
-      },
-    })
-  );
+  let saleId = data.sale?.number;
+  if (!saleId && data.venta?.number) {
+    saleId = data.venta.number;
+  }
 
-  const printWindow = window.open("", "_blank", "noopener,noreferrer,width=900,height=700");
-  if (!printWindow) return;
-  printWindow.document.open();
-  printWindow.document.write(`<!doctype html><html><head><meta charset=\"utf-8\" /><title>Ticket</title></head><body>${html}</body></html>`);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+  // Si tenemos un ID, usar la ruta nativa que es segura y evitar crasheos de memory
+  if (saleId) {
+    const printWindow = window.open(`/app/print/sale/${saleId}?mode=${mode}`, "_blank", "noopener,noreferrer,width=900,height=700");
+    if (printWindow) printWindow.focus();
+  } else {
+    console.warn("No saleId provided for print ticket");
+  }
 }

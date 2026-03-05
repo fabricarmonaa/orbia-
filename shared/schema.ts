@@ -32,3 +32,4 @@ export * from './schema/subscriptions';
 export * from './schema/statuses';
 
 export * from './schema/order-presets';
+export * from './schema/providers';

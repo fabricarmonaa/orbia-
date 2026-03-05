@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 
 const DEFAULT_MAX_UPLOAD_BYTES = parseInt(process.env.MAX_UPLOAD_BYTES || "2000000", 10);
-const DEFAULT_LOGO_UPLOAD_BYTES = parseInt(process.env.MAX_LOGO_UPLOAD_BYTES || "1000000", 10);
+const DEFAULT_LOGO_UPLOAD_BYTES = parseInt(process.env.MAX_LOGO_UPLOAD_BYTES || "3000000", 10);
 
 const MIME_EXTENSION_MAP: Record<string, string> = {
   "image/png": ".png",

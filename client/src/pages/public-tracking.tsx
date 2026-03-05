@@ -35,9 +35,11 @@ export default function PublicTracking() {
         customFields: payload.customFields || [],
         trackingLayout: payload.trackingLayout || "classic",
         trackingTosText: payload.trackingTosText,
+        tosUrl: payload.tosUrl || null,
       });
       const payloadBranding = payload.branding || {};
-      const logoFallback = payloadBranding.logoUrl || appBranding.orbiaLogoUrl || null;
+      // Objective E: no Orbia logo fallback — TrackingView shows placeholder icon for null
+      const logoFallback = payloadBranding.logoUrl || null;
       setBranding({
         ...defaultTenantBranding,
         ...payloadBranding,

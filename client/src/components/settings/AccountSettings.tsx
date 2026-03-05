@@ -10,6 +10,7 @@ import { parseApiError } from "@/lib/api-errors";
 import { useToast } from "@/hooks/use-toast";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 import { Check, Circle, X } from "lucide-react";
+import { useOnboarding } from "@/components/onboarding/OnboardingProvider";
 
 const AMBIGUOUS = /[O0Il]/g;
 
@@ -64,6 +65,7 @@ function generatePassword(length: number, includeSymbols: boolean, avoidAmbiguou
 
 export function AccountSettings({ user }: { user: AuthUser | null }) {
   const { toast } = useToast();
+  const { startOnboarding } = useOnboarding();
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
@@ -154,13 +156,19 @@ export function AccountSettings({ user }: { user: AuthUser | null }) {
     <div className="space-y-2"><Label htmlFor="avatar-upload">Cambiar foto</Label><Input id="avatar-upload" ref={inputRef} type="file" accept="image/*" onChange={handleAvatarUpload} disabled={uploading} /><Button size="sm" variant="outline" onClick={() => inputRef.current?.click()} disabled={uploading}>{uploading ? "Subiendo..." : "Seleccionar foto"}</Button></div>
 
     <div className="space-y-3 border rounded-md p-4">
+      <h4 className="font-medium">Onboarding</h4>
+      <p className="text-sm text-muted-foreground">Volvé a iniciar el recorrido guiado por el panel.</p>
+      <Button variant="outline" onClick={startOnboarding} className="w-fit">Reiniciar tutorial</Button>
+    </div>
+
+    <div className="space-y-3 border rounded-md p-4">
       <div className="flex items-center justify-between"><h4 className="font-medium">Cambiar contraseña</h4><Button variant="ghost" size="sm" onClick={() => setShowPasswords((s) => !s)}>{showPasswords ? "Ocultar" : "Ver"}</Button></div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3"><div className="space-y-1"><Label>Contraseña actual</Label><Input type={showPasswords ? "text" : "password"} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} /></div><div className="space-y-1"><Label>Nueva contraseña</Label><Input type={showPasswords ? "text" : "password"} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} /></div><div className="space-y-1"><Label>Confirmar nueva contraseña</Label><Input type={showPasswords ? "text" : "password"} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} /></div></div>
       <div className="space-y-2">
         <div className="flex items-center justify-between text-sm"><span>Fuerza: {strengthLabel}</span><span>{strength.score}/100</span></div>
         <div className="h-2 w-full rounded bg-muted"><div className="h-2 rounded bg-primary" style={{ width: `${strength.score}%` }} /></div>
         <ul className="text-xs grid grid-cols-2 gap-2">
-          {[['12+ caracteres',strength.checks.minLength],['1 mayúscula',strength.checks.upper],['1 minúscula',strength.checks.lower],['1 número',strength.checks.number],['1 símbolo',strength.checks.symbol],['no común',strength.checks.notCommon]].map(([label,ok]) => (
+          {[['12+ caracteres', strength.checks.minLength], ['1 mayúscula', strength.checks.upper], ['1 minúscula', strength.checks.lower], ['1 número', strength.checks.number], ['1 símbolo', strength.checks.symbol], ['no común', strength.checks.notCommon]].map(([label, ok]) => (
             <li key={String(label)} className="flex items-center gap-1.5">{ok ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Circle className="w-3.5 h-3.5 text-muted-foreground" />} {label}</li>
           ))}
         </ul>

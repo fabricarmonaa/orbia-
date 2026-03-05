@@ -127,6 +127,9 @@ export const cashMovements = pgTable(
     expenseDefinitionName: varchar("expense_definition_name", { length: 200 }),
     orderId: integer("order_id").references(() => orders.id),
     saleId: integer("sale_id").references(() => sales.id),
+    // Generic entity reference (canonical pattern — no per-entity FK columns)
+    entityType: varchar("entity_type", { length: 50 }),
+    entityId: integer("entity_id"),
     createdById: integer("created_by_id").references(() => users.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

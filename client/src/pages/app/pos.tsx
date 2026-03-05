@@ -80,6 +80,9 @@ export default function PosPage() {
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [scanEnabled, setScanEnabled] = useState(false);
   const [cameraScanOpen, setCameraScanOpen] = useState(false);
+  const [customerQuery, setCustomerQuery] = useState("");
+  const [customerResults, setCustomerResults] = useState<Array<{ id: number; name: string; doc?: string | null; phone?: string | null }>>([]);
+  const [customerSearchOpen, setCustomerSearchOpen] = useState(false);
   const productsParentRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     fetchAddons()
@@ -124,6 +127,17 @@ export default function PosPage() {
     } catch (err: any) {
       setProducts([]);
       toast({ title: "No se pudieron cargar productos", description: err?.message || "Error", variant: "destructive" });
+    }
+  }
+
+  async function searchCustomers(query: string) {
+    if (!query.trim()) { setCustomerResults([]); return; }
+    try {
+      const res = await apiRequest("GET", `/api/customers?q=${encodeURIComponent(query.trim())}&pageSize=10`);
+      const json = await res.json();
+      setCustomerResults(json.data || []);
+    } catch {
+      setCustomerResults([]);
     }
   }
 
@@ -272,8 +286,7 @@ export default function PosPage() {
 
   function openSalePrint(saleId: number) {
     const url = `/app/print/sale/${saleId}?autoprint=1`;
-    const win = window.open(url, "_blank", "noopener,noreferrer");
-    if (!win) setLocation(url);
+    window.open(url, "_blank", "noopener,noreferrer");
   }
 
   async function submitSale() {
@@ -458,6 +471,51 @@ export default function PosPage() {
         <Card>
           <CardHeader><CardTitle>Carrito de Ventas</CardTitle></CardHeader>
           <CardContent className="space-y-3">
+            {/* Customer selection - always visible */}
+            {!pendingSale && (
+              <div className="space-y-1 relative">
+                <Label>Cliente (opcional)</Label>
+                {selectedCustomer ? (
+                  <div className="flex items-center justify-between border rounded px-3 py-2 bg-primary/5 border-primary/30">
+                    <span className="text-sm font-medium">{selectedCustomer.name}{selectedCustomer.doc ? ` · ${selectedCustomer.doc}` : ""}</span>
+                    <Button size="sm" variant="ghost" onClick={() => { setSelectedCustomer(null); setCustomerQuery(""); setCustomerResults([]); setCustomerSearchOpen(false); }}>× Quitar</Button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex gap-2">
+                      <Input
+                        value={customerQuery}
+                        placeholder="Buscar cliente por nombre o DNI..."
+                        onChange={(e) => { setCustomerQuery(e.target.value); if (!e.target.value.trim()) setCustomerResults([]); }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void searchCustomers(customerQuery); setCustomerSearchOpen(true); } }}
+                      />
+                      <Button variant="outline" onClick={() => { void searchCustomers(customerQuery); setCustomerSearchOpen(true); }}>Buscar</Button>
+                    </div>
+                    {customerSearchOpen && customerResults.length > 0 && (
+                      <div className="absolute z-10 w-full top-full mt-1 bg-card border rounded-md shadow-lg max-h-48 overflow-auto">
+                        {customerResults.map((c) => (
+                          <button
+                            key={c.id}
+                            className="w-full text-left px-3 py-2 hover:bg-muted/50 text-sm border-b last:border-b-0"
+                            onClick={() => { setSelectedCustomer({ id: c.id, name: c.name, doc: c.doc, phone: c.phone }); setCustomerSearchOpen(false); setCustomerQuery(""); setCustomerResults([]); }}
+                          >
+                            <span className="font-medium">{c.name}</span>
+                            {c.doc && <span className="text-muted-foreground ml-2">DNI: {c.doc}</span>}
+                            {c.phone && <span className="text-muted-foreground ml-2">Tel: {c.phone}</span>}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {customerSearchOpen && customerResults.length === 0 && customerQuery.trim() && (
+                      <div className="absolute z-10 w-full top-full mt-1 bg-card border rounded-md shadow-sm px-3 py-2 text-sm flex items-center justify-between">
+                        <span className="text-muted-foreground">Sin resultados</span>
+                        <Button size="sm" variant="outline" onClick={() => { setPendingCustomerName(customerQuery); setQuickCreateOpen(true); setCustomerSearchOpen(false); }}>Crear cliente</Button>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
             {cart.map((row) => (
               <div key={row.product.id} className="flex items-center justify-between border rounded px-2 py-1">
                 <div>
@@ -538,7 +596,7 @@ export default function PosPage() {
                 <p className="font-medium">Detalle de venta {latestSale.number}</p>
                 <p>Total: {latestSale.total}</p>
                 <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => openSalePrint(latestSale.id)}>Imprimir</Button>
+                  <Button type="button" variant="outline" onClick={(e) => { e.preventDefault(); openSalePrint(latestSale.id); }}>Imprimir</Button>
                   <Button variant="secondary" onClick={() => setLatestSale(null)}>Nueva venta</Button>
                 </div>
               </div>

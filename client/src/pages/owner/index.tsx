@@ -350,9 +350,11 @@ export default function OwnerDashboard() {
   async function saveAppBranding() {
     setSavingAppBranding(true);
     try {
+      // Strip any ?v= cache-busting params before storing in DB to avoid double URL mangling
+      const cleanLogoUrl = appLogoUrl ? appLogoUrl.split("?")[0] : null;
       await apiRequest("PUT", "/api/branding/app", {
         orbiaName: appBrandName,
-        orbiaLogoUrl: appLogoUrl,
+        orbiaLogoUrl: cleanLogoUrl,
       });
       await refreshBranding();
       toast({ title: "Branding global guardado" });
@@ -412,13 +414,15 @@ export default function OwnerDashboard() {
   async function savePlan(planCode: string, payload: Record<string, unknown>) {
     setPlanSavingCode(planCode);
     try {
+      const limitsJson = (payload as any).limitsJson || {};
       await apiRequest("PUT", `/api/super/plans/${planCode}`, {
         priceMonthly: Number(payload.priceMonthly || 0),
         description: String(payload.description || ""),
         limits: {
-          max_branches: Number((payload as any).maxBranches || 0),
-          max_staff_users: Number(((payload as any).limitsJson || {}).max_staff_users || 0),
-          max_staff_per_branch: Number(((payload as any).limitsJson || {}).max_staff_per_branch || 0),
+          max_branches: Number((payload as any).maxBranches ?? limitsJson.max_branches ?? 0),
+          cashiers_max: Number(limitsJson.cashiers_max ?? 0),
+          max_staff_users: Number(limitsJson.max_staff_users ?? 0),
+          max_staff_per_branch: Number(limitsJson.max_staff_per_branch ?? 0),
         },
       });
       await fetchData();

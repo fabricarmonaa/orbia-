@@ -1,16 +1,17 @@
 import { motion } from "framer-motion";
-import { CheckCircle2, TrendingUp, Users, Wallet, Boxes, LayoutDashboard, Truck, Smartphone } from "lucide-react";
+import { CheckCircle2, TrendingUp, Users, Wallet, LayoutDashboard, Truck, Smartphone } from "lucide-react";
+
 
 export function Features() {
   const features = [
     {
       icon: <Smartphone className="h-6 w-6 text-primary" />,
-      title: "Instalable (PWA)",
+      title: "Aplicación descargable",
       description: "Descargá Orbia en cualquier dispositivo. Funciona como una App nativa en PC, Tablet o Celular."
     },
     {
       icon: <Truck className="h-6 w-6 text-primary" />,
-      title: "Add-on de Deliverys",
+      title: "Diferentes adicionales para tu negocio",
       description: "Establecé rutas óptimas para tus repartidores y enlistá pedidos por zonas de entrega al instante."
     },
     {
@@ -82,13 +83,10 @@ export function Features() {
             transition={{ delay: 0.5 }}
             className="bg-gradient-to-br from-primary to-accent p-10 rounded-[2rem] shadow-2xl text-primary-foreground flex flex-col justify-center items-start lg:col-span-1 md:col-span-2 relative overflow-hidden group"
           >
-            <div className="absolute top-0 right-0 p-4 opacity-10 scale-150 rotate-12 group-hover:scale-[2] transition-transform duration-700">
-              <Boxes className="h-32 w-32" />
-            </div>
             <CheckCircle2 className="h-12 w-12 text-primary-foreground/80 mb-6" />
             <h3 className="text-3xl font-bold mb-4 leading-tight font-display">Control total y cercanía local.</h3>
             <p className="text-primary-foreground/90 font-bold text-lg">
-              Un producto local y confiable.
+              Hecho en Mar del Plata, pensado para tu negocio.
             </p>
           </motion.div>
         </div>

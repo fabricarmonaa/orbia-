@@ -55,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
+import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -126,16 +127,25 @@ export default function OrdersPage() {
     customerEmail: "",
     description: "",
     totalAmount: "",
+    paidAmount: "",
     statusId: "",
     requiresDelivery: false,
     deliveryAddress: "",
     deliveryCity: "",
     deliveryAddressNotes: "",
   });
+  const [hasCashOpen, setHasCashOpen] = useState<boolean | null>(null);
+  const [quickAddCustomerOpen, setQuickAddCustomerOpen] = useState(false);
+  const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
 
   useEffect(() => {
     fetchData();
     void loadPresetsForType(newOrder.type || "PEDIDO");
+    // Check if cash session is currently open
+    apiRequest("GET", "/api/cash/sessions/current")
+      .then((r) => r.json())
+      .then((d) => setHasCashOpen(!!(d.data?.id)))
+      .catch(() => setHasCashOpen(false));
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
       .then((d) => {
@@ -213,6 +223,15 @@ export default function OrdersPage() {
 
   async function createOrder(e: React.FormEvent) {
     e.preventDefault();
+    // Cash warning: if paying something and no cash session open
+    if (newOrder.paidAmount && parseFloat(newOrder.paidAmount) > 0 && hasCashOpen === false) {
+      toast({
+        title: "Caja cerrada",
+        description: "Este pago no va a quedar registrado en la caja porque no hay una sesión abierta. Abrí la caja si querés registrar el movimiento.",
+        variant: "destructive",
+        duration: 7000,
+      });
+    }
     try {
       const customFields = presetFields.map((field) => {
         const raw = customFieldInputs[field.id] || {};
@@ -229,6 +248,7 @@ export default function OrdersPage() {
         ...newOrder,
         orderTypeCode: newOrder.type,
         totalAmount: newOrder.totalAmount ? parseFloat(newOrder.totalAmount) : null,
+        paidAmount: newOrder.paidAmount ? parseFloat(newOrder.paidAmount) : null,
         statusId: newOrder.statusId ? parseInt(newOrder.statusId) : null,
         requiresDelivery: newOrder.requiresDelivery,
         deliveryAddress: newOrder.requiresDelivery ? newOrder.deliveryAddress : null,
@@ -241,7 +261,7 @@ export default function OrdersPage() {
       await apiRequest("POST", "/api/orders", payload);
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
-      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", statusId: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusId: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
       setCustomFieldInputs({});
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -304,10 +324,7 @@ export default function OrdersPage() {
   async function printOrder() {
     if (!selectedOrder || !(selectedOrder as any).saleId) return;
     const printUrl = `${window.location.origin}/app/print/sale/${(selectedOrder as any).saleId}`;
-    const win = window.open(printUrl, "_blank", "noopener,noreferrer");
-    if (!win) {
-      window.location.href = printUrl;
-    }
+    window.open(printUrl, "_blank", "noopener,noreferrer");
   }
 
 
@@ -429,7 +446,18 @@ export default function OrdersPage() {
                 Nuevo Pedido
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-lg">
+            <DialogContent
+              className="max-w-lg max-h-[90vh] overflow-y-auto"
+              onPointerDownOutside={(e) => e.preventDefault()}
+              onInteractOutside={(e) => {
+                // Allow interactions with shadcn portal elements (Select, Popover, etc.)
+                const target = e.target as HTMLElement;
+                if (target && document.querySelector('[data-radix-popper-content-wrapper]')?.contains(target)) {
+                  return;
+                }
+                e.preventDefault();
+              }}
+            >
               <DialogHeader>
                 <DialogTitle>Crear Pedido</DialogTitle>
               </DialogHeader>
@@ -488,17 +516,33 @@ export default function OrdersPage() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <Label>Cliente</Label>
-                  <Input
-                    placeholder="Ingrese nombre cliente..."
+                  <div className="flex items-center justify-between">
+                    <Label>Cliente</Label>
+                    <button
+                      type="button"
+                      className="text-xs text-primary hover:underline flex items-center gap-1"
+                      onClick={() => setQuickAddCustomerOpen(true)}
+                      title="Agregar cliente nuevo"
+                    >
+                      + Nuevo cliente
+                    </button>
+                  </div>
+                  <CustomerAutocomplete
                     value={newOrder.customerName}
-                    onChange={(e) => setNewOrder({ ...newOrder, customerName: e.target.value })}
-                    data-testid="input-customer-name"
+                    onChange={(val, customer) => {
+                      setNewOrder({
+                        ...newOrder,
+                        customerName: val,
+                        customerPhone: customer?.phone || newOrder.customerPhone,
+                        customerEmail: customer?.email || newOrder.customerEmail,
+                      });
+                    }}
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Teléfono</Label>
+                    <Label>Teléfono (Opcional)</Label>
                     <Input
                       placeholder="Ej: 11 1234-5678"
                       value={newOrder.customerPhone}
@@ -507,7 +551,7 @@ export default function OrdersPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label>Monto</Label>
+                    <Label>Monto Total</Label>
                     <Input
                       type="number"
                       step="0.01"
@@ -518,6 +562,36 @@ export default function OrdersPage() {
                     />
                   </div>
                 </div>
+                <div className="space-y-2 bg-primary/5 border border-primary/20 p-3 rounded-md">
+                  <div className="flex items-center justify-between">
+                    <Label>Seña / Monto pagado</Label>
+                    <span className="text-xs font-medium bg-primary/10 text-primary px-2 py-0.5 rounded">
+                      {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
+                        ? "Sin monto"
+                        : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
+                          ? "Pago Completo ✓"
+                          : newOrder.paidAmount && Number(newOrder.paidAmount) > 0
+                            ? `$${newOrder.paidAmount} / $${newOrder.totalAmount}`
+                            : "Impago"}
+                    </span>
+                  </div>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    placeholder="Dejar en 0 si no pagó nada"
+                    value={newOrder.paidAmount}
+                    min={0}
+                    max={newOrder.totalAmount || undefined}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      const tot = parseFloat(newOrder.totalAmount);
+                      if (!isNaN(val) && !isNaN(tot) && val > tot) return;
+                      setNewOrder({ ...newOrder, paidAmount: e.target.value });
+                    }}
+                    data-testid="input-paid-amount"
+                  />
+                </div>
+
                 <div className="space-y-2">
                   <Label>Descripción</Label>
                   <Textarea
@@ -617,6 +691,73 @@ export default function OrdersPage() {
                   Crear Pedido
                 </Button>
               </form>
+            </DialogContent>
+          </Dialog>
+
+          {/* Quick-add customer dialog */}
+          <Dialog open={quickAddCustomerOpen} onOpenChange={setQuickAddCustomerOpen}>
+            <DialogContent className="max-w-sm" onPointerDownOutside={(e) => e.preventDefault()}>
+              <DialogHeader>
+                <DialogTitle>Agregar cliente rápido</DialogTitle>
+                <DialogDescription>Completá los datos del nuevo cliente.</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Nombre *</Label>
+                  <Input
+                    value={quickCustomer.name}
+                    onChange={(e) => setQuickCustomer({ ...quickCustomer, name: e.target.value })}
+                    placeholder="Nombre completo"
+                    autoFocus
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Teléfono (opcional)</Label>
+                  <Input
+                    value={quickCustomer.phone}
+                    onChange={(e) => setQuickCustomer({ ...quickCustomer, phone: e.target.value })}
+                    placeholder="Ej: 11 1234-5678"
+                    type="tel"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Email (opcional)</Label>
+                  <Input
+                    value={quickCustomer.email}
+                    onChange={(e) => setQuickCustomer({ ...quickCustomer, email: e.target.value })}
+                    placeholder="correo@ejemplo.com"
+                    type="email"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setQuickAddCustomerOpen(false)}>Cancelar</Button>
+                <Button
+                  disabled={!quickCustomer.name.trim()}
+                  onClick={async () => {
+                    try {
+                      await apiRequest("POST", "/api/customers", {
+                        name: quickCustomer.name.trim(),
+                        phone: quickCustomer.phone.trim() || null,
+                        email: quickCustomer.email.trim() || null,
+                      });
+                      setNewOrder({
+                        ...newOrder,
+                        customerName: quickCustomer.name.trim(),
+                        customerPhone: quickCustomer.phone.trim(),
+                        customerEmail: quickCustomer.email.trim(),
+                      });
+                      setQuickCustomer({ name: "", phone: "", email: "" });
+                      setQuickAddCustomerOpen(false);
+                      toast({ title: "Cliente agregado" });
+                    } catch (err: any) {
+                      toast({ title: "Error", description: err.message, variant: "destructive" });
+                    }
+                  }}
+                >
+                  Agregar
+                </Button>
+              </div>
             </DialogContent>
           </Dialog>
         </div>
@@ -868,13 +1009,14 @@ export default function OrdersPage() {
                     </Button>
                   )}
                   {(selectedOrder as any).saleId ? (
-                    <Button variant="outline" size="sm" onClick={() => printOrder()}>
+                    <Button type="button" variant="outline" size="sm" onClick={(e) => { e.preventDefault(); printOrder(); }}>
                       <Printer className="w-4 h-4 mr-1" />
-                      Ticket cliente
+                      Imprimir Ticket Venta
                     </Button>
                   ) : (
-                    <Button size="sm" onClick={() => startSaleFromOrder(selectedOrder)}>
-                      VENTA
+                    <Button type="button" variant="outline" size="sm" onClick={(e) => { e.preventDefault(); startSaleFromOrder(selectedOrder); }}>
+                      <ShoppingCart className="w-4 h-4 mr-1" />
+                      Iniciar Venta
                     </Button>
                   )}
                   {addonStatus.messaging_whatsapp && !!selectedOrder.customerPhone && messageTemplates.length > 0 && (

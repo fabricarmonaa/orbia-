@@ -5,18 +5,13 @@ import { storage } from "../storage";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { DEFAULT_PDF_SETTINGS } from "../storage/pdf-settings";
 import { generatePriceListPdf } from "../services/pdf/price-list";
-import { generateInvoiceBPdf } from "../services/pdf/invoice-b";
 import { productFiltersSchema, queryProductsByFilters } from "../services/product-filters";
 
-const allowedTemplates = ["CLASSIC", "MODERN", "MINIMAL", "B_STANDARD", "B_COMPACT"] as const;
+const allowedTemplates = ["CLASSIC", "MODERN", "MINIMAL"] as const;
 const allowedPageSizes = ["A4", "LETTER"] as const;
 const allowedOrientations = ["portrait", "landscape"] as const;
-const allowedDocumentTypes = ["PRICE_LIST", "INVOICE_B"] as const;
+const allowedDocumentTypes = ["PRICE_LIST", "PRESUPUESTO"] as const;
 const allowedColumns = ["name", "sku", "description", "price", "stock_total", "branch_stock"] as const;
-const allowedInvoiceColumns = ["code", "quantity", "product", "price", "discount", "total"] as const;
-
-const priceListTemplates = new Set(["CLASSIC", "MODERN", "MINIMAL"]);
-const invoiceBTemplates = new Set(["B_STANDARD", "B_COMPACT"]);
 
 
 const stylesSchema = z.object({
@@ -42,13 +37,6 @@ const pdfSettingsSchema = z.object({
   priceColumnLabel: z.string().trim().max(30).optional(),
   currencySymbol: z.string().trim().max(5).optional(),
   columns: z.array(z.enum(allowedColumns)).max(allowedColumns.length).optional(),
-  invoiceColumns: z.array(z.enum(allowedInvoiceColumns)).max(allowedInvoiceColumns.length).optional(),
-  documentTitle: z.string().trim().max(80).optional().nullable(),
-  fiscalName: z.string().trim().max(120).optional().nullable(),
-  fiscalCuit: z.string().trim().max(30).optional().nullable(),
-  fiscalIibb: z.string().trim().max(30).optional().nullable(),
-  fiscalAddress: z.string().trim().max(160).optional().nullable(),
-  fiscalCity: z.string().trim().max(120).optional().nullable(),
   showFooterTotals: z.boolean().optional(),
   styles: stylesSchema.optional(),
 });
@@ -102,29 +90,13 @@ function isEconomicPlan(planCode?: string | null) {
   return (planCode || "").toUpperCase() === "ECONOMICO";
 }
 
-function canUseInvoiceB(planCode?: string | null) {
-  return (planCode || "").toUpperCase() === "ESCALA";
-}
-
-function normalizeTemplateByDocumentType(documentType: string, templateKey?: string) {
-  if (documentType === "INVOICE_B") {
-    if (templateKey && invoiceBTemplates.has(templateKey)) return templateKey;
-    return "B_STANDARD";
-  }
-  if (templateKey && priceListTemplates.has(templateKey)) return templateKey;
+function normalizeTemplate(templateKey?: string) {
+  if (templateKey && ["CLASSIC", "MODERN", "MINIMAL"].includes(templateKey)) return templateKey;
   return "CLASSIC";
 }
 
-function normalizeInvoiceColumns(columns?: string[]) {
-  if (!columns?.length) return DEFAULT_PDF_SETTINGS.invoiceColumns;
-  const unique = Array.from(new Set(columns));
-  return unique.filter((col) => allowedInvoiceColumns.includes(col as any));
-}
-
-async function generatePdfByType(tenantId: number, documentType: string, planCode?: string | null) {
-  if (documentType === "INVOICE_B") {
-    return generateInvoiceBPdf(tenantId);
-  }
+async function generatePdfByType(tenantId: number, _documentType: string, planCode?: string | null) {
+  // INVOICE_B removed — always generate price list
   return generatePriceListPdf(tenantId, { watermarkOrbia: isEconomicPlan(planCode) });
 }
 
@@ -175,13 +147,11 @@ export function registerPdfRoutes(app: Express) {
       const payload = pdfSettingsSchema.parse(req.body);
       const plan = await getTenantPlan(req.auth!.tenantId!);
       const economic = isEconomicPlan(plan?.planCode);
-      if (payload.documentType === "INVOICE_B" && !canUseInvoiceB(plan?.planCode)) {
-        return res.status(403).json({ error: "Tu plan no incluye Factura B.", code: "PLAN_BLOCKED" });
-      }
-      const documentType = economic ? "PRICE_LIST" : (payload.documentType || (await storage.getTenantPdfSettings(req.auth!.tenantId!)).documentType);
+      // Always use PRICE_LIST (INVOICE_B removed)
+      const documentType = "PRICE_LIST";
       await storage.upsertTenantPdfSettings(req.auth!.tenantId!, {
         documentType,
-        templateKey: normalizeTemplateByDocumentType(documentType, payload.templateKey),
+        templateKey: normalizeTemplate(payload.templateKey),
         pageSize: payload.pageSize,
         orientation: payload.orientation,
         showLogo: economic ? false : payload.showLogo,
@@ -194,14 +164,6 @@ export function registerPdfRoutes(app: Express) {
         priceColumnLabel: payload.priceColumnLabel,
         currencySymbol: payload.currencySymbol,
         columnsJson: payload.columns ? normalizeColumns(payload.columns) : undefined,
-        invoiceColumnsJson: payload.invoiceColumns ? normalizeInvoiceColumns(payload.invoiceColumns) : undefined,
-        documentTitle: payload.documentTitle ?? undefined,
-        fiscalName: payload.fiscalName ?? undefined,
-        fiscalCuit: payload.fiscalCuit ?? undefined,
-        fiscalIibb: payload.fiscalIibb ?? undefined,
-        fiscalAddress: payload.fiscalAddress ?? undefined,
-        fiscalCity: payload.fiscalCity ?? undefined,
-        showFooterTotals: payload.showFooterTotals,
         stylesJson: payload.styles ?? undefined,
       });
       const response = await storage.getTenantPdfSettings(req.auth!.tenantId!);
@@ -227,9 +189,6 @@ export function registerPdfRoutes(app: Express) {
     try {
       const documentType = req.body?.documentType || (await storage.getTenantPdfSettings(req.auth!.tenantId!)).documentType;
       const plan = await getTenantPlan(req.auth!.tenantId!);
-      if (documentType === "INVOICE_B" && !canUseInvoiceB(plan?.planCode)) {
-        return res.status(403).json({ error: "Tu plan no incluye Factura B.", code: "PLAN_BLOCKED" });
-      }
       let clientClosed = false;
       req.on("close", () => { clientClosed = true; });
       const pdfBuffer = await withTimeout(generatePdfByType(req.auth!.tenantId!, documentType, plan?.planCode), PDF_TIMEOUT_MS);
@@ -245,13 +204,9 @@ export function registerPdfRoutes(app: Express) {
   app.get("/api/pdfs/download", tenantAuth, previewLimiter, async (req, res) => {
     try {
       const documentType = req.query.documentType ? String(req.query.documentType) : (await storage.getTenantPdfSettings(req.auth!.tenantId!)).documentType;
-      const plan = await getTenantPlan(req.auth!.tenantId!);
-      if (documentType === "INVOICE_B" && !canUseInvoiceB(plan?.planCode)) {
-        return res.status(403).json({ error: "Tu plan no incluye Factura B.", code: "PLAN_BLOCKED" });
-      }
       let clientClosed = false;
       req.on("close", () => { clientClosed = true; });
-      const pdfBuffer = await withTimeout(generatePdfByType(req.auth!.tenantId!, documentType, plan?.planCode), PDF_TIMEOUT_MS);
+      const pdfBuffer = await withTimeout(generatePdfByType(req.auth!.tenantId!, documentType, null), PDF_TIMEOUT_MS);
       if (clientClosed || res.headersSent) return;
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", "attachment; filename=documento.pdf");
@@ -298,6 +253,65 @@ export function registerPdfRoutes(app: Express) {
         return res.status(400).json({ error: "Parámetros inválidos", code: "PDF_EXPORT_INVALID" });
       }
       return res.status(err.status || 500).json({ error: err.message || "No se pudo generar el PDF", code: err.code || "PDF_GENERATION_ERROR" });
+    }
+  });
+  app.post("/api/pdfs/quote", tenantAuth, previewLimiter, async (req, res) => {
+    try {
+      const quoteSchema = z.object({
+        customer: z.object({
+          name: z.string().max(120).optional().default(""),
+          company: z.string().max(120).optional().default(""),
+          phone: z.string().max(40).optional().default(""),
+          email: z.string().max(120).optional().default(""),
+        }).optional().default({}),
+        items: z.array(z.object({
+          id: z.number().int().positive(),
+          name: z.string().max(200),
+          description: z.string().max(400).optional().nullable(),
+          price: z.number().min(0),
+          quantity: z.number().min(1).default(1),
+          sku: z.string().max(60).optional().nullable(),
+        })).min(1).max(200),
+        discount: z.number().min(0).max(100).optional().default(0),
+        notes: z.string().max(800).optional().default(""),
+        validity: z.number().int().min(1).max(365).optional().default(7),
+      });
+      const payload = quoteSchema.parse(req.body);
+      const plan = await getTenantPlan(req.auth!.tenantId!);
+      // Build fake product rows for the price-list generator
+      const productsForPdf = payload.items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description || null,
+        price: String(item.price),
+        sku: item.sku || null,
+        stockTotal: item.quantity,
+        isActive: true,
+        categoryId: null,
+        cost: null,
+      }));
+      const pdfBuffer = await withTimeout(
+        generatePriceListPdf(req.auth!.tenantId!, {
+          products: productsForPdf as any,
+          hasBranches: false,
+          watermarkOrbia: isEconomicPlan(plan?.planCode),
+          quoteMode: {
+            customer: payload.customer,
+            discount: payload.discount,
+            notes: payload.notes,
+            validity: payload.validity,
+          },
+        }),
+        PDF_TIMEOUT_MS,
+      );
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", "attachment; filename=presupuesto.pdf");
+      res.send(pdfBuffer);
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "QUOTE_INVALID", details: err.errors });
+      }
+      res.status(err?.status || 500).json({ error: err?.message || "No se pudo generar el presupuesto", code: err?.code || "QUOTE_ERROR" });
     }
   });
 }

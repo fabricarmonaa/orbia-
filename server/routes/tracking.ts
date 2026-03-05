@@ -30,8 +30,11 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const publicComments = await storage.getPublicOrderComments(order.id);
   const config = await storage.getConfig(tenantId);
   const branding = await storage.getTenantBranding(tenantId);
-  const appBranding = await storage.getAppBranding();
-  const logoUrl = branding.logoUrl || appBranding.orbiaLogoUrl || null;
+  // Objective E: only show tenant logo — no Orbia fallback (TrackingView handles null with placeholder icon)
+  const logoUrl = branding.logoUrl || null;
+  // Objective C: build ToS URL using tenantSlug from JOIN (no extra query)
+  const tenantSlug = (order as any).tenantSlug;
+  const tosUrl = tenantSlug ? `/t/${tenantSlug}/tos` : null;
 
   const historyFormatted = history.map((h) => {
     const s = statuses.find((st) => st.id === h.statusId);
@@ -95,6 +98,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         customFields: publicCustomFields,
         trackingLayout: config?.trackingLayout || "classic",
         trackingTosText: (branding.texts as any)?.trackingFooter || null,
+        tosUrl,
         branding: {
           displayName: branding.displayName,
           logoUrl,

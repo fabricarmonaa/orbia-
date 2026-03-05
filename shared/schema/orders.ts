@@ -53,6 +53,8 @@ export const orders = pgTable(
     description: text("description"),
     statusId: integer("status_id").references(() => orderStatuses.id, { onDelete: "set null" }),
     totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
+    paidAmount: numeric("paid_amount", { precision: 12, scale: 2 }).notNull().default("0"),
+    paymentStatus: varchar("payment_status", { length: 20 }).notNull().default("UNPAID"),
     scheduledAt: timestamp("scheduled_at"),
     closedAt: timestamp("closed_at"),
     publicTrackingId: varchar("public_tracking_id", { length: 100 }).unique(),

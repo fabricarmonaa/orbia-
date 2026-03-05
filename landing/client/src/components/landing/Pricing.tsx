@@ -71,8 +71,8 @@ export function Pricing() {
               viewport={{ once: true }}
               transition={{ delay: index * 0.15, duration: 0.6 }}
               className={`relative rounded-[2.5rem] p-10 flex flex-col transition-all duration-500 ${plan.highlighted
-                  ? 'bg-primary text-primary-foreground shadow-[0_32px_64px_-16px_rgba(59,130,246,0.3)] scale-100 md:scale-105 z-10 border-none'
-                  : 'bg-card border-2 border-border/50 shadow-xl hover:shadow-2xl hover:border-primary/20'
+                ? 'bg-primary text-primary-foreground shadow-[0_32px_64px_-16px_rgba(59,130,246,0.3)] scale-100 md:scale-105 z-10 border-none'
+                : 'bg-card border-2 border-border/50 shadow-xl hover:shadow-2xl hover:border-primary/20'
                 }`}
             >
               {plan.highlighted && (
@@ -109,12 +109,12 @@ export function Pricing() {
               <Button
                 asChild
                 className={`w-full rounded-2xl py-8 text-lg font-black transition-all duration-300 ${plan.highlighted
-                    ? 'bg-white text-primary hover:bg-slate-50 hover:scale-[1.02]'
-                    : 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-[1.02]'
+                  ? 'bg-white text-primary hover:bg-slate-50 hover:scale-[1.02]'
+                  : 'bg-primary text-primary-foreground hover:bg-primary/90 hover:scale-[1.02]'
                   }`}
               >
                 <a href={plan.whatsappLink} target="_blank" rel="noopener noreferrer">
-                  {plan.highlighted ? 'Elegir Plan Pro' : 'Consultar Ahora'}
+                  Consultar Ahora
                 </a>
               </Button>
             </motion.div>

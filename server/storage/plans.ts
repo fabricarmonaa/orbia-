@@ -20,6 +20,11 @@ export const planStorage = {
     return plan;
   },
 
+  async getPlanByCode(planCode: string) {
+    const [plan] = await db.select().from(plans).where(eq(plans.planCode, planCode));
+    return plan || null;
+  },
+
   async listSubscriptions() {
     const rows = await db
       .select({
