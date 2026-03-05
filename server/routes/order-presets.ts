@@ -77,6 +77,15 @@ function sendApiError(res: Response, err: unknown) {
 // ─────────────────────────────────────────────
 // Routes
 // ─────────────────────────────────────────────
+
+function ensurePresetIdParam(req: any, res: any, next: any) {
+  const raw = Number(req.params?.presetId);
+  if (!Number.isInteger(raw) || raw <= 0) {
+    return res.status(400).json({ error: "Preset inválido", code: "INVALID_PRESET_ID" });
+  }
+  return next();
+}
+
 export function registerOrderPresetRoutes(app: Express) {
   // ── Types ──────────────────────────────────────────────────────────────
   app.get("/api/order-presets/types", tenantAuth, async (req, res) => {
@@ -129,6 +138,7 @@ export function registerOrderPresetRoutes(app: Express) {
   app.patch(
     "/api/order-presets/presets/:presetId",
     tenantAuth,
+    ensurePresetIdParam,
     requireTenantAdmin,
     validateParams(presetIdParamSchema),
     validateBody(patchPresetSchema),
@@ -150,6 +160,7 @@ export function registerOrderPresetRoutes(app: Express) {
   app.get(
     "/api/order-presets/presets/:presetId/fields",
     tenantAuth,
+    ensurePresetIdParam,
     validateParams(presetIdParamSchema),
     async (req, res) => {
       try {
@@ -167,6 +178,7 @@ export function registerOrderPresetRoutes(app: Express) {
   app.post(
     "/api/order-presets/presets/:presetId/fields",
     tenantAuth,
+    ensurePresetIdParam,
     requireTenantAdmin,
     validateParams(presetIdParamSchema),
     validateBody(createFieldSchema),
@@ -191,6 +203,7 @@ export function registerOrderPresetRoutes(app: Express) {
   app.post(
     "/api/order-presets/presets/:presetId/fields/reorder",
     tenantAuth,
+    ensurePresetIdParam,
     requireTenantAdmin,
     validateParams(presetIdParamSchema),
     validateBody(reorderSchema),

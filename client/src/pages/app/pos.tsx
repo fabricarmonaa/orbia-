@@ -11,7 +11,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ScanLine } from "lucide-react";
+import { ScanLine, X } from "lucide-react";
 import BarcodeListener, { parseScannedCode } from "@/components/addons/BarcodeListener";
 import { usePOSCart } from "@/hooks/usePOS";
 import CameraScanner from "@/components/addons/CameraScanner";
@@ -294,6 +294,19 @@ export default function PosPage() {
     printWindow.focus();
   }
 
+
+  function cancelPendingSaleFlow() {
+    sessionStorage.removeItem("pendingSaleFromOrder");
+    setPendingSale(null);
+    if (selectedCustomer?.name) {
+      setCustomerQuery(selectedCustomer.name);
+    } else {
+      setCustomerQuery(pendingCustomerName || "");
+    }
+    setPendingCustomerDni("");
+    setPendingCustomerPhone("");
+  }
+
   async function submitSale() {
     if (!cart.length) return;
     const orderCustomerSummary = pendingSale
@@ -410,7 +423,18 @@ export default function PosPage() {
           <CardContent className="space-y-3">
             {pendingSale && (
               <Card className="border-primary/30 bg-primary/5">
-                <CardHeader><CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle></CardHeader>
+                <CardHeader className="flex flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-base">Venta desde pedido #{pendingSale.orderId}</CardTitle>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Cancelar venta desde pedido"
+                    onClick={cancelPendingSaleFlow}
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                </CardHeader>
                 <CardContent className="space-y-2">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div><Label>Cliente</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>

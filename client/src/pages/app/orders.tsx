@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { apiRequest, useAuth } from "@/lib/auth";
+import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
 import { usePlan } from "@/lib/plan";
 import { VoiceCommand } from "@/components/voice-command";
@@ -143,9 +143,18 @@ export default function OrdersPage() {
     fetchData();
     void loadPresetsForType(newOrder.type || "PEDIDO");
     // Check if cash session is currently open
-    apiRequest("GET", "/api/cash/sessions/current")
-      .then((r) => r.json())
-      .then((d) => setHasCashOpen(!!(d.data?.id)))
+    fetch("/api/cash/sessions/current", {
+      headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {},
+    })
+      .then(async (r) => {
+        if (r.status === 204) {
+          setHasCashOpen(false);
+          return;
+        }
+        if (!r.ok) throw new Error("No se pudo consultar caja");
+        const d = await r.json().catch(() => ({ data: null }));
+        setHasCashOpen(!!(d.data?.id));
+      })
       .catch(() => setHasCashOpen(false));
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
@@ -185,6 +194,11 @@ export default function OrdersPage() {
   }
 
   async function loadFieldsForPreset(presetId: number) {
+    if (!Number.isFinite(presetId) || presetId <= 0) {
+      setPresetFields([]);
+      setCustomFieldInputs({});
+      return;
+    }
     try {
       const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
       const json = await res.json();
@@ -382,7 +396,7 @@ export default function OrdersPage() {
 
   function getStatusInfo(statusId: number | null) {
     const s = statuses.find((st) => st.id === statusId);
-    return s || { name: "Sin estado", color: "#6B7280", isActive: false };
+    return s || { name: "Estado actual no disponible", color: "#6B7280", isActive: false };
   }
 
   function getStatusCodeById(statusId: number | null | undefined) {
@@ -476,6 +490,7 @@ export default function OrdersPage() {
             >
               <DialogHeader>
                 <DialogTitle>Crear Pedido</DialogTitle>
+                <DialogDescription>Completá los datos del pedido y seleccioná el estado inicial.</DialogDescription>
               </DialogHeader>
               <form onSubmit={createOrder} className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
@@ -499,7 +514,13 @@ export default function OrdersPage() {
                       <Select
                         value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
                         onValueChange={(v) => {
-                          const pid = parseInt(v);
+                          const pid = Number(v);
+                          if (!Number.isFinite(pid) || pid <= 0) {
+                            setNewOrder({ ...newOrder, orderPresetId: undefined });
+                            setPresetFields([]);
+                            setCustomFieldInputs({});
+                            return;
+                          }
                           setNewOrder({ ...newOrder, orderPresetId: pid });
                           void loadFieldsForPreset(pid);
                         }}
@@ -907,18 +928,26 @@ export default function OrdersPage() {
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <Label className="text-muted-foreground">Estado</Label>
                     <Select
-                      value={getStatusCodeById(selectedOrder.statusId)}
-                      onValueChange={(v) => changeStatus(selectedOrder.id, v)}
+                      value={getStatusCodeById(selectedOrder.statusId) || "__CURRENT_UNAVAILABLE__"}
+                      onValueChange={(v) => {
+                        if (v === "__CURRENT_UNAVAILABLE__") return;
+                        void changeStatus(selectedOrder.id, v);
+                      }}
                     >
-                      <SelectTrigger className="w-40" data-testid="select-change-status">
+                      <SelectTrigger className="w-56" data-testid="select-change-status">
                         <SelectValue placeholder="Seleccionar estado" />
                       </SelectTrigger>
                       <SelectContent>
+                        {!getStatusCodeById(selectedOrder.statusId) && (
+                          <SelectItem value="__CURRENT_UNAVAILABLE__" disabled>
+                            Estado actual (no disponible)
+                          </SelectItem>
+                        )}
                         {statuses
-                          .filter((s) => (s as any).isActive !== false || s.id === selectedOrder.statusId)
+                          .filter((s) => (s as any).isActive !== false)
                           .map((s) => (
                           <SelectItem key={s.id} value={String(s.code || "")}>
-                            {(s as any).isActive === false ? `${s.name} (inactivo)` : s.name}
+                            {s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
