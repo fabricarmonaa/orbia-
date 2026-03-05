@@ -5,8 +5,8 @@ import { tenantAuth, requireTenantAdmin, blockBranchScope } from "../auth";
 import { validateBody, validateParams } from "../middleware/validate";
 import { sanitizeShortText } from "../security/sanitize";
 import { db } from "../db";
-import { orderStatuses, statusDefinitions } from "@shared/schema";
-import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses, resolveOrderStatusIdByCode } from "../services/statuses";
+import { statusDefinitions } from "@shared/schema";
+import { ensureStatusExists, getDefaultStatus, getStatusUsageCount, getStatuses, mergeStatus, normalizeStatusCode, reorderStatuses } from "../services/statuses";
 
 const entityTypeSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]) });
 const idSchema = z.object({ entityType: z.enum(["ORDER", "PRODUCT", "DELIVERY"]), id: z.coerce.number().int().positive() });
@@ -59,38 +59,7 @@ export function registerStatusRoutes(app: Express) {
         data = await getStatuses(tenantId, "ORDER", includeInactive);
       }
 
-      const legacyRows = await db.select().from(orderStatuses).where(eq(orderStatuses.tenantId, tenantId));
-      const definitionsByCode = new Map(data.map((d: any) => [normalizeStatusCode(d.code), d]));
-
-      // Bridge legacy statuses that exist in order_statuses but are missing in status_definitions
-      for (const legacy of legacyRows) {
-        const legacyCode = normalizeStatusCode(legacy.name || "");
-        if (!legacyCode || definitionsByCode.has(legacyCode)) continue;
-        const [created] = await db.insert(statusDefinitions).values({
-          tenantId,
-          entityType: "ORDER",
-          code: legacyCode,
-          label: legacy.name || legacyCode,
-          color: legacy.color || "#6B7280",
-          isFinal: !!legacy.isFinal,
-          isLocked: false,
-          isDefault: false,
-          isActive: true,
-          sortOrder: legacy.sortOrder || (data.length + 1),
-        }).onConflictDoNothing().returning();
-        if (created) {
-          definitionsByCode.set(legacyCode, created as any);
-          data.push(created as any);
-        }
-      }
-
-      const mappedData = await Promise.all(
-        data.map(async (d: any) => {
-          const legacyId = await resolveOrderStatusIdByCode(tenantId, normalizeStatusCode(d.code));
-          return { ...d, code: normalizeStatusCode(d.code), name: d.label, id: legacyId || d.id };
-        })
-      );
-      res.json({ data: mappedData });
+      res.json({ data: data.map((row) => ({ ...row, code: normalizeStatusCode(row.code) })) });
     } catch (err: any) {
       console.error("[order-statuses]", err);
       res.status(500).json({ error: "No se pudieron cargar los estados", code: "STATUS_ERROR" });

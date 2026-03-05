@@ -141,6 +141,21 @@ export default function PosPage() {
     }
   }
 
+  useEffect(() => {
+    if (pendingSale || selectedCustomer) return;
+    const value = customerQuery.trim();
+    if (!value) {
+      setCustomerResults([]);
+      setCustomerSearchOpen(false);
+      return;
+    }
+    const handle = window.setTimeout(() => {
+      void searchCustomers(value);
+      setCustomerSearchOpen(true);
+    }, 300);
+    return () => window.clearTimeout(handle);
+  }, [customerQuery, pendingSale, selectedCustomer]);
+
   function addToCart(product: ProductRow) {
     const available = Number(product.stockTotal ?? 0);
     setCart((prev) => {
@@ -296,6 +311,7 @@ export default function PosPage() {
 
 
   function cancelPendingSaleFlow() {
+    localStorage.removeItem("pendingSaleFromOrder");
     sessionStorage.removeItem("pendingSaleFromOrder");
     setPendingSale(null);
     if (selectedCustomer?.name) {
@@ -305,6 +321,9 @@ export default function PosPage() {
     }
     setPendingCustomerDni("");
     setPendingCustomerPhone("");
+    setSelectedCustomer(null);
+    setCustomerResults([]);
+    setCustomerSearchOpen(false);
   }
 
   async function submitSale() {

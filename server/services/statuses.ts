@@ -12,25 +12,25 @@ export function normalizeDeliveryStatus(input?: string | null) {
 }
 
 export async function resolveCanonicalOrderStatusId(params: { tenantId: number; statusId?: number | null; statusCode?: string | null }) {
+  const code = await resolveCanonicalOrderStatusCode(params);
+  if (!code) return null;
+  return await resolveOrderStatusIdByCode(params.tenantId, code);
+}
+
+export async function resolveCanonicalOrderStatusCode(params: { tenantId: number; statusId?: number | null; statusCode?: string | null; activeOnly?: boolean }) {
   if (params.statusCode) {
     const normalizedCode = normalizeStatusCode(params.statusCode);
-    // ensureStatusExists may return null for legacy tenants — resolve directly
-    return await resolveOrderStatusIdByCode(params.tenantId, normalizedCode);
+    const definition = await resolveOrderStatusDefinitionByCode(params.tenantId, normalizedCode, params.activeOnly ?? false);
+    return definition?.code || null;
   }
+  if (!params.statusId) return null;
 
-  if (params.statusId) {
-    const [def] = await db.select().from(statusDefinitions).where(and(eq(statusDefinitions.id, params.statusId), eq(statusDefinitions.tenantId, params.tenantId))).limit(1);
-    if (def) {
-      return await resolveOrderStatusIdByCode(params.tenantId, normalizeStatusCode(def.code));
-    }
-
-    const [legacy] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, params.statusId), eq(orderStatuses.tenantId, params.tenantId))).limit(1);
-    if (!legacy) return null;
-    const normalizedLegacyCode = normalizeStatusCode(legacy.name || "");
-    return legacy.id ?? null;
-  }
-
-  return null;
+  const [legacy] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, params.statusId), eq(orderStatuses.tenantId, params.tenantId))).limit(1);
+  if (!legacy) return null;
+  const normalizedLegacyCode = normalizeStatusCode(legacy.name || "");
+  if (!normalizedLegacyCode) return null;
+  const definition = await resolveOrderStatusDefinitionByCode(params.tenantId, normalizedLegacyCode, params.activeOnly ?? false);
+  return definition?.code || null;
 }
 
 export function normalizeStatusCode(input: string) {
@@ -82,16 +82,8 @@ export async function ensureStatusExists(tenantId: number, entityType: StatusEnt
 }
 
 export async function resolveOrderStatusIdByCode(tenantId: number, code: string) {
-  // Try canonical status_definitions table first (may be empty for legacy tenants)
-  const [defRow] = await db
-    .select()
-    .from(statusDefinitions)
-    .where(and(
-      eq(statusDefinitions.tenantId, tenantId),
-      eq(statusDefinitions.entityType, "ORDER"),
-      eq(statusDefinitions.code, code),
-      eq(statusDefinitions.isActive, true),
-    ));
+  const definition = await resolveOrderStatusDefinitionByCode(tenantId, code, false);
+  if (!definition) return null;
 
   // Whether we found a status_definition or not, try to match in order_statuses by name
   const [orderStatus] = await db
@@ -99,12 +91,29 @@ export async function resolveOrderStatusIdByCode(tenantId: number, code: string)
     .from(orderStatuses)
     .where(and(
       eq(orderStatuses.tenantId, tenantId),
-      sql`LEFT(REGEXP_REPLACE(UPPER(${orderStatuses.name}), '[^A-Z0-9]+', '_', 'g'), 40) = ${defRow?.code ?? code}`
+      sql`LEFT(REGEXP_REPLACE(UPPER(${orderStatuses.name}), '[^A-Z0-9]+', '_', 'g'), 40) = ${definition.code}`
     ));
   return orderStatus?.id ?? null;
 }
 
+export async function resolveOrderStatusDefinitionByCode(tenantId: number, code: string, activeOnly = true) {
+  const normalizedCode = normalizeStatusCode(code);
+  if (!normalizedCode) return null;
+  const [definition] = await db
+    .select()
+    .from(statusDefinitions)
+    .where(and(
+      eq(statusDefinitions.tenantId, tenantId),
+      eq(statusDefinitions.entityType, "ORDER"),
+      eq(statusDefinitions.code, normalizedCode),
+      activeOnly ? eq(statusDefinitions.isActive, true) : undefined,
+    ))
+    .limit(1);
+  return definition || null;
+}
+
 export async function getStatusUsageCount(tenantId: number, entityType: StatusEntityType, code: string) {
+  const normalizedCode = normalizeStatusCode(code);
   if (entityType === "PRODUCT") {
     const [r] = await db.select({ c: sql<number>`count(*)::int` }).from(products).where(and(eq(products.tenantId, tenantId), eq(products.statusCode, code)));
     return Number(r?.c || 0);
@@ -113,23 +122,25 @@ export async function getStatusUsageCount(tenantId: number, entityType: StatusEn
     const [r] = await db.select({ c: sql<number>`count(*)::int` }).from(orders).where(and(eq(orders.tenantId, tenantId), eq(orders.deliveryStatus, code.toLowerCase())));
     return Number(r?.c || 0);
   }
-  const statusId = await resolveOrderStatusIdByCode(tenantId, code);
-  if (!statusId) return 0;
-  const [r] = await db.select({ c: sql<number>`count(*)::int` }).from(orders).where(and(eq(orders.tenantId, tenantId), eq(orders.statusId, statusId)));
+  const statusId = await resolveOrderStatusIdByCode(tenantId, normalizedCode);
+  if (!statusId) {
+    const [r] = await db.select({ c: sql<number>`count(*)::int` }).from(orders).where(and(eq(orders.tenantId, tenantId), eq(orders.statusCode, normalizedCode)));
+    return Number(r?.c || 0);
+  }
+  const [r] = await db.select({ c: sql<number>`count(*)::int` }).from(orders).where(and(eq(orders.tenantId, tenantId), eq(orders.statusCode, normalizedCode)));
   return Number(r?.c || 0);
 }
 
 export async function mergeStatus(tenantId: number, entityType: StatusEntityType, oldCode: string, newCode: string) {
+  const normalizedOldCode = normalizeStatusCode(oldCode);
+  const normalizedNewCode = normalizeStatusCode(newCode);
   if (entityType === "PRODUCT") {
-    await db.update(products).set({ statusCode: newCode }).where(and(eq(products.tenantId, tenantId), eq(products.statusCode, oldCode)));
+    await db.update(products).set({ statusCode: normalizedNewCode }).where(and(eq(products.tenantId, tenantId), eq(products.statusCode, normalizedOldCode)));
   } else if (entityType === "DELIVERY") {
-    await db.update(orders).set({ deliveryStatus: newCode.toLowerCase() }).where(and(eq(orders.tenantId, tenantId), eq(orders.deliveryStatus, oldCode.toLowerCase())));
+    await db.update(orders).set({ deliveryStatus: normalizedNewCode.toLowerCase() }).where(and(eq(orders.tenantId, tenantId), eq(orders.deliveryStatus, normalizedOldCode.toLowerCase())));
   } else {
-    const oldId = await resolveOrderStatusIdByCode(tenantId, oldCode);
-    const newId = await resolveOrderStatusIdByCode(tenantId, newCode);
-    if (oldId && newId) {
-      await db.update(orders).set({ statusId: newId }).where(and(eq(orders.tenantId, tenantId), eq(orders.statusId, oldId)));
-    }
+    const newId = await resolveOrderStatusIdByCode(tenantId, normalizedNewCode);
+    await db.update(orders).set({ statusCode: normalizedNewCode, ...(newId ? { statusId: newId } : {}) }).where(and(eq(orders.tenantId, tenantId), eq(orders.statusCode, normalizedOldCode)));
   }
 }
 

@@ -94,7 +94,7 @@ export default function OrdersPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
   const { hasFeature } = usePlan();
-  const [orders, setOrders] = useState<(Order & { statusName?: string; statusColor?: string })[]>([]);
+  const [orders, setOrders] = useState<Array<Order & { statusCode?: string | null; statusName?: string; statusColor?: string }>>([]);
   const [statuses, setStatuses] = useState<(OrderStatus & { code?: string; label?: string })[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
@@ -385,7 +385,7 @@ export default function OrdersPage() {
       (o.customerName || "").toLowerCase().includes(search.toLowerCase()) ||
       String(o.orderNumber).includes(search) ||
       (o.description || "").toLowerCase().includes(search.toLowerCase());
-    const matchStatus = filterStatus === "all" || String(o.statusId) === filterStatus;
+    const matchStatus = filterStatus === "all" || String((o as any).statusCode || "") === filterStatus;
     return matchSearch && matchStatus;
   });
 
@@ -394,14 +394,10 @@ export default function OrdersPage() {
     return branches.find((b) => b.id === branchId)?.name || null;
   }
 
-  function getStatusInfo(statusId: number | null) {
-    const s = statuses.find((st) => st.id === statusId);
-    return s || { name: "Estado actual no disponible", color: "#6B7280", isActive: false };
-  }
-
-  function getStatusCodeById(statusId: number | null | undefined) {
-    if (!statusId) return "";
-    return statuses.find((st) => st.id === statusId)?.code || "";
+  function getStatusInfo(statusCode: string | null | undefined) {
+    const code = String(statusCode || "").trim().toUpperCase();
+    const s = statuses.find((st) => String((st as any).code || "").toUpperCase() === code);
+    return s || { code, name: code || "Sin estado", label: code || "Sin estado", color: "#6B7280", isActive: false };
   }
 
   function handleVoiceResult() {
@@ -545,7 +541,7 @@ export default function OrdersPage() {
                       <SelectContent>
                         {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
                           <SelectItem key={s.id} value={String(s.code || "")}>
-                            {s.name}
+                            {(s as any).label || s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -826,8 +822,8 @@ export default function OrdersPage() {
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
-              <SelectItem key={s.id} value={String(s.id)}>
-                {s.name}
+              <SelectItem key={s.id} value={String((s as any).code || "")}>
+                {(s as any).label || s.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -853,7 +849,7 @@ export default function OrdersPage() {
       ) : (
         <div className="space-y-2">
           {filteredOrders.map((order) => {
-            const status = getStatusInfo(order.statusId);
+            const status = getStatusInfo((order as any).statusCode);
             return (
               <Card
                 key={order.id}
@@ -898,7 +894,7 @@ export default function OrdersPage() {
                         style={{ backgroundColor: status.color || "#6B7280", color: "#fff" }}
                         data-testid={`badge-status-${order.id}`}
                       >
-                        {status.name}{(status as any).isActive === false && status.name !== "Sin estado" ? " (inactivo)" : ""}
+                        {((status as any).label || status.name)}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
                         {formatDate(order.createdAt)}
@@ -928,26 +924,18 @@ export default function OrdersPage() {
                   <div className="flex items-center justify-between gap-4 flex-wrap">
                     <Label className="text-muted-foreground">Estado</Label>
                     <Select
-                      value={getStatusCodeById(selectedOrder.statusId) || "__CURRENT_UNAVAILABLE__"}
-                      onValueChange={(v) => {
-                        if (v === "__CURRENT_UNAVAILABLE__") return;
-                        void changeStatus(selectedOrder.id, v);
-                      }}
+                      value={String((selectedOrder as any).statusCode || "")}
+                      onValueChange={(v) => { void changeStatus(selectedOrder.id, v); }}
                     >
                       <SelectTrigger className="w-56" data-testid="select-change-status">
                         <SelectValue placeholder="Seleccionar estado" />
                       </SelectTrigger>
                       <SelectContent>
-                        {!getStatusCodeById(selectedOrder.statusId) && (
-                          <SelectItem value="__CURRENT_UNAVAILABLE__" disabled>
-                            Estado actual (no disponible)
-                          </SelectItem>
-                        )}
                         {statuses
                           .filter((s) => (s as any).isActive !== false)
                           .map((s) => (
                           <SelectItem key={s.id} value={String(s.code || "")}>
-                            {s.name}
+                            {(s as any).label || s.name}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -1230,7 +1218,7 @@ export default function OrdersPage() {
                         </p>
                       ) : (
                         history.map((h) => {
-                          const s = getStatusInfo(h.statusId);
+                          const s = getStatusInfo((h as any).statusCode || (h as any).status_code || "");
                           return (
                             <div key={h.id} className="flex items-center gap-3 p-2">
                               <div
@@ -1238,7 +1226,7 @@ export default function OrdersPage() {
                                 style={{ backgroundColor: s.color || "#6B7280" }}
                               />
                               <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium">{s.name}</p>
+                                <p className="text-sm font-medium">{(s as any).label || s.name}</p>
                                 {h.note && (
                                   <p className="text-xs text-muted-foreground">{h.note}</p>
                                 )}
