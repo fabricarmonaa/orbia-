@@ -1,9 +1,32 @@
--- Canonical ORDER statuses on orders.status_code
+-- Repair migration for canonical ORDER status_code flow.
+-- Idempotent and safe to run multiple times.
+
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status_code varchar(40);
 
--- Ensure each tenant has baseline ORDER statuses
-INSERT INTO status_definitions (tenant_id, entity_type, code, label, color, sort_order, is_default, is_final, is_active, is_locked)
-SELECT t.id, 'ORDER', s.code, s.label, s.color, s.sort_order, s.is_default, s.is_final, true, false
+-- 1) Ensure ORDER definitions exist for every tenant.
+INSERT INTO status_definitions (
+  tenant_id,
+  entity_type,
+  code,
+  label,
+  color,
+  sort_order,
+  is_default,
+  is_final,
+  is_active,
+  is_locked
+)
+SELECT
+  t.id,
+  'ORDER',
+  s.code,
+  s.label,
+  s.color,
+  s.sort_order,
+  s.is_default,
+  s.is_final,
+  true,
+  false
 FROM tenants t
 CROSS JOIN (
   VALUES
@@ -20,31 +43,42 @@ WHERE NOT EXISTS (
 )
 ON CONFLICT DO NOTHING;
 
--- Ensure there is one default ORDER status per tenant
-WITH first_active AS (
-  SELECT DISTINCT ON (sd.tenant_id)
+-- 2) Guarantee exactly one default active ORDER status per tenant.
+WITH ranked AS (
+  SELECT
+    sd.id,
     sd.tenant_id,
-    sd.id
+    ROW_NUMBER() OVER (
+      PARTITION BY sd.tenant_id
+      ORDER BY
+        CASE WHEN COALESCE(sd.is_active, true) THEN 0 ELSE 1 END,
+        CASE WHEN COALESCE(sd.is_default, false) THEN 0 ELSE 1 END,
+        sd.sort_order ASC,
+        sd.id ASC
+    ) AS rn
   FROM status_definitions sd
   WHERE sd.entity_type = 'ORDER'
-    AND COALESCE(sd.is_active, true) = true
-  ORDER BY sd.tenant_id, sd.sort_order ASC, sd.id ASC
+), chosen AS (
+  SELECT tenant_id, id AS chosen_id
+  FROM ranked
+  WHERE rn = 1
 )
 UPDATE status_definitions sd
-SET is_default = true,
+SET is_default = (sd.id = c.chosen_id),
     updated_at = NOW()
-FROM first_active fa
-WHERE sd.id = fa.id
-  AND NOT EXISTS (
-    SELECT 1
-    FROM status_definitions existing
-    WHERE existing.tenant_id = fa.tenant_id
-      AND existing.entity_type = 'ORDER'
-      AND COALESCE(existing.is_active, true) = true
-      AND COALESCE(existing.is_default, false) = true
-  );
+FROM chosen c
+WHERE sd.tenant_id = c.tenant_id
+  AND sd.entity_type = 'ORDER'
+  AND COALESCE(sd.is_default, false) IS DISTINCT FROM (sd.id = c.chosen_id);
 
--- Backfill from legacy orders.status_id -> canonical status_definitions.code
+-- 3) Normalize status_code string shape in orders.
+UPDATE orders o
+SET status_code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(o.status_code, '')), '[^A-Z0-9]+', '_', 'g'), 40),
+    updated_at = NOW()
+WHERE o.status_code IS NOT NULL
+  AND o.status_code <> LEFT(REGEXP_REPLACE(UPPER(COALESCE(o.status_code, '')), '[^A-Z0-9]+', '_', 'g'), 40);
+
+-- 4) Backfill status_code from legacy status_id (tenant-scoped).
 WITH legacy_map AS (
   SELECT
     os.tenant_id,
@@ -70,14 +104,7 @@ WHERE o.tenant_id = vm.tenant_id
   AND o.status_id = vm.legacy_status_id
   AND (o.status_code IS NULL OR btrim(o.status_code) = '');
 
--- Normalize existing status_code values
-UPDATE orders
-SET status_code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(status_code, '')), '[^A-Z0-9]+', '_', 'g'), 40),
-    updated_at = NOW()
-WHERE status_code IS NOT NULL
-  AND status_code <> LEFT(REGEXP_REPLACE(UPPER(COALESCE(status_code, '')), '[^A-Z0-9]+', '_', 'g'), 40);
-
--- Fill null / invalid status_code with tenant default ORDER status
+-- 5) For remaining null/empty/invalid codes, set tenant ORDER default.
 WITH tenant_default AS (
   SELECT DISTINCT ON (sd.tenant_id)
     sd.tenant_id,
@@ -109,3 +136,28 @@ WHERE o.tenant_id = td.tenant_id
 
 CREATE INDEX IF NOT EXISTS idx_orders_tenant_status_code_created
   ON orders(tenant_id, status_code, created_at DESC);
+
+-- Verification queries (read-only)
+SELECT COUNT(*) AS orders_with_null_or_empty_status_code
+FROM orders
+WHERE status_code IS NULL OR btrim(status_code) = '';
+
+SELECT
+  o.tenant_id,
+  COUNT(*) AS invalid_status_code_rows
+FROM orders o
+LEFT JOIN status_definitions sd
+  ON sd.tenant_id = o.tenant_id
+ AND sd.entity_type = 'ORDER'
+ AND sd.code = o.status_code
+WHERE sd.id IS NULL
+GROUP BY o.tenant_id
+ORDER BY o.tenant_id;
+
+SELECT
+  tenant_id,
+  COUNT(*) FILTER (WHERE is_default = true) AS defaults_count
+FROM status_definitions
+WHERE entity_type = 'ORDER'
+GROUP BY tenant_id
+ORDER BY tenant_id;
