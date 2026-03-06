@@ -187,7 +187,7 @@ function SpotlightOverlay({ rect, isMobile }: { rect: RectLike | null; isMobile:
       <motion.div
         initial={false}
         animate={{ left, top, width: w, height: h }}
-        transition={{ duration: isMobile ? 0.35 : 1.3, ease: "easeInOut" }}
+        transition={{ type: "spring", stiffness: 300, damping: 30 }}
         className="absolute rounded-xl border-2 border-primary/70"
         style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.08)" }}
       />
@@ -386,67 +386,35 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const shouldCenter = !step?.targetSelector || step?.placement === "center" || targetMissing || !targetRect;
   const mobileFixedMode = isMobile;
 
-  const getTooltipStyle = (): React.CSSProperties => {
-    const safeGap = isMobile ? 8 : 16;
+  const getTooltipStyle = () => {
+    const safeGap = isMobile ? 12 : 16;
     const cardWidth = isMobile ? Math.min(360, viewport.width - safeGap * 2) : Math.min(420, viewport.width - safeGap * 2);
+    const maxH = Math.max(viewport.height - safeGap * 2, 100);
 
-    if (mobileFixedMode) {
+    if (isMobile) {
       return {
-        position: "fixed",
+        position: "fixed" as const,
         left: "50%",
-        bottom: 12,
-        transform: "translateX(-50%)",
+        bottom: safeGap,
+        top: "auto",
+        x: "-50%",
+        y: "0%",
         width: cardWidth,
-        maxHeight: Math.min(420, viewport.height * 0.48),
+        maxHeight: maxH,
       };
     }
 
-    if (shouldCenter || !targetRect) {
-      return {
-        position: "fixed",
-        top: "50%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        width: cardWidth,
-        maxHeight: viewport.height - safeGap * 2,
-      };
-    }
-
-    const placement = step?.placement ?? "right";
-    const style: React.CSSProperties = {
-      position: "fixed",
+    // ALWAYS CENTERED FOR PC
+    return {
+      position: "fixed" as const,
+      top: "50%",
+      left: "50%",
+      bottom: "auto",
+      x: "-50%",
+      y: "-50%",
       width: cardWidth,
-      maxHeight: viewport.height - safeGap * 2,
+      maxHeight: maxH,
     };
-
-    const targetCenterY = targetRect.top + targetRect.height / 2;
-    const topAligned = Math.max(safeGap, Math.min(targetCenterY - 140, viewport.height - safeGap - 320));
-
-    if (placement === "right") {
-      const preferred = targetRect.right + 18;
-      const fallback = targetRect.left - cardWidth - 18;
-      style.left = preferred + cardWidth <= viewport.width - safeGap ? preferred : Math.max(safeGap, fallback);
-      style.top = topAligned;
-      return style;
-    }
-
-    if (placement === "left") {
-      const preferred = targetRect.left - cardWidth - 18;
-      const fallback = targetRect.right + 18;
-      style.left = preferred >= safeGap ? preferred : Math.min(viewport.width - safeGap - cardWidth, fallback);
-      style.top = topAligned;
-      return style;
-    }
-
-    if (placement === "bottom") {
-      style.top = Math.min(viewport.height - safeGap - 320, targetRect.bottom + 14);
-      style.left = Math.max(safeGap, Math.min(targetRect.left, viewport.width - safeGap - cardWidth));
-      return style;
-    }
-
-    style.top = Math.max(safeGap, targetRect.top - 320 - 14);
-    style.left = Math.max(safeGap, Math.min(targetRect.left, viewport.width - safeGap - cardWidth));
-    return style;
   };
 
   return (
@@ -472,14 +440,14 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
               initial={false}
               animate={getTooltipStyle() as any}
               exit={{ opacity: 0 }}
-              transition={{ duration: isMobile ? 0.35 : 1.3, ease: "easeInOut" }}
-              className="bg-background border-2 border-primary/30 shadow-2xl rounded-2xl overflow-hidden"
-              style={{ pointerEvents: "auto" }}
+              transition={isMobile ? { type: "spring", stiffness: 300, damping: 30 } : { duration: 0 }}
+              className="bg-background border-2 border-primary/30 shadow-2xl rounded-2xl flex flex-col"
+              style={{ pointerEvents: "auto", overflow: "hidden" }}
             >
-              <div className="h-1.5 w-full bg-gradient-to-r from-primary to-primary/60" />
+              <div className="h-1.5 w-full bg-gradient-to-r from-primary to-primary/60 shrink-0" />
 
-              <div className={`space-y-3 ${isMobile ? "p-3.5" : "p-6"}`}>
-                <div className="flex items-start gap-3">
+              <div className={`flex flex-col gap-3 overflow-y-auto ${isMobile ? "p-4" : "p-6"}`}>
+                <div className="flex items-start gap-3 shrink-0">
                   <span className={`${isMobile ? "text-2xl" : "text-3xl"} leading-none`}>{step.emoji}</span>
                   <div className="flex-1 min-w-0">
                     <h3 className={`${isMobile ? "text-base" : "text-lg"} font-bold leading-snug`}>{step.title}</h3>
@@ -506,29 +474,29 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
                   </button>
                 </div>
 
-                <motion.p
+                <motion.div
                   key={`copy-${step.id}-${isMobile ? "m" : "d"}`}
                   initial={{ opacity: 0.2 }}
                   animate={{ opacity: 1 }}
                   transition={{ duration: 0.2 }}
-                  className={`${isMobile ? "text-sm" : "text-base"} text-foreground leading-relaxed`}
+                  className={`${isMobile ? "text-sm" : "text-base"} text-foreground leading-relaxed shrink-0`}
                 >
                   {content}
-                </motion.p>
+                </motion.div>
 
                 {tip && (
-                  <div className="rounded-lg bg-primary/8 border border-primary/25 px-3 py-2">
+                  <div className="rounded-lg bg-primary/8 border border-primary/25 px-3 py-2 shrink-0">
                     <p className="text-sm text-primary font-medium">💡 {tip}</p>
                   </div>
                 )}
 
                 {targetMissing && step.targetSelector ? (
-                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 shrink-0">
                     <p className="text-xs text-amber-700">No encontramos ese bloque en esta vista, seguimos con el próximo paso.</p>
                   </div>
                 ) : null}
 
-                <div className="flex items-center justify-between gap-2 pt-2 border-t">
+                <div className="flex items-center justify-between gap-2 pt-3 border-t shrink-0">
                   <span className="text-xs sm:text-sm text-muted-foreground font-medium">
                     {currentStep + 1} de {steps.length}
                   </span>
