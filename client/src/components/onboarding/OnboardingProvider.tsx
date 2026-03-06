@@ -183,16 +183,15 @@ function SpotlightOverlay({ rect, isMobile }: { rect: RectLike | null; isMobile:
   const h = Math.min(rect.height + pad * 2, height - top - 6);
 
   return (
-    <svg className="absolute inset-0 w-full h-full" style={{ pointerEvents: "none" }}>
-      <defs>
-        <mask id="spotlight-mask">
-          <rect x="0" y="0" width="100%" height="100%" fill="white" />
-          <rect x={left} y={top} width={w} height={h} rx={isMobile ? 10 : 12} ry={isMobile ? 10 : 12} fill="black" />
-        </mask>
-      </defs>
-      <rect x="0" y="0" width="100%" height="100%" fill="rgba(0,0,0,0.62)" mask="url(#spotlight-mask)" />
-      <rect x={left} y={top} width={w} height={h} rx={isMobile ? 10 : 12} ry={isMobile ? 10 : 12} fill="none" stroke="rgba(99,102,241,0.75)" strokeWidth="2" />
-    </svg>
+    <div className="absolute inset-0" style={{ pointerEvents: "none", background: "rgba(0,0,0,0.56)" }}>
+      <motion.div
+        initial={false}
+        animate={{ left, top, width: w, height: h }}
+        transition={{ duration: isMobile ? 0.35 : 1.3, ease: "easeInOut" }}
+        className="absolute rounded-xl border-2 border-primary/70"
+        style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.08)" }}
+      />
+    </div>
   );
 }
 
@@ -385,10 +384,22 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
   const tip = stepCopy?.tip || step?.tip;
 
   const shouldCenter = !step?.targetSelector || step?.placement === "center" || targetMissing || !targetRect;
+  const mobileFixedMode = isMobile;
 
   const getTooltipStyle = (): React.CSSProperties => {
-    const safeGap = isMobile ? 10 : 16;
+    const safeGap = isMobile ? 8 : 16;
     const cardWidth = isMobile ? Math.min(360, viewport.width - safeGap * 2) : Math.min(420, viewport.width - safeGap * 2);
+
+    if (mobileFixedMode) {
+      return {
+        position: "fixed",
+        left: "50%",
+        bottom: 12,
+        transform: "translateX(-50%)",
+        width: cardWidth,
+        maxHeight: Math.min(420, viewport.height * 0.48),
+      };
+    }
 
     if (shouldCenter || !targetRect) {
       return {
@@ -454,21 +465,20 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
             style={{ pointerEvents: "none" }}
           >
             <div className="absolute inset-0">
-              <SpotlightOverlay rect={shouldCenter ? null : targetRect} isMobile={isMobile} />
+              <SpotlightOverlay rect={mobileFixedMode || shouldCenter ? null : targetRect} isMobile={isMobile} />
             </div>
 
             <motion.div
-              key={`step-${step.id}-${currentStep}-${isMobile ? "m" : "d"}`}
-              initial={{ opacity: 0, scale: 0.94, y: 14 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.94, y: -6 }}
-              transition={{ type: "spring", stiffness: 320, damping: 28 }}
+              initial={false}
+              animate={getTooltipStyle() as any}
+              exit={{ opacity: 0 }}
+              transition={{ duration: isMobile ? 0.35 : 1.3, ease: "easeInOut" }}
               className="bg-background border-2 border-primary/30 shadow-2xl rounded-2xl overflow-hidden"
-              style={{ ...getTooltipStyle(), pointerEvents: "auto" }}
+              style={{ pointerEvents: "auto" }}
             >
               <div className="h-1.5 w-full bg-gradient-to-r from-primary to-primary/60" />
 
-              <div className={`space-y-3 ${isMobile ? "p-4" : "p-6"}`}>
+              <div className={`space-y-3 ${isMobile ? "p-3.5" : "p-6"}`}>
                 <div className="flex items-start gap-3">
                   <span className={`${isMobile ? "text-2xl" : "text-3xl"} leading-none`}>{step.emoji}</span>
                   <div className="flex-1 min-w-0">
@@ -496,7 +506,15 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
                   </button>
                 </div>
 
-                <p className={`${isMobile ? "text-sm" : "text-base"} text-foreground leading-relaxed`}>{content}</p>
+                <motion.p
+                  key={`copy-${step.id}-${isMobile ? "m" : "d"}`}
+                  initial={{ opacity: 0.2 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.2 }}
+                  className={`${isMobile ? "text-sm" : "text-base"} text-foreground leading-relaxed`}
+                >
+                  {content}
+                </motion.p>
 
                 {tip && (
                   <div className="rounded-lg bg-primary/8 border border-primary/25 px-3 py-2">
@@ -515,7 +533,7 @@ export function OnboardingProvider({ children }: { children: React.ReactNode }) 
                     {currentStep + 1} de {steps.length}
                   </span>
                   <div className="flex gap-2">
-                    <Button variant="ghost" size="sm" onClick={stopOnboarding}>Saltar</Button>
+                    <Button variant="ghost" size="sm" onClick={stopOnboarding}>{isMobile ? "Salir" : "Saltar"}</Button>
                     {currentStep > 0 && (
                       <Button variant="outline" size="sm" onClick={prevStep}>Atrás</Button>
                     )}
