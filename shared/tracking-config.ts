@@ -43,5 +43,5 @@ export const DEFAULT_TRACKING_VISIBILITY: TrackingVisibilityConfig = {
 };
 
 export function normalizeTrackingVisibilityConfig(input?: Partial<TrackingVisibilityConfig> | null): TrackingVisibilityConfig {
-  return { ...DEFAULT_TRACKING_VISIBILITY, ...(input || {}) };
+  return { ...DEFAULT_TRACKING_VISIBILITY, ...(input || {}), showPoweredBy: true };
 }

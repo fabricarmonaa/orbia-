@@ -101,7 +101,6 @@ export function BrandingSettings({
     { key: "showDynamicFieldUpdatedAt", label: "Mostrar 'Actualizado' en dinámicos" },
     { key: "showTos", label: "Mostrar Términos y condiciones" },
     { key: "showSocialLinks", label: "Mostrar links sociales" },
-    { key: "showPoweredBy", label: "Mostrar Powered by" },
   ] as const;
 
 

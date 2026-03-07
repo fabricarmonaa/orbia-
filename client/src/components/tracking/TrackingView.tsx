@@ -186,7 +186,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
         {commentsSection}
         {socialLinksSection}
         {tosSection}
-        {mode === "public" && v.showPoweredBy && <p className="text-center text-xs py-4" style={{ color: mutedText }}>Powered by {appName || "ORBIA"}</p>}
+        {mode === "public" && <p className="text-center text-xs py-4" style={{ color: mutedText }}>Powered by {appName || "ORBIA"}</p>}
       </div>
     </div>
   );

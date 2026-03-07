@@ -164,7 +164,7 @@ export function registerBrandingRoutes(app: Express) {
         colorsJson: payload.colors ?? undefined,
         textsJson: payload.texts ?? undefined,
         linksJson: isEconomic ? { instagram: "", whatsapp: "", web: "" } : (payload.links ?? undefined),
-        trackingConfigJson: payload.trackingConfig ?? undefined,
+        trackingConfigJson: payload.trackingConfig ? { ...payload.trackingConfig, showPoweredBy: true } : undefined,
         pdfConfigJson: payload.pdfConfig ?? undefined,
       });
       const data = await storage.getTenantBranding(req.auth!.tenantId!);
