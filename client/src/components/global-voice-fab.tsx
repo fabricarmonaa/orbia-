@@ -20,6 +20,7 @@ export function GlobalVoiceFab() {
   const [entities, setEntities] = useState<Record<string, unknown>>({});
   const [summary, setSummary] = useState("");
   const [intentTicket, setIntentTicket] = useState("");
+  const [isExecuting, setIsExecuting] = useState(false);
   const mediaRef = useRef<MediaRecorder | null>(null);
 
   const enabled = hasFeature("stt");
@@ -91,6 +92,7 @@ export function GlobalVoiceFab() {
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), 19000);
     try {
+      setIsExecuting(true);
       const res = await apiRequest("POST", "/api/stt/execute", {
         clientConfirmation: true,
         transcript,
@@ -105,6 +107,7 @@ export function GlobalVoiceFab() {
     } catch (err: any) {
       toast({ title: err?.name === "AbortError" ? "Timeout" : "Error", description: err?.message || "No se pudo ejecutar", variant: "destructive" });
     } finally {
+      setIsExecuting(false);
       window.clearTimeout(timer);
     }
   };
@@ -128,8 +131,19 @@ export function GlobalVoiceFab() {
             <pre className="rounded bg-muted p-2 text-xs overflow-auto">{JSON.stringify({ intent, entities }, null, 2)}</pre>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => interpret({ text: transcript })}>No, corregir</Button>
-            <Button onClick={execute}>Confirmar</Button>
+            <Button
+              variant="outline"
+              disabled={status === "processing" || isExecuting}
+              onClick={async () => {
+                setStatus("processing");
+                await interpret({ text: transcript });
+              }}
+            >
+              No, corregir
+            </Button>
+            <Button disabled={status === "processing" || isExecuting} onClick={execute}>
+              {isExecuting ? "Confirmando..." : "Confirmar"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

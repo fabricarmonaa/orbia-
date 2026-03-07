@@ -24,6 +24,11 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   STT_BAD_RESPONSE: "No pudimos interpretar el audio por un problema del servicio de voz.",
   STT_INVALID_PAYLOAD: "El audio o texto enviado no es válido para interpretar.",
   STT_AUDIO_TOO_LARGE: "El audio es demasiado largo. Grabá un mensaje más corto.",
+  SEARCH_FILTER_REQUIRED: "Necesitamos más datos para ejecutar la búsqueda (por ejemplo nombre completo o DNI).",
+  INTENT_TICKET_INVALID: "La confirmación de voz venció. Tocá ‘No, corregir’ o grabá de nuevo.",
+  DATA_EXFIL_BLOCKED: "La consulta solicitada no está permitida por seguridad.",
+  PROVIDER_PURCHASES_NOT_SUPPORTED: "Para compras a proveedor usá el módulo de Compras.",
+  INTENT_NOT_ALLOWED: "Ese comando de voz todavía no está habilitado.",
 };
 
 function formatMaxMb(bytes?: number) {

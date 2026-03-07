@@ -121,29 +121,46 @@ def normalize(text: str) -> str:
 
 def parse_entities(text: str, intent: str) -> dict[str, Any]:
     entities: dict[str, Any] = {}
+    normalized = text.lower()
+
     dni_match = re.search(r"\b(\d{7,9})\b", text)
     if dni_match:
         entities["dni"] = dni_match.group(1)
 
-    qty_match = re.search(r"\b(\d+)\s+(?:unidades?|u|x)\b", text.lower()) or re.search(r"\bde\s+(\d+)\b", text.lower())
+    # Captura flexible si el usuario dice documento/documentos/dni con un número corto o largo.
+    explicit_doc = re.search(r"(?:dni|documento|documentos|nro\.?\s*de\s*documento|numero\s*de\s*documento)\s*(?:es|:)?\s*(\d{1,12})", normalized)
+    if explicit_doc:
+        entities["dni"] = explicit_doc.group(1)
+
+    qty_match = re.search(r"\b(\d+)\s+(?:unidades?|u|x)\b", normalized) or re.search(r"\bde\s+(\d+)\b", normalized)
     if qty_match:
         entities["quantity"] = int(qty_match.group(1))
 
-    price_match = re.search(r"(?:precio|a)\s*(\d{2,8})", text.lower())
+    price_match = re.search(r"(?:precio|a)\s*(\d{2,8})", normalized)
     if price_match:
         entities["price"] = int(price_match.group(1))
 
-    if "cliente" in text.lower():
-        m = re.search(r"cliente\s+([a-zA-Záéíóúñ\s]{3,80})", text)
+    # Nombre de cliente por diferentes formas coloquiales.
+    name_patterns = [
+        r"nombre\s+([a-zA-Záéíóúñ\s]{3,80})",
+        r"cliente\s+([a-zA-Záéíóúñ\s]{3,80})",
+        r"usuario\s+([a-zA-Záéíóúñ\s]{3,80})",
+    ]
+    for pattern in name_patterns:
+        m = re.search(pattern, text, flags=re.IGNORECASE)
         if m:
-            entities["name"] = m.group(1).strip()
-    if "producto" in text.lower():
-        m = re.search(r"producto\s+([a-zA-Z0-9áéíóúñ\s]{2,80})", text)
+            candidate = re.sub(r"\s+(con|dni|documento|documentos).*$", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
+            if len(candidate) >= 3:
+                entities["name"] = candidate
+                break
+
+    if "producto" in normalized:
+        m = re.search(r"producto\s+([a-zA-Z0-9áéíóúñ\s]{2,80})", text, flags=re.IGNORECASE)
         if m:
             entities["name"] = m.group(1).strip()
 
     if intent == "sale.create":
-        pm = re.search(r"venta\s+de\s+\d+\s+([a-zA-Z0-9áéíóúñ\s]{2,80})", text.lower())
+        pm = re.search(r"venta\s+de\s+\d+\s+([a-zA-Z0-9áéíóúñ\s]{2,80})", normalized)
         if pm:
             entities["productName"] = pm.group(1).strip()
 
@@ -156,7 +173,7 @@ def parse_intent(transcript: str) -> tuple[str, dict[str, Any], float]:
     if any(x in t for x in ["export", "dump", "todos los dni", "dame todos"]):
         return "blocked", {}, 1.0
 
-    if any(x in t for x in ["crear cliente", "crea cliente", "registrar cliente"]):
+    if any(x in t for x in ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "crear un usuario", "registrar usuario"]):
         intent = "customer.create"
     elif any(x in t for x in ["compras a proveedor", "compra a proveedor", "compras de proveedor"]):
         intent = "provider.purchases"

@@ -54,6 +54,23 @@ const executeSchema = z.object({
   clientConfirmation: z.literal(true),
 });
 
+
+function normalizeIntentForExecute(intent: string, transcript: string, entities: Record<string, unknown>) {
+  const normalizedIntent = String(intent || "").trim();
+  const normalizedTranscript = String(transcript || "").toLowerCase();
+  const hasCustomerName = typeof entities?.name === "string" && entities.name.trim().length >= 3;
+  const hasDni = String(entities?.dni || entities?.doc || "").replace(/\D/g, "").length >= 1;
+
+  if (normalizedIntent === "customer.search") {
+    const soundsLikeCreate = ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "registrar usuario", "dar de alta cliente", "dar de alta usuario"].some((token) => normalizedTranscript.includes(token));
+    if (soundsLikeCreate && (hasCustomerName || hasDni)) {
+      return "customer.create";
+    }
+  }
+
+  return normalizedIntent;
+}
+
 function n(value: unknown) {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
@@ -224,24 +241,25 @@ export function registerSttRoutes(app: Express) {
   app.post("/api/stt/execute", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), strictSttLimiter, enforceBranchScope, async (req, res) => {
     try {
       const payload = executeSchema.parse(req.body);
+      const effectiveIntent = normalizeIntentForExecute(payload.intent, String(payload.transcript || ""), payload.entities || {});
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
-      if (!ALLOWED_INTENTS.has(payload.intent)) return res.status(400).json({ error: "Intent no permitido", code: "INTENT_NOT_ALLOWED" });
-      if (payload.intent === "sale.create" || payload.intent === "sale.search") {
+      if (!ALLOWED_INTENTS.has(effectiveIntent)) return res.status(400).json({ error: "Intent no permitido", code: "INTENT_NOT_ALLOWED" });
+      if (effectiveIntent === "sale.create" || effectiveIntent === "sale.search") {
         const branchScope = requireBranchScopeForOperation(req.auth!, "Acción de venta");
         if (!branchScope.ok) return res.status(branchScope.status).json(branchScope.body);
       }
       if (detectExfiltration(JSON.stringify(payload.entities))) return res.status(403).json({ error: "Consulta no permitida", code: "DATA_EXFIL_BLOCKED" });
-      if (!consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: payload.intent, entities: payload.entities })) return res.status(403).json({ error: "Intent ticket inválido o expirado", code: "INTENT_TICKET_INVALID" });
-      if (!hasSearchFilters(payload.intent, payload.entities)) return res.status(400).json({ error: "Filtro insuficiente para búsqueda", code: "SEARCH_FILTER_REQUIRED" });
-      if (payload.intent === "customer.purchases" && resolveCustomerPurchasesIntent(String(payload.transcript || "")) === "provider_purchases") return res.status(400).json({ error: "Para compras a proveedor usá el módulo de compras", code: "PROVIDER_PURCHASES_NOT_SUPPORTED" });
+      if (!consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: effectiveIntent, entities: payload.entities })) return res.status(403).json({ error: "Intent ticket inválido o expirado", code: "INTENT_TICKET_INVALID" });
+      if (!hasSearchFilters(effectiveIntent, payload.entities)) return res.status(400).json({ error: "Filtro insuficiente para búsqueda", code: "SEARCH_FILTER_REQUIRED" });
+      if (effectiveIntent === "customer.purchases" && resolveCustomerPurchasesIntent(String(payload.transcript || "")) === "provider_purchases") return res.status(400).json({ error: "Para compras a proveedor usá el módulo de compras", code: "PROVIDER_PURCHASES_NOT_SUPPORTED" });
 
       const executeInteraction = await storage.createSttInteraction({
         tenantId,
         userId,
-        transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
-        intentConfirmed: payload.intent,
+        transcript: sanitizeShortText(payload.transcript || effectiveIntent, 500),
+        intentConfirmed: effectiveIntent,
         entitiesConfirmed: payload.entities,
         status: STT_INTERACTION_STATUS.PENDING,
         idempotencyKey: `execute-${crypto.randomUUID()}`,
@@ -250,7 +268,7 @@ export function registerSttRoutes(app: Express) {
       let result: any = null;
       let response: any = { type: "error" };
 
-      if (payload.intent === "customer.create") {
+      if (effectiveIntent === "customer.create") {
         const name = sanitizeShortText(String(payload.entities.name || ""), 200).trim();
         const doc = String(payload.entities.dni || payload.entities.doc || "").replace(/\D/g, "");
         if (!name || (doc && !/^\d{6,15}$/.test(doc))) return res.status(400).json({ error: "Datos inválidos" });
@@ -261,19 +279,19 @@ export function registerSttRoutes(app: Express) {
         });
         result = created;
         response = { type: "navigation", navigation: { route: "/app/customers", params: { id: created.id } }, data: created };
-      } else if (payload.intent === "customer.search" || payload.intent === "customer.purchases") {
+      } else if (effectiveIntent === "customer.search" || effectiveIntent === "customer.purchases") {
         const dni = String(payload.entities.dni || "").replace(/\D/g, "");
         const name = sanitizeShortText(String(payload.entities.name || ""), 200);
         const where = and(eq(customers.tenantId, tenantId), eq(customers.isActive, true), dni ? eq(customers.doc, dni) : or(ilike(customers.name, `%${name}%`), ilike(customers.email, `%${name}%`))!);
         const list = await db.select().from(customers).where(where).limit(20);
-        if (payload.intent === "customer.search") response = { type: "data", data: { customers: list } };
+        if (effectiveIntent === "customer.search") response = { type: "data", data: { customers: list } };
         else {
           const customerId = list[0]?.id;
           if (!customerId) return res.status(404).json({ error: "Cliente no encontrado" });
           const sales = await storage.listSales(tenantId, { customerId, limit: 20, offset: 0, sort: "date_desc", ...(branchId ? { branchId } : {}) });
           response = { type: "data", data: { customer: list[0], purchases: sales.data, meta: sales.meta } };
         }
-      } else if (payload.intent === "product.create") {
+      } else if (effectiveIntent === "product.create") {
         const name = sanitizeShortText(String(payload.entities.name || ""), 200).trim();
         const price = n(payload.entities.price);
         if (!name || price === null || price < 0) return res.status(400).json({ error: "Datos inválidos" });
@@ -284,15 +302,15 @@ export function registerSttRoutes(app: Express) {
         });
         result = created;
         response = { type: "navigation", navigation: { route: "/app/products", params: { id: created.id } }, data: created };
-      } else if (payload.intent === "product.search") {
+      } else if (effectiveIntent === "product.search") {
         const q = sanitizeShortText(String(payload.entities.name || payload.entities.query || ""), 200);
         const list = await db.select().from(products).where(and(eq(products.tenantId, tenantId), ilike(products.name, `%${q}%`))).limit(20);
         response = { type: "data", data: { products: list } };
-      } else if (payload.intent === "sale.search") {
+      } else if (effectiveIntent === "sale.search") {
         const customerQuery = sanitizeShortText(String(payload.entities.customerName || payload.entities.name || ""), 200);
         const sales = await storage.listSales(tenantId, { customerQuery, limit: 20, offset: 0, sort: "date_desc", ...(branchId ? { branchId } : {}) });
         response = { type: "data", data: { sales: sales.data, meta: sales.meta } };
-      } else if (payload.intent === "sale.create") {
+      } else if (effectiveIntent === "sale.create") {
         const productName = sanitizeShortText(String(payload.entities.productName || payload.entities.product || ""), 200);
         const quantity = n(payload.entities.quantity) || 1;
         const customerName = sanitizeShortText(String(payload.entities.customerName || ""), 200);
@@ -308,18 +326,18 @@ export function registerSttRoutes(app: Express) {
         response = { type: "navigation", navigation: { route: "/app/sales", params: { id: created.sale.id } }, data: created.sale };
       }
 
-      if (!["customer.create", "product.create"].includes(payload.intent)) {
+      if (!["customer.create", "product.create"].includes(effectiveIntent)) {
         await storage.updateSttInteractionResult(executeInteraction.id, tenantId, {
           status: STT_INTERACTION_STATUS.SUCCESS,
-          transcript: sanitizeShortText(payload.transcript || payload.intent, 500),
-          intentConfirmed: payload.intent,
+          transcript: sanitizeShortText(payload.transcript || effectiveIntent, 500),
+          intentConfirmed: effectiveIntent,
           entitiesConfirmed: payload.entities,
           errorCode: null,
         });
       }
       if (result?.id) {
         const lastLog = await storage.getLastUnconfirmedLog(tenantId, userId, "voice_global");
-        if (lastLog) await storage.updateSttLogConfirmed(lastLog.id, tenantId, { resultEntityType: payload.intent, resultEntityId: result.id });
+        if (lastLog) await storage.updateSttLogConfirmed(lastLog.id, tenantId, { resultEntityType: effectiveIntent, resultEntityId: result.id });
       }
       return res.json(response);
     } catch (err: any) {
