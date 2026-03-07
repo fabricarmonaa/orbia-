@@ -47,9 +47,21 @@ export function WhatsAppSettings() {
   const [testPhone, setTestPhone] = useState("");
   const [testText, setTestText] = useState("Mensaje de prueba Orbia WhatsApp");
   const [webhookStatus, setWebhookStatus] = useState<string>("Sin verificar");
+  const [health, setHealth] = useState<any>(null);
   const [sendResult, setSendResult] = useState<{ messageId?: string | null; modeUsed?: string; normalizedTo?: string } | null>(null);
 
   const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
+
+
+  async function loadHealth() {
+    try {
+      const res = await apiRequest("GET", "/api/whatsapp/health");
+      const data = await res.json();
+      setHealth(data || null);
+    } catch {
+      setHealth(null);
+    }
+  }
 
   async function loadChannel() {
     try {
@@ -79,6 +91,7 @@ export function WhatsAppSettings() {
 
   useEffect(() => {
     loadChannel();
+    loadHealth();
   }, []);
 
   async function saveChannel() {
@@ -98,6 +111,7 @@ export function WhatsAppSettings() {
       });
       toast({ title: "Canal guardado" });
       await loadChannel();
+      await loadHealth();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -112,6 +126,7 @@ export function WhatsAppSettings() {
       const data = await res.json();
       setWebhookStatus(data.ok ? "Canal listo" : "Canal incompleto");
       toast({ title: data.ok ? "Conexión OK" : "Conexión incompleta" });
+      await loadHealth();
     } catch (err: any) {
       toast({ title: "Error probando conexión", description: err.message, variant: "destructive" });
     } finally {
@@ -151,6 +166,13 @@ export function WhatsAppSettings() {
         <p className="text-sm text-muted-foreground">Configuración base multi-tenant del canal oficial de WhatsApp.</p>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
+          <p><strong>Estado del canal:</strong> {health?.channelStatus || "DRAFT"} {health?.hasChannel ? "(configurado)" : "(sin configurar)"}</p>
+          <p><strong>Modo actual:</strong> {health?.environmentMode === "production" ? "Producción" : "Sandbox / Test"}</p>
+          <p><strong>Número conectado:</strong> {health?.connectedPhone || "-"}</p>
+          <p><strong>Último test:</strong> {health?.lastTestAt ? new Date(health.lastTestAt).toLocaleString() : "Sin test exitoso"}</p>
+          <p><strong>Quién puede editar:</strong> admins del tenant / superadmin.</p>
+        </div>
         <div className="grid gap-4 md:grid-cols-2">
           <div className="space-y-1"><Label>Provider</Label><Input value={form.provider} onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))} /></div>
           <div className="space-y-1"><Label>Estado del canal</Label><Input value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))} /></div>

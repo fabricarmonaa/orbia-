@@ -26,12 +26,6 @@ export default function WhatsappConversationsPage() {
     [conversations],
   );
 
-  async function loadAddonStatus() {
-    const res = await apiRequest("GET", "/api/addons/status");
-    const json = await res.json();
-    setAddonEnabled(Boolean(json?.data?.whatsapp_inbox));
-  }
-
   async function loadConversations() {
     const res = await apiRequest("GET", "/api/whatsapp/conversations");
     const data = await res.json();
@@ -52,14 +46,27 @@ export default function WhatsappConversationsPage() {
     const res = await apiRequest("GET", `/api/whatsapp/conversations/${conversationId}/messages`);
     const data = await res.json();
     setMessages(data.data || []);
+    if (data.conversation) setSelected(data.conversation);
   }
 
   async function refreshAll() {
     try {
-      await loadAddonStatus();
+      const res = await apiRequest("GET", "/api/addons/status");
+      const json = await res.json();
+      const enabled = Boolean(json?.data?.whatsapp_inbox);
+      setAddonEnabled(enabled);
+      if (!enabled) {
+        setConversations([]);
+        setMessages([]);
+        setSelected(null);
+        return;
+      }
       await Promise.all([loadConversations(), loadUsers()]);
     } catch (err: any) {
-      toast({ title: "Error", description: err.message, variant: "destructive" });
+      if (!String(err?.message || "").includes("addon")) {
+        toast({ title: "Error", description: err.message, variant: "destructive" });
+      }
+      setAddonEnabled(false);
     } finally {
       setLoading(false);
     }
@@ -75,7 +82,8 @@ export default function WhatsappConversationsPage() {
       await loadMessages(selected.id);
       await loadConversations();
     } catch (err: any) {
-      toast({ title: "Error enviando", description: err.message, variant: "destructive" });
+      const msg = String(err?.message || "Error enviando mensaje");
+      toast({ title: "Error enviando", description: msg, variant: "destructive" });
     } finally {
       setBusyAction(null);
     }
@@ -174,7 +182,10 @@ export default function WhatsappConversationsPage() {
               >
                 <div className="flex items-center justify-between">
                   <p className="font-medium">{c.customerName || c.customerPhone}</p>
-                  <Badge>{c.status}</Badge>
+                  <div className="flex gap-1">
+                    <Badge>{c.status}</Badge>
+                    <Badge variant={c.windowOpen ? "secondary" : "destructive"}>{c.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge>
+                  </div>
                 </div>
                 <p className="text-xs text-muted-foreground">{c.customerPhone}</p>
                 <p className="text-xs text-muted-foreground">No leídos: {c.unreadCount} · {c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : "-"}</p>
@@ -186,7 +197,7 @@ export default function WhatsappConversationsPage() {
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <h2 className="font-semibold">Conversación activa {selected ? `#${selected.id}` : ""}</h2>
+            <h2 className="font-semibold">Conversación activa {selected ? `#${selected.id}` : ""} {selected ? <Badge className="ml-2" variant={selected.windowOpen ? "secondary" : "destructive"}>{selected.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge> : null}</h2>
           </CardHeader>
           <CardContent className="space-y-3">
             {!selected ? <p className="text-sm text-muted-foreground">Seleccioná una conversación para operar el inbox.</p> : null}

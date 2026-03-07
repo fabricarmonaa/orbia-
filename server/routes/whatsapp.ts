@@ -16,6 +16,9 @@ import {
   sendTestWhatsAppMessage,
   updateConversationStatus,
   upsertTenantChannel,
+  getLastManualSendEvent,
+  isWithin24hWindow,
+  WhatsAppWindowClosedError,
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
@@ -44,7 +47,21 @@ const conversationIdSchema = z.object({ id: z.coerce.number().int().positive() }
 export function registerWhatsappRoutes(app: Express) {
   app.get("/api/whatsapp/health", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
-    res.json({ ok: true, signatureValidation: isWebhookSignatureValidationEnabled(), hasChannel: Boolean(channel), channelStatus: channel?.status || null });
+    const lastTest = await getLastManualSendEvent(req.auth!.tenantId!);
+    const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+    const environmentMode = testMode === "template_hello_world_test" ? "sandbox" : "production";
+    res.json({
+      ok: true,
+      signatureValidation: isWebhookSignatureValidationEnabled(),
+      hasChannel: Boolean(channel),
+      channelStatus: channel?.status || null,
+      environmentMode,
+      testMode,
+      connectedPhone: channel?.phoneNumber || null,
+      businessAccountId: channel?.businessAccountId || null,
+      lastTestAt: lastTest?.createdAt || null,
+      canEditTechnicalConfig: req.auth?.role === "admin",
+    });
   });
 
   app.get("/api/whatsapp/webhook", async (req, res) => {
@@ -70,9 +87,30 @@ export function registerWhatsappRoutes(app: Express) {
     res.json({ ok: true, ...result });
   });
 
-  app.get("/api/whatsapp/channels/current", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
+  app.get("/api/whatsapp/channels/current", tenantAuth, requireAddon("messaging_whatsapp"), requireTenantAdmin, async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
     res.json({ data: channelToSafeResponse(channel) });
+  });
+
+
+  app.get("/api/whatsapp/channels/summary", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
+    const channel = await getTenantChannel(req.auth!.tenantId!);
+    const healthMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+    const environmentMode = healthMode === "template_hello_world_test" ? "sandbox" : "production";
+    const data = channel
+      ? {
+        status: channel.status,
+        isActive: channel.isActive,
+        connectedPhone: channel.phoneNumber,
+        environmentMode,
+      }
+      : {
+        status: "DRAFT",
+        isActive: false,
+        connectedPhone: null,
+        environmentMode,
+      };
+    return res.json({ data });
   });
 
   app.put(
@@ -99,7 +137,8 @@ export function registerWhatsappRoutes(app: Express) {
     const tenantId = req.auth!.tenantId!;
     const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
     const data = await listConversationsByTenant(tenantId, branchId);
-    res.json({ data });
+    const enriched = data.map((c) => ({ ...c, windowOpen: isWithin24hWindow(c.lastInboundAt) }));
+    res.json({ data: enriched });
   });
 
   app.get(
@@ -115,7 +154,7 @@ export function registerWhatsappRoutes(app: Express) {
       const conversation = await getConversationByIdScoped(tenantId, id, branchId);
       if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
       const data = await listMessagesByConversation(tenantId, id);
-      res.json({ data });
+      res.json({ data, conversation: { ...conversation, windowOpen: isWithin24hWindow(conversation.lastInboundAt) } });
     },
   );
 
@@ -162,9 +201,17 @@ export function registerWhatsappRoutes(app: Express) {
           conversationId,
           executedByUserId: req.auth!.userId,
           text: req.body.text,
+          branchId,
         });
         return res.json({ data: result });
       } catch (error: any) {
+        if (error instanceof WhatsAppWindowClosedError) {
+          return res.status(400).json({
+            error: error.message,
+            code: error.code,
+            hint: "Usá una plantilla de re-engagement para reabrir la conversación.",
+          });
+        }
         const providerError = error as WhatsAppProviderError;
         const providerCode = providerError?.code || "unknown";
         const providerDetails = providerError?.details || providerError?.message || "Error enviando mensaje";

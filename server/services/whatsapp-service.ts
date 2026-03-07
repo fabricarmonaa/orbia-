@@ -19,6 +19,21 @@ function waLog(...args: unknown[]) {
   console.log("[WA]", ...args);
 }
 
+
+export class WhatsAppWindowClosedError extends Error {
+  code = "WHATSAPP_WINDOW_CLOSED";
+  constructor(message = "La ventana de 24h está cerrada. Debes usar una plantilla para reabrir la conversación.") {
+    super(message);
+    this.name = "WhatsAppWindowClosedError";
+  }
+}
+
+export function isWithin24hWindow(lastInboundAt: Date | string | null | undefined) {
+  if (!lastInboundAt) return false;
+  const last = new Date(lastInboundAt).getTime();
+  if (Number.isNaN(last)) return false;
+  return (Date.now() - last) <= 24 * 60 * 60 * 1000;
+}
 export function normalizeWhatsAppRecipientForMeta(input: string): string {
   return String(input || "").replace(/\+/g, "").replace(/[\s\-()]/g, "").replace(/\D/g, "").trim();
 }
@@ -384,17 +399,51 @@ export async function sendConversationWhatsAppMessage(input: {
   conversationId: number;
   executedByUserId: number;
   text: string;
+  branchId?: number | null;
 }) {
-  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, null);
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
   if (!conversation) throw new Error("Conversación no encontrada");
 
   const channel = await getTenantChannel(input.tenantId);
   if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo para el tenant");
 
-  const provider = resolveWhatsappProvider(channel.provider);
+  const windowOpen = isWithin24hWindow(conversation.lastInboundAt);
   const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
 
+  waLog("reply_manual_start", {
+    conversationId: conversation.id,
+    originalRecipient: conversation.customerPhone,
+    normalizedRecipient: normalizedTo,
+    windowOpen,
+    modeUsed: windowOpen ? "text_freeform" : "blocked_window_closed",
+  });
+
+  if (!windowOpen) {
+    await persistWebhookEvent({
+      tenantId: input.tenantId,
+      channelId: channel.id,
+      eventType: "manual_inbox_send_blocked",
+      payload: {
+        conversationId: conversation.id,
+        originalRecipient: conversation.customerPhone,
+        normalizedRecipient: normalizedTo,
+        reason: "window_closed",
+      },
+      processingStatus: "FAILED",
+      errorMessage: "window_closed_24h",
+    });
+    throw new WhatsAppWindowClosedError();
+  }
+
+  const provider = resolveWhatsappProvider(channel.provider);
   const result = await provider.sendTextMessage(channel, normalizedTo, input.text);
+
+  waLog("reply_manual_meta_response", {
+    conversationId: conversation.id,
+    modeUsed: "text_freeform",
+    normalizedRecipient: normalizedTo,
+    raw: result.raw,
+  });
 
   const message = await createOutboundMessage({
     tenantId: input.tenantId,
@@ -404,7 +453,7 @@ export async function sendConversationWhatsAppMessage(input: {
     providerMessageId: result.providerMessageId || null,
     contentText: input.text,
     status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: { modeUsed: "inbox_text", normalizedTo, providerRaw: result.raw },
+    rawPayload: { modeUsed: "text_freeform", normalizedTo, providerRaw: result.raw },
   });
 
   await persistWebhookEvent({
@@ -413,15 +462,17 @@ export async function sendConversationWhatsAppMessage(input: {
     eventType: "manual_inbox_send",
     payload: {
       conversationId: conversation.id,
-      normalizedTo,
+      originalRecipient: conversation.customerPhone,
+      normalizedRecipient: normalizedTo,
       text: input.text,
+      modeUsed: "text_freeform",
       executedByUserId: input.executedByUserId,
       result,
     },
     processingStatus: "PROCESSED",
   });
 
-  return { conversation, message, result, normalizedTo, modeUsed: "inbox_text" };
+  return { conversation, message, result, normalizedTo, modeUsed: "text_freeform", windowOpen: true };
 }
 
 export async function listConversationsByTenant(tenantId: number, branchId?: number | null) {
@@ -436,6 +487,17 @@ export async function listMessagesByConversation(tenantId: number, conversationI
     .from(whatsappMessages)
     .where(and(eq(whatsappMessages.tenantId, tenantId), eq(whatsappMessages.conversationId, conversationId)))
     .orderBy(asc(whatsappMessages.createdAt));
+}
+
+
+export async function getLastManualSendEvent(tenantId: number) {
+  const [event] = await db
+    .select()
+    .from(whatsappWebhookEvents)
+    .where(and(eq(whatsappWebhookEvents.tenantId, tenantId), eq(whatsappWebhookEvents.eventType, "manual_send")))
+    .orderBy(desc(whatsappWebhookEvents.createdAt))
+    .limit(1);
+  return event || null;
 }
 
 export async function getTenantChannel(tenantId: number) {
