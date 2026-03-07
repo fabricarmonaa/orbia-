@@ -37,7 +37,7 @@ const emptyForm: WhatsappChannelForm = {
   webhookVerifyToken: "",
   status: "DRAFT",
   isActive: false,
-  environmentMode: "sandbox",
+  environmentMode: "production",
   sandboxRecipientPhone: "",
   connectedBusinessPhone: "",
 };
@@ -61,7 +61,11 @@ function statusLabel(status?: string) {
 export function WhatsAppSettings() {
   const { toast } = useToast();
   const { user } = useAuth();
-  const canEditTechnicalConfig = user?.role === "admin";
+
+  const internalSandboxFlag = String(import.meta.env.VITE_WHATSAPP_INTERNAL_SANDBOX || "").toLowerCase() === "true";
+  const canUseSandbox = Boolean(user?.isSuperAdmin || internalSandboxFlag);
+  const canEditTechnicalConfig = Boolean(user?.role === "admin" || user?.isSuperAdmin);
+  const canViewSensitiveFields = Boolean(user?.isSuperAdmin || internalSandboxFlag);
 
   const [form, setForm] = useState<WhatsappChannelForm>(emptyForm);
   const [loading, setLoading] = useState(true);
@@ -86,7 +90,7 @@ export function WhatsAppSettings() {
       if (data?.data?.environmentMode) {
         setForm((prev) => ({
           ...prev,
-          environmentMode: data.data.environmentMode,
+          environmentMode: canUseSandbox ? data.data.environmentMode : "production",
           sandboxRecipientPhone: data.data.sandboxRecipientPhone || prev.sandboxRecipientPhone,
           connectedBusinessPhone: data.data.channelConnectedPhone || prev.connectedBusinessPhone,
         }));
@@ -117,7 +121,7 @@ export function WhatsAppSettings() {
           phoneNumber: summary?.data?.connectedPhone || "",
           connectedBusinessPhone: summary?.data?.connectedPhone || "",
           sandboxRecipientPhone: summary?.data?.sandboxRecipientPhone || "",
-          environmentMode: summary?.data?.environmentMode || "sandbox",
+          environmentMode: canUseSandbox ? (summary?.data?.environmentMode || "production") : "production",
           isActive: Boolean(summary?.data?.isActive),
         }));
         return;
@@ -138,7 +142,7 @@ export function WhatsAppSettings() {
           webhookVerifyToken: data.data.webhookVerifyToken || "",
           status: data.data.status || "DRAFT",
           isActive: Boolean(data.data.isActive),
-          environmentMode: data.data.environmentMode || "sandbox",
+          environmentMode: canUseSandbox ? (data.data.environmentMode || "production") : "production",
           sandboxRecipientPhone: data.data.sandboxRecipientPhone || "",
           connectedBusinessPhone: data.data.connectedBusinessPhone || data.data.phoneNumber || "",
         }));
@@ -164,7 +168,7 @@ export function WhatsAppSettings() {
     if (!canEditTechnicalConfig) return;
     setSaving(true);
     try {
-      await apiRequest("PUT", "/api/whatsapp/channels/current", {
+      const payload: Record<string, unknown> = {
         provider: form.provider,
         phoneNumber: form.phoneNumber,
         phoneNumberId: form.phoneNumberId,
@@ -172,13 +176,18 @@ export function WhatsAppSettings() {
         displayName: form.displayName,
         accessToken: form.accessToken,
         appSecret: form.appSecret,
-        webhookVerifyToken: form.webhookVerifyToken,
         status: form.status,
         isActive: form.isActive,
-        environmentMode: form.environmentMode,
-        sandboxRecipientPhone: form.environmentMode === "sandbox" ? form.sandboxRecipientPhone : null,
+        environmentMode: canUseSandbox ? form.environmentMode : "production",
+        sandboxRecipientPhone: canUseSandbox && form.environmentMode === "sandbox" ? form.sandboxRecipientPhone : null,
         connectedBusinessPhone: form.environmentMode === "production" ? form.connectedBusinessPhone : form.phoneNumber,
-      });
+      };
+
+      if (canViewSensitiveFields && form.webhookVerifyToken.trim()) {
+        payload.webhookVerifyToken = form.webhookVerifyToken;
+      }
+
+      await apiRequest("PUT", "/api/whatsapp/channels/current", payload);
       toast({ title: "Canal guardado" });
       await refreshState();
     } catch (err: any) {
@@ -229,20 +238,22 @@ export function WhatsAppSettings() {
 
   if (loading) return <Card><CardContent className="pt-6 text-sm text-muted-foreground">Cargando canal...</CardContent></Card>;
 
-  const runtimeMode = form.environmentMode || health?.environmentMode || "sandbox";
+  const runtimeMode: EnvironmentMode = canUseSandbox
+    ? (form.environmentMode || health?.environmentMode || "production")
+    : "production";
   const displayStatus = statusLabel(health?.channelProductStatus || onboarding?.channelProductStatus);
 
   return (
     <Card>
       <CardHeader>
         <h3 className="font-semibold">WhatsApp del negocio</h3>
-        <p className="text-sm text-muted-foreground">Conectá tu número real para operar el inbox, o usá sandbox para pruebas internas.</p>
+        <p className="text-sm text-muted-foreground">Conectá el número real de tu negocio para atender clientes desde el inbox.</p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
           <div className="flex flex-wrap items-center gap-2">
             <p><strong>Estado:</strong> {displayStatus}</p>
-            <Badge variant="secondary">{runtimeMode === "production" ? "Producción" : "Sandbox"}</Badge>
+            <Badge variant="secondary">{runtimeMode === "production" ? "Producción" : "Sandbox interno"}</Badge>
             <Badge variant={onboarding?.inboxEnabled ? "outline" : "secondary"}>Inbox {onboarding?.inboxEnabled ? "activo" : "inactivo"}</Badge>
           </div>
           <p><strong>Número conectado:</strong> {health?.connectedPhone || onboarding?.channelConnectedPhone || "-"}</p>
@@ -258,35 +269,51 @@ export function WhatsAppSettings() {
           ))}
         </div>
 
-        <div className="rounded-md border p-3 space-y-3">
-          <p className="font-medium">Paso 2: Elegí modo de conexión</p>
-          <div className="flex gap-2">
-            <Button variant={runtimeMode === "sandbox" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "sandbox" }))} disabled={!canEditTechnicalConfig}>Usar modo prueba</Button>
-            <Button variant={runtimeMode === "production" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "production" }))} disabled={!canEditTechnicalConfig}>Conectar número real</Button>
+        {canUseSandbox ? (
+          <div className="rounded-md border p-3 space-y-3">
+            <p className="font-medium">Elegí modo de conexión</p>
+            <div className="flex gap-2">
+              <Button variant={runtimeMode === "production" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "production" }))} disabled={!canEditTechnicalConfig}>Conectar número real</Button>
+              <Button variant={runtimeMode === "sandbox" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "sandbox" }))} disabled={!canEditTechnicalConfig}>Sandbox (solo pruebas internas)</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {runtimeMode === "sandbox"
+                ? "Pruebas internas: usa número de prueba de Meta y destinatario autorizado."
+                : "Producción: este canal atiende clientes reales desde el inbox."}
+            </p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            {runtimeMode === "sandbox"
-              ? "Sandbox usa número de prueba y destinatarios autorizados. Ideal para validar integración sin operación real."
-              : "Producción conecta el número real del negocio para recibir y responder chats reales desde Inbox."}
-          </p>
-        </div>
+        ) : (
+          <div className="rounded-md border p-3 text-sm">
+            <p className="font-medium">Modo producción (cliente real)</p>
+            <p className="text-xs text-muted-foreground">El modo sandbox está reservado para superadmin/testing interno y no forma parte del onboarding del cliente.</p>
+          </div>
+        )}
 
         {runtimeMode === "sandbox" ? (
           <div className="rounded-md border p-3 space-y-2">
-            <p className="font-medium">Paso 3: Configuración de prueba (sandbox)</p>
-            <div className="space-y-1">
-              <Label>Destinatario sandbox autorizado</Label>
-              <Input
-                value={form.sandboxRecipientPhone}
-                onChange={(e) => setForm((p) => ({ ...p, sandboxRecipientPhone: e.target.value }))}
-                placeholder="Ej: 542236979026"
-                disabled={!canEditTechnicalConfig}
-              />
+            <p className="font-medium">Pruebas internas (sandbox)</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Destinatario sandbox autorizado</Label>
+                <Input value={form.sandboxRecipientPhone} onChange={(e) => setForm((p) => ({ ...p, sandboxRecipientPhone: e.target.value }))} placeholder="Ej: 542236979026" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>Access token (sandbox)</Label>
+                <Input value={form.accessToken || ""} onChange={(e) => setForm((p) => ({ ...p, accessToken: e.target.value }))} placeholder="Token de prueba Meta" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>Phone number ID (sandbox)</Label>
+                <Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} placeholder="ID número prueba" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>Business account ID (sandbox)</Label>
+                <Input value={form.businessAccountId || ""} onChange={(e) => setForm((p) => ({ ...p, businessAccountId: e.target.value }))} placeholder="ID cuenta de prueba" disabled={!canEditTechnicalConfig} />
+              </div>
             </div>
           </div>
         ) : (
           <div className="rounded-md border p-3 space-y-2">
-            <p className="font-medium">Paso 3: Conectar número real del negocio</p>
+            <p className="font-medium">Conectar número real del negocio</p>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-1">
                 <Label>Número conectado</Label>
@@ -294,7 +321,7 @@ export function WhatsAppSettings() {
               </div>
               <div className="space-y-1">
                 <Label>ID del número</Label>
-                <Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} placeholder="ID del phone number de Meta" disabled={!canEditTechnicalConfig} />
+                <Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} placeholder="ID del número en Meta" disabled={!canEditTechnicalConfig} />
               </div>
               <div className="space-y-1">
                 <Label>ID de cuenta empresarial</Label>
@@ -325,7 +352,9 @@ export function WhatsAppSettings() {
             <div className="space-y-1"><Label>Phone number base</Label><Input value={form.phoneNumber} onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))} /></div>
             <div className="space-y-1"><Label>Display name</Label><Input value={form.displayName || ""} onChange={(e) => setForm((p) => ({ ...p, displayName: e.target.value }))} /></div>
             <div className="space-y-1"><Label>App secret</Label><Input value={form.appSecret || ""} onChange={(e) => setForm((p) => ({ ...p, appSecret: e.target.value }))} placeholder="Masked tras guardar" /></div>
-            <div className="space-y-1"><Label>Webhook verify token</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Masked tras guardar" /></div>
+            {canViewSensitiveFields ? (
+              <div className="space-y-1"><Label>Webhook verify token (interno)</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Solo uso técnico/interno" /></div>
+            ) : null}
           </div>
         ) : null}
 
@@ -337,11 +366,11 @@ export function WhatsAppSettings() {
         </div>
 
         <div className="border rounded-md p-3 space-y-2">
-          <p className="text-sm font-medium">Paso 4: Enviar mensaje de prueba</p>
-          <p className="text-xs text-muted-foreground">En sandbox se usa template <code>hello_world</code>. En producción sirve para validar la salida del número conectado.</p>
+          <p className="text-sm font-medium">Enviar mensaje de prueba</p>
+          <p className="text-xs text-muted-foreground">Sandbox usa <code>hello_world</code>. Producción valida el envío del canal real.</p>
           <div className="grid md:grid-cols-2 gap-2">
-            <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder={runtimeMode === "sandbox" ? "Destinatario autorizado" : "Cliente real"} />
-            <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Solo se usa en text_freeform" />
+            <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder={runtimeMode === "sandbox" ? "Destinatario sandbox" : "Cliente real"} />
+            <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Texto para modo libre" />
           </div>
           <p className="text-xs text-muted-foreground">Número normalizado para Meta: <strong>{normalizedRecipientPreview || "-"}</strong></p>
           <Button variant="secondary" onClick={sendTest} disabled={sending || !testPhone.trim()}>{sending ? "Enviando..." : "Enviar test"}</Button>

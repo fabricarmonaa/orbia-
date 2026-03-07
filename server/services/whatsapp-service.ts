@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   tenantWhatsappChannels,
@@ -65,6 +66,11 @@ function readChannelMetadata(channel?: TenantWhatsappChannel | null): ChannelMet
     lastSuccessfulTestAt: raw.lastSuccessfulTestAt ? String(raw.lastSuccessfulTestAt) : null,
     lastConnectionValidatedAt: raw.lastConnectionValidatedAt ? String(raw.lastConnectionValidatedAt) : null,
   };
+}
+
+
+function generateWebhookVerifyToken() {
+  return `orbia_${randomBytes(12).toString("hex")}`;
 }
 
 function defaultEnvironmentMode() {
@@ -676,6 +682,9 @@ export async function upsertTenantChannel(tenantId: number, payload: {
   if (shouldReplaceAccessToken) values.accessTokenEncrypted = encryptSecret(incomingAccessToken);
   if (shouldReplaceAppSecret) values.appSecretEncrypted = encryptSecret(incomingAppSecret);
   if (shouldReplaceVerifyToken) values.webhookVerifyTokenEncrypted = encryptSecret(incomingVerifyToken);
+  if (!existing && !values.webhookVerifyTokenEncrypted) {
+    values.webhookVerifyTokenEncrypted = encryptSecret(generateWebhookVerifyToken());
+  }
 
   waLog("upsert_channel_secret_source", {
     tenantId,

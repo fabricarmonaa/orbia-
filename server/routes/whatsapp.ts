@@ -52,11 +52,22 @@ const conversationIdSchema = z.object({ id: z.coerce.number().int().positive() }
 const sendTemplateSchema = z.object({ templateCode: z.string().trim().min(1).max(120) });
 
 export function registerWhatsappRoutes(app: Express) {
+  const internalSandboxEnabled = String(process.env.WHATSAPP_INTERNAL_SANDBOX || "").toLowerCase() === "true";
+  const canUseSandbox = (req: any) => Boolean(req?.auth?.isSuperAdmin || internalSandboxEnabled);
+  const runtimeForRequest = (req: any, runtime: any) => {
+    if (canUseSandbox(req)) return runtime;
+    return {
+      ...runtime,
+      environmentMode: "production",
+      sandboxRecipientPhone: null,
+      channelProductStatus: runtime?.channelProductStatus === "sandbox_ready" ? "incomplete" : runtime?.channelProductStatus,
+    };
+  };
   app.get("/api/whatsapp/health", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
     const lastTest = await getLastManualSendEvent(req.auth!.tenantId!);
     const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
-    const runtime = getChannelRuntimeInfo(channel);
+    const runtime = runtimeForRequest(req, getChannelRuntimeInfo(channel));
     res.json({
       ok: true,
       signatureValidation: isWebhookSignatureValidationEnabled(),
@@ -70,7 +81,8 @@ export function registerWhatsappRoutes(app: Express) {
       businessAccountId: channel?.businessAccountId || null,
       lastTestAt: runtime.lastSuccessfulTestAt || lastTest?.createdAt || null,
       lastConnectionValidatedAt: runtime.lastConnectionValidatedAt || null,
-      canEditTechnicalConfig: req.auth?.role === "admin",
+      canEditTechnicalConfig: Boolean(req.auth?.role === "admin" || req.auth?.isSuperAdmin),
+      sandboxAvailable: canUseSandbox(req),
     });
   });
 
@@ -105,7 +117,7 @@ export function registerWhatsappRoutes(app: Express) {
 
   app.get("/api/whatsapp/channels/summary", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
-    const runtime = getChannelRuntimeInfo(channel);
+    const runtime = runtimeForRequest(req, getChannelRuntimeInfo(channel));
     const data = channel
       ? {
         status: channel.status,
@@ -141,7 +153,7 @@ export function registerWhatsappRoutes(app: Express) {
     for (const a of addonsRes || []) addonsMap[a.addonKey] = Boolean(a.enabled);
     const messagingEnabled = Boolean(addonsMap.messaging_whatsapp);
     const inboxEnabled = Boolean(addonsMap.whatsapp_inbox);
-    const runtime = getChannelRuntimeInfo(channelRes);
+    const runtime = runtimeForRequest(req, getChannelRuntimeInfo(channelRes));
     const steps = [
       { key: "activate_addons", title: "Activar addon Mensajería WhatsApp", completed: messagingEnabled },
       { key: "enable_inbox", title: "Activar addon WhatsApp Inbox", completed: inboxEnabled },
@@ -159,7 +171,8 @@ export function registerWhatsappRoutes(app: Express) {
         sandboxRecipientPhone: runtime.sandboxRecipientPhone,
         lastSuccessfulTestAt: runtime.lastSuccessfulTestAt,
         lastConnectionValidatedAt: runtime.lastConnectionValidatedAt,
-        canEditTechnicalConfig: req.auth?.role === "admin",
+        canEditTechnicalConfig: Boolean(req.auth?.role === "admin" || req.auth?.isSuperAdmin),
+      sandboxAvailable: canUseSandbox(req),
         steps,
       },
     });
@@ -173,7 +186,12 @@ export function registerWhatsappRoutes(app: Express) {
     blockBranchScope,
     validateBody(channelSchema),
     async (req, res) => {
-      const saved = await upsertTenantChannel(req.auth!.tenantId!, req.body);
+      const payload = { ...req.body };
+      if (!canUseSandbox(req)) {
+        payload.environmentMode = "production";
+        payload.sandboxRecipientPhone = null;
+      }
+      const saved = await upsertTenantChannel(req.auth!.tenantId!, payload);
       res.json({ data: channelToSafeResponse(saved) });
     },
   );
@@ -196,13 +214,13 @@ export function registerWhatsappRoutes(app: Express) {
         webhookVerifyToken: safe?.webhookVerifyToken,
         status: channel.status,
         isActive: channel.isActive,
-        environmentMode: safe?.environmentMode,
-        sandboxRecipientPhone: safe?.sandboxRecipientPhone,
+        environmentMode: canUseSandbox(req) ? safe?.environmentMode : "production",
+        sandboxRecipientPhone: canUseSandbox(req) ? safe?.sandboxRecipientPhone : null,
         connectedBusinessPhone: safe?.connectedBusinessPhone,
         markConnectionValidatedAt: true,
       });
     }
-    const runtime = getChannelRuntimeInfo(await getTenantChannel(tenantId));
+    const runtime = runtimeForRequest(req, getChannelRuntimeInfo(await getTenantChannel(tenantId)));
     res.json({ ok: healthy, details: { provider: channel.provider, status: channel.status, isActive: channel.isActive, environmentMode: runtime.environmentMode, channelProductStatus: runtime.channelProductStatus } });
   });
 
