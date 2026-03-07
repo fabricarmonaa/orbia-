@@ -169,7 +169,7 @@ export function WhatsAppSettings() {
     setSending(true);
     setSendResult(null);
     try {
-      const res = await apiRequest("POST", "/api/whatsapp/messages/send-test", { to: testPhone, text: testText });
+      const res = await apiRequest("POST", "/api/whatsapp/messages/send-test", { to: testPhone, text: testText }, { skipAuthHandling: true });
       const data = await res.json();
       const payload = data?.data || {};
       setSendResult({

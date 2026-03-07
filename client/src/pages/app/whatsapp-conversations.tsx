@@ -88,7 +88,7 @@ export default function WhatsappConversationsPage() {
     if (!selected || !reply.trim()) return;
     setBusyAction("send");
     try {
-      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send`, { text: reply.trim() });
+      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send`, { text: reply.trim() }, { skipAuthHandling: true });
       toast({ title: "Mensaje enviado" });
       setReply("");
       await loadMessages(selected.id);
@@ -106,7 +106,7 @@ export default function WhatsappConversationsPage() {
     if (!selected || !selectedTemplateCode) return;
     setBusyAction("send-template");
     try {
-      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode });
+      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode }, { skipAuthHandling: true });
       toast({ title: "Plantilla enviada" });
       await loadMessages(selected.id);
       await loadConversations();

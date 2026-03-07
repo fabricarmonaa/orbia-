@@ -31,6 +31,19 @@ const DEFAULT_MESSAGES: Record<string, string> = {
   INTENT_NOT_ALLOWED: "Ese comando de voz todavía no está habilitado.",
 };
 
+const AUTH_ERROR_CODES = new Set([
+  "AUTH_REQUIRED",
+  "AUTH_EXPIRED",
+  "AUTH_INVALID",
+  "TOKEN_REQUIRED",
+  "TOKEN_EXPIRED",
+  "TOKEN_INVALID",
+]);
+
+function isAuthErrorCode(code?: string) {
+  return Boolean(code && AUTH_ERROR_CODES.has(String(code).toUpperCase()));
+}
+
 function formatMaxMb(bytes?: number) {
   if (!bytes) return null;
   const mb = bytes / (1024 * 1024);
@@ -58,7 +71,9 @@ export async function parseApiError(
   if (code && DEFAULT_MESSAGES[code]) {
     message = DEFAULT_MESSAGES[code];
   } else if (res.status === 401) {
-    message = "Tu sesión venció. Volvé a iniciar sesión.";
+    message = isAuthErrorCode(code)
+      ? "Tu sesión venció. Volvé a iniciar sesión."
+      : (fallbackMessage || "No autorizado para esta operación.");
   } else if (res.status === 403) {
     message = "No tenés permisos para acceder a esta sección.";
   } else if (res.status >= 500) {
