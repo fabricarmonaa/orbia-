@@ -73,7 +73,7 @@ export function WhatsAppSettings() {
   const { user } = useAuth();
 
   const internalSandboxFlag = String(import.meta.env.VITE_WHATSAPP_INTERNAL_SANDBOX || "").toLowerCase() === "true";
-  const canUseSandbox = Boolean(user?.isSuperAdmin || internalSandboxFlag);
+  const canUseSandbox = Boolean(user?.isSuperAdmin || user?.role === "admin" || internalSandboxFlag);
   const canEditTechnicalConfig = Boolean(user?.role === "admin" || user?.isSuperAdmin);
   const canViewSensitiveFields = Boolean(user?.isSuperAdmin || internalSandboxFlag);
 

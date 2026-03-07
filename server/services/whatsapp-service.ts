@@ -101,12 +101,12 @@ function normalizeAllowedRecipients(input: unknown): string[] {
   return Array.from(new Set(arr.map((v) => normalizeWhatsAppRecipientForMeta(String(v || ""))).filter(Boolean)));
 }
 
-function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, to: string) {
+function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, target: { to: string; candidates?: string[]; allowed?: string[] }) {
   const runtime = getChannelRuntimeInfo(channel);
   if (runtime.environmentMode !== "sandbox") return;
-  const allowed = runtime.sandboxAllowedRecipients || [];
+  const allowed = target.allowed || runtime.sandboxAllowedRecipients || [];
   if (!allowed.length) return;
-  const normalized = normalizeWhatsAppRecipientForMeta(to);
+  const normalized = normalizeWhatsAppRecipientForMeta(target.to);
   if (allowed.includes(normalized)) return;
   throw new WhatsAppProviderError(
     `Sandbox recipient not allowed (${normalized})`,
@@ -119,9 +119,51 @@ function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, to: strin
           details: `Añadí ${normalized} a la lista de destinatarios permitidos para sandbox y volvé a intentarlo.`,
         },
       },
+      resolvedRecipient: normalized,
+      candidateRecipients: target.candidates || [],
       sandboxAllowedRecipients: allowed,
     },
   );
+}
+
+
+
+type ReplyTargetContext = {
+  conversationId: number;
+  conversationCustomerPhone: string;
+  mode: "manual_text" | "manual_template" | "send_test";
+  overrideTo?: string | null;
+};
+
+export function resolveWhatsAppReplyTarget(channel: TenantWhatsappChannel, ctx: ReplyTargetContext) {
+  const runtime = getChannelRuntimeInfo(channel);
+  const baseConversation = normalizeWhatsAppRecipientForMeta(ctx.conversationCustomerPhone);
+  const override = normalizeWhatsAppRecipientForMeta(ctx.overrideTo || "");
+  const sandboxRecipient = normalizeWhatsAppRecipientForMeta(runtime.sandboxRecipientPhone || "");
+
+  const candidates = runtime.environmentMode === "sandbox"
+    ? [override, sandboxRecipient, baseConversation].filter(Boolean)
+    : [override, baseConversation].filter(Boolean);
+
+  const allowed = runtime.sandboxAllowedRecipients || [];
+  let chosen = candidates[0] || baseConversation;
+  let source = candidates[0] === override ? "override" : candidates[0] === sandboxRecipient ? "sandbox_recipient" : "conversation_customer_phone";
+
+  if (runtime.environmentMode === "sandbox" && allowed.length) {
+    const allowedCandidate = candidates.find((c) => allowed.includes(c));
+    if (allowedCandidate) {
+      chosen = allowedCandidate;
+      source = allowedCandidate === override ? "override_allowed" : allowedCandidate === sandboxRecipient ? "sandbox_recipient_allowed" : "conversation_phone_allowed";
+    }
+  }
+
+  return {
+    environmentMode: runtime.environmentMode,
+    to: chosen,
+    source,
+    candidates,
+    allowed,
+  };
 }
 
 function extractMetaEvents(payload: any) {
@@ -489,12 +531,20 @@ export async function sendConversationWhatsAppMessage(input: {
   if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo para el tenant");
 
   const windowOpen = isWithin24hWindow(conversation.lastInboundAt);
-  const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
+  const target = resolveWhatsAppReplyTarget(channel, {
+    conversationId: conversation.id,
+    conversationCustomerPhone: conversation.customerPhone,
+    mode: "manual_text",
+  });
 
   waLog("reply_manual_start", {
     conversationId: conversation.id,
+    channelId: conversation.channelId,
     originalRecipient: conversation.customerPhone,
-    normalizedRecipient: normalizedTo,
+    normalizedRecipient: target.to,
+    targetSource: target.source,
+    targetCandidates: target.candidates,
+    environmentMode: target.environmentMode,
     windowOpen,
     modeUsed: windowOpen ? "text_freeform" : "blocked_window_closed",
   });
@@ -507,7 +557,7 @@ export async function sendConversationWhatsAppMessage(input: {
       payload: {
         conversationId: conversation.id,
         originalRecipient: conversation.customerPhone,
-        normalizedRecipient: normalizedTo,
+        normalizedRecipient: target.to,
         reason: "window_closed",
       },
       processingStatus: "FAILED",
@@ -516,14 +566,14 @@ export async function sendConversationWhatsAppMessage(input: {
     throw new WhatsAppWindowClosedError();
   }
 
-  assertSandboxRecipientAllowed(channel, normalizedTo);
+  assertSandboxRecipientAllowed(channel, target);
   const provider = resolveWhatsappProvider(channel.provider);
-  const result = await provider.sendTextMessage(channel, normalizedTo, input.text);
+  const result = await provider.sendTextMessage(channel, target.to, input.text);
 
   waLog("reply_manual_meta_response", {
     conversationId: conversation.id,
     modeUsed: "text_freeform",
-    normalizedRecipient: normalizedTo,
+    normalizedRecipient: target.to,
     raw: result.raw,
   });
 
@@ -535,7 +585,7 @@ export async function sendConversationWhatsAppMessage(input: {
     providerMessageId: result.providerMessageId || null,
     contentText: input.text,
     status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: { modeUsed: "text_freeform", normalizedTo, providerRaw: result.raw },
+    rawPayload: { modeUsed: "text_freeform", normalizedTo: target.to, targetSource: target.source, providerRaw: result.raw },
   });
 
   await persistWebhookEvent({
@@ -545,7 +595,7 @@ export async function sendConversationWhatsAppMessage(input: {
     payload: {
       conversationId: conversation.id,
       originalRecipient: conversation.customerPhone,
-      normalizedRecipient: normalizedTo,
+      normalizedRecipient: target.to,
       text: input.text,
       modeUsed: "text_freeform",
       executedByUserId: input.executedByUserId,
@@ -554,7 +604,7 @@ export async function sendConversationWhatsAppMessage(input: {
     processingStatus: "PROCESSED",
   });
 
-  return { conversation, message, result, normalizedTo, modeUsed: "text_freeform", windowOpen: true };
+  return { conversation, message, result, normalizedTo: target.to, modeUsed: "text_freeform", windowOpen: true, targetSource: target.source };
 }
 
 
@@ -572,19 +622,27 @@ export async function sendConversationTemplateMessage(input: {
   if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo para el tenant");
 
   const provider = resolveWhatsappProvider(channel.provider);
-  const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
-  assertSandboxRecipientAllowed(channel, normalizedTo);
+  const target = resolveWhatsAppReplyTarget(channel, {
+    conversationId: conversation.id,
+    conversationCustomerPhone: conversation.customerPhone,
+    mode: "manual_template",
+  });
+  assertSandboxRecipientAllowed(channel, target);
 
   waLog("reply_manual_start", {
     conversationId: conversation.id,
+    channelId: conversation.channelId,
     originalRecipient: conversation.customerPhone,
-    normalizedRecipient: normalizedTo,
+    normalizedRecipient: target.to,
+    targetSource: target.source,
+    targetCandidates: target.candidates,
+    environmentMode: target.environmentMode,
     windowOpen: isWithin24hWindow(conversation.lastInboundAt),
     modeUsed: "template_manual",
     templateCode: input.templateCode,
   });
 
-  const result = await provider.sendTemplateMessage(channel, normalizedTo, input.templateCode, [], "en_US");
+  const result = await provider.sendTemplateMessage(channel, target.to, input.templateCode, [], "en_US");
 
   const message = await createOutboundMessage({
     tenantId: input.tenantId,
@@ -594,7 +652,7 @@ export async function sendConversationTemplateMessage(input: {
     providerMessageId: result.providerMessageId || null,
     contentText: `[template:${input.templateCode}]`,
     status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo, providerRaw: result.raw },
+    rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo: target.to, targetSource: target.source, providerRaw: result.raw },
   });
 
   await persistWebhookEvent({
@@ -604,7 +662,9 @@ export async function sendConversationTemplateMessage(input: {
     payload: {
       conversationId: conversation.id,
       originalRecipient: conversation.customerPhone,
-      normalizedRecipient: normalizedTo,
+      normalizedRecipient: target.to,
+      targetSource: target.source,
+      targetCandidates: target.candidates,
       templateCode: input.templateCode,
       modeUsed: "template_manual",
       executedByUserId: input.executedByUserId,
@@ -613,7 +673,7 @@ export async function sendConversationTemplateMessage(input: {
     processingStatus: "PROCESSED",
   });
 
-  return { conversation, message, result, normalizedTo, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt) };
+  return { conversation, message, result, normalizedTo: target.to, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt), targetSource: target.source };
 }
 
 export async function listConversationsByTenant(tenantId: number, branchId?: number | null) {
@@ -788,7 +848,13 @@ export async function sendTestWhatsAppMessage(input: {
   const mode = runtime.environmentMode === "sandbox"
     ? "template_hello_world_test"
     : (productionTestMode === "template_hello_world_test" ? "template_hello_world_test" : "text_freeform");
-  const normalizedTo = normalizeWhatsAppRecipientForMeta(input.to);
+  const target = resolveWhatsAppReplyTarget(channel, {
+    conversationId: 0,
+    conversationCustomerPhone: input.to,
+    mode: "send_test",
+    overrideTo: input.to,
+  });
+  const normalizedTo = target.to;
   const conversation = await findOrCreateConversation({
     tenantId: input.tenantId,
     branchId: channel.branchId,
@@ -797,11 +863,11 @@ export async function sendTestWhatsAppMessage(input: {
   });
 
   const provider = resolveWhatsappProvider(channel.provider);
-  assertSandboxRecipientAllowed(channel, normalizedTo);
+  assertSandboxRecipientAllowed(channel, target);
 
   waLog("send_test_start", {
     originalRecipientInput: input.to,
-    normalizedRecipient: normalizedTo,
+    normalizedRecipient: target.to,
     phoneNumberId: channel.phoneNumberId,
     businessAccountId: channel.businessAccountId,
     accessTokenSource: channel.accessTokenEncrypted ? "db_encrypted" : "missing",

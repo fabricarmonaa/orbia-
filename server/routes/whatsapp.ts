@@ -54,16 +54,8 @@ const sendTemplateSchema = z.object({ templateCode: z.string().trim().min(1).max
 
 export function registerWhatsappRoutes(app: Express) {
   const internalSandboxEnabled = String(process.env.WHATSAPP_INTERNAL_SANDBOX || "").toLowerCase() === "true";
-  const canUseSandbox = (req: any) => Boolean(req?.auth?.isSuperAdmin || internalSandboxEnabled);
-  const runtimeForRequest = (req: any, runtime: any) => {
-    if (canUseSandbox(req)) return runtime;
-    return {
-      ...runtime,
-      environmentMode: "production",
-      sandboxRecipientPhone: null,
-      channelProductStatus: runtime?.channelProductStatus === "sandbox_ready" ? "incomplete" : runtime?.channelProductStatus,
-    };
-  };
+  const canUseSandbox = (req: any) => Boolean(req?.auth?.isSuperAdmin || req?.auth?.role === "admin" || internalSandboxEnabled);
+  const runtimeForRequest = (_req: any, runtime: any) => runtime;
   app.get("/api/whatsapp/health", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
     const lastTest = await getLastManualSendEvent(req.auth!.tenantId!);
