@@ -55,6 +55,7 @@ type ChannelMetadata = {
   connectedBusinessPhone?: string | null;
   lastSuccessfulTestAt?: string | null;
   lastConnectionValidatedAt?: string | null;
+  sandboxAllowedRecipients?: string[];
 };
 
 function readChannelMetadata(channel?: TenantWhatsappChannel | null): ChannelMetadata {
@@ -65,6 +66,7 @@ function readChannelMetadata(channel?: TenantWhatsappChannel | null): ChannelMet
     connectedBusinessPhone: raw.connectedBusinessPhone ? normalizePhone(String(raw.connectedBusinessPhone)) : null,
     lastSuccessfulTestAt: raw.lastSuccessfulTestAt ? String(raw.lastSuccessfulTestAt) : null,
     lastConnectionValidatedAt: raw.lastConnectionValidatedAt ? String(raw.lastConnectionValidatedAt) : null,
+    sandboxAllowedRecipients: normalizeAllowedRecipients(raw.sandboxAllowedRecipients),
   };
 }
 
@@ -89,7 +91,37 @@ export function getChannelRuntimeInfo(channel: TenantWhatsappChannel | null) {
     connectedBusinessPhone: metadata.connectedBusinessPhone || channel?.phoneNumber || null,
     lastSuccessfulTestAt: metadata.lastSuccessfulTestAt || null,
     lastConnectionValidatedAt: metadata.lastConnectionValidatedAt || null,
+    sandboxAllowedRecipients: metadata.sandboxAllowedRecipients || [],
   };
+}
+
+
+function normalizeAllowedRecipients(input: unknown): string[] {
+  const arr = Array.isArray(input) ? input : [];
+  return Array.from(new Set(arr.map((v) => normalizeWhatsAppRecipientForMeta(String(v || ""))).filter(Boolean)));
+}
+
+function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, to: string) {
+  const runtime = getChannelRuntimeInfo(channel);
+  if (runtime.environmentMode !== "sandbox") return;
+  const allowed = runtime.sandboxAllowedRecipients || [];
+  if (!allowed.length) return;
+  const normalized = normalizeWhatsAppRecipientForMeta(to);
+  if (allowed.includes(normalized)) return;
+  throw new WhatsAppProviderError(
+    `Sandbox recipient not allowed (${normalized})`,
+    400,
+    {
+      error: {
+        code: 131030,
+        message: "Número de teléfono del destinatario no incluido en la lista de autorizados.",
+        error_data: {
+          details: `Añadí ${normalized} a la lista de destinatarios permitidos para sandbox y volvé a intentarlo.`,
+        },
+      },
+      sandboxAllowedRecipients: allowed,
+    },
+  );
 }
 
 function extractMetaEvents(payload: any) {
@@ -484,6 +516,7 @@ export async function sendConversationWhatsAppMessage(input: {
     throw new WhatsAppWindowClosedError();
   }
 
+  assertSandboxRecipientAllowed(channel, normalizedTo);
   const provider = resolveWhatsappProvider(channel.provider);
   const result = await provider.sendTextMessage(channel, normalizedTo, input.text);
 
@@ -540,6 +573,7 @@ export async function sendConversationTemplateMessage(input: {
 
   const provider = resolveWhatsappProvider(channel.provider);
   const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
+  assertSandboxRecipientAllowed(channel, normalizedTo);
 
   waLog("reply_manual_start", {
     conversationId: conversation.id,
@@ -655,6 +689,7 @@ export async function upsertTenantChannel(tenantId: number, payload: {
   environmentMode?: ChannelEnvironmentMode;
   sandboxRecipientPhone?: string | null;
   connectedBusinessPhone?: string | null;
+  sandboxAllowedRecipients?: string[] | null;
   markConnectionValidatedAt?: boolean;
 }) {
   const existing = await getTenantChannel(tenantId);
@@ -702,6 +737,9 @@ export async function upsertTenantChannel(tenantId: number, payload: {
     connectedBusinessPhone: payload.connectedBusinessPhone !== undefined ? normalizePhone(payload.connectedBusinessPhone) : (previousMetadata.connectedBusinessPhone || normalizePhone(payload.phoneNumber)),
     lastSuccessfulTestAt: previousMetadata.lastSuccessfulTestAt || null,
     lastConnectionValidatedAt: payload.markConnectionValidatedAt ? new Date().toISOString() : (previousMetadata.lastConnectionValidatedAt || null),
+    sandboxAllowedRecipients: payload.sandboxAllowedRecipients !== undefined
+      ? normalizeAllowedRecipients(payload.sandboxAllowedRecipients)
+      : (previousMetadata.sandboxAllowedRecipients || []),
   };
 
   waLog("onboarding_state", {
@@ -759,6 +797,7 @@ export async function sendTestWhatsAppMessage(input: {
   });
 
   const provider = resolveWhatsappProvider(channel.provider);
+  assertSandboxRecipientAllowed(channel, normalizedTo);
 
   waLog("send_test_start", {
     originalRecipientInput: input.to,

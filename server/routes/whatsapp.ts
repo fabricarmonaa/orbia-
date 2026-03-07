@@ -41,6 +41,7 @@ const channelSchema = z.object({
   environmentMode: z.enum(["sandbox", "production"]).optional(),
   sandboxRecipientPhone: z.string().trim().max(40).optional().nullable(),
   connectedBusinessPhone: z.string().trim().max(40).optional().nullable(),
+  sandboxAllowedRecipients: z.array(z.string().trim().min(5).max(40)).optional().nullable(),
 });
 
 const sendSchema = z.object({
@@ -128,6 +129,7 @@ export function registerWhatsappRoutes(app: Express) {
         channelProductStatus: runtime.channelProductStatus,
         lastSuccessfulTestAt: runtime.lastSuccessfulTestAt,
         lastConnectionValidatedAt: runtime.lastConnectionValidatedAt,
+        sandboxAllowedRecipients: canUseSandbox(req) ? runtime.sandboxAllowedRecipients : [],
       }
       : {
         status: "DRAFT",
@@ -138,6 +140,7 @@ export function registerWhatsappRoutes(app: Express) {
         channelProductStatus: runtime.channelProductStatus,
         lastSuccessfulTestAt: null,
         lastConnectionValidatedAt: null,
+        sandboxAllowedRecipients: [],
       };
     return res.json({ data });
   });
@@ -190,6 +193,7 @@ export function registerWhatsappRoutes(app: Express) {
       if (!canUseSandbox(req)) {
         payload.environmentMode = "production";
         payload.sandboxRecipientPhone = null;
+        payload.sandboxAllowedRecipients = [];
       }
       const saved = await upsertTenantChannel(req.auth!.tenantId!, payload);
       res.json({ data: channelToSafeResponse(saved) });
@@ -217,6 +221,7 @@ export function registerWhatsappRoutes(app: Express) {
         environmentMode: canUseSandbox(req) ? safe?.environmentMode : "production",
         sandboxRecipientPhone: canUseSandbox(req) ? safe?.sandboxRecipientPhone : null,
         connectedBusinessPhone: safe?.connectedBusinessPhone,
+        sandboxAllowedRecipients: canUseSandbox(req) ? safe?.sandboxAllowedRecipients : [],
         markConnectionValidatedAt: true,
       });
     }

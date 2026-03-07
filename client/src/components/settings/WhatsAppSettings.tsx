@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 
 type EnvironmentMode = "sandbox" | "production";
 
@@ -24,6 +25,7 @@ interface WhatsappChannelForm {
   environmentMode: EnvironmentMode;
   sandboxRecipientPhone: string;
   connectedBusinessPhone: string;
+  sandboxAllowedRecipients: string;
 }
 
 const emptyForm: WhatsappChannelForm = {
@@ -40,10 +42,18 @@ const emptyForm: WhatsappChannelForm = {
   environmentMode: "production",
   sandboxRecipientPhone: "",
   connectedBusinessPhone: "",
+  sandboxAllowedRecipients: "",
 };
 
 function normalizeRecipient(value: string) {
   return String(value || "").replace(/\+/g, "").replace(/[\s\-()]/g, "").replace(/\D/g, "").trim();
+}
+
+function parseAllowedRecipients(raw: string) {
+  return Array.from(new Set(String(raw || "")
+    .split(/[\n,;]+/g)
+    .map((x) => normalizeRecipient(x))
+    .filter(Boolean)));
 }
 
 function statusLabel(status?: string) {
@@ -93,6 +103,7 @@ export function WhatsAppSettings() {
           environmentMode: canUseSandbox ? data.data.environmentMode : "production",
           sandboxRecipientPhone: data.data.sandboxRecipientPhone || prev.sandboxRecipientPhone,
           connectedBusinessPhone: data.data.channelConnectedPhone || prev.connectedBusinessPhone,
+          sandboxAllowedRecipients: Array.isArray(data.data.sandboxAllowedRecipients) ? data.data.sandboxAllowedRecipients.join("\n") : prev.sandboxAllowedRecipients,
         }));
       }
     } catch {
@@ -122,6 +133,7 @@ export function WhatsAppSettings() {
           connectedBusinessPhone: summary?.data?.connectedPhone || "",
           sandboxRecipientPhone: summary?.data?.sandboxRecipientPhone || "",
           environmentMode: canUseSandbox ? (summary?.data?.environmentMode || "production") : "production",
+          sandboxAllowedRecipients: Array.isArray(summary?.data?.sandboxAllowedRecipients) ? summary.data.sandboxAllowedRecipients.join("\n") : "",
           isActive: Boolean(summary?.data?.isActive),
         }));
         return;
@@ -145,6 +157,7 @@ export function WhatsAppSettings() {
           environmentMode: canUseSandbox ? (data.data.environmentMode || "production") : "production",
           sandboxRecipientPhone: data.data.sandboxRecipientPhone || "",
           connectedBusinessPhone: data.data.connectedBusinessPhone || data.data.phoneNumber || "",
+          sandboxAllowedRecipients: Array.isArray(data.data.sandboxAllowedRecipients) ? data.data.sandboxAllowedRecipients.join("\n") : "",
         }));
       }
     } catch (err: any) {
@@ -181,6 +194,7 @@ export function WhatsAppSettings() {
         environmentMode: canUseSandbox ? form.environmentMode : "production",
         sandboxRecipientPhone: canUseSandbox && form.environmentMode === "sandbox" ? form.sandboxRecipientPhone : null,
         connectedBusinessPhone: form.environmentMode === "production" ? form.connectedBusinessPhone : form.phoneNumber,
+        sandboxAllowedRecipients: canUseSandbox && form.environmentMode === "sandbox" ? parseAllowedRecipients(form.sandboxAllowedRecipients) : [],
       };
 
       if (canViewSensitiveFields && form.webhookVerifyToken.trim()) {
@@ -296,6 +310,19 @@ export function WhatsAppSettings() {
               <div className="space-y-1">
                 <Label>Destinatario sandbox autorizado</Label>
                 <Input value={form.sandboxRecipientPhone} onChange={(e) => setForm((p) => ({ ...p, sandboxRecipientPhone: e.target.value }))} placeholder="Ej: 542236979026" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1 md:col-span-2">
+                <Label>Números permitidos (sandbox)</Label>
+                <Textarea
+                  value={form.sandboxAllowedRecipients}
+                  onChange={(e) => setForm((p) => ({ ...p, sandboxAllowedRecipients: e.target.value }))}
+                  placeholder={`Un número por línea o separados por coma
+542236979026
+5491122334455`}
+                  rows={4}
+                  disabled={!canEditTechnicalConfig}
+                />
+                <p className="text-[11px] text-muted-foreground">Si Meta devuelve 131030, agregá acá el destinatario exacto permitido en sandbox.</p>
               </div>
               <div className="space-y-1">
                 <Label>Access token (sandbox)</Label>
