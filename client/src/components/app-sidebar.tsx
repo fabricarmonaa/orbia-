@@ -63,7 +63,7 @@ const menuItems: MenuItem[] = [
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true, section: "operacion" },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery", section: "operacion" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp", section: "operacion" },
-  { title: "WhatsApp Inbox (Addon)", url: "/app/whatsapp/conversations", icon: MessageCircle, addon: "whatsapp_inbox", adminOnly: true, section: "operacion", highlight: true },
+  { title: "WhatsApp Inbox (Addon)", url: "/app/whatsapp/conversations", icon: MessageCircle, addon: "whatsapp_inbox", section: "operacion", highlight: true },
   { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad" },
   { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true, section: "configuracion" },

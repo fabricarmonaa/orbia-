@@ -6,6 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { Badge } from "@/components/ui/badge";
+
+type EnvironmentMode = "sandbox" | "production";
 
 interface WhatsappChannelForm {
   provider: string;
@@ -18,6 +21,9 @@ interface WhatsappChannelForm {
   webhookVerifyToken: string;
   status: "DRAFT" | "ACTIVE" | "DISABLED" | "ERROR";
   isActive: boolean;
+  environmentMode: EnvironmentMode;
+  sandboxRecipientPhone: string;
+  connectedBusinessPhone: string;
 }
 
 const emptyForm: WhatsappChannelForm = {
@@ -31,10 +37,25 @@ const emptyForm: WhatsappChannelForm = {
   webhookVerifyToken: "",
   status: "DRAFT",
   isActive: false,
+  environmentMode: "sandbox",
+  sandboxRecipientPhone: "",
+  connectedBusinessPhone: "",
 };
 
 function normalizeRecipient(value: string) {
   return String(value || "").replace(/\+/g, "").replace(/[\s\-()]/g, "").replace(/\D/g, "").trim();
+}
+
+function statusLabel(status?: string) {
+  if (!status) return "No configurado";
+  const map: Record<string, string> = {
+    not_configured: "No configurado",
+    incomplete: "Incompleto",
+    sandbox_ready: "Sandbox listo",
+    production_ready: "Producción lista",
+    error: "Error",
+  };
+  return map[status] || status;
 }
 
 export function WhatsAppSettings() {
@@ -62,6 +83,14 @@ export function WhatsAppSettings() {
       const res = await apiRequest("GET", "/api/whatsapp/onboarding");
       const data = await res.json();
       setOnboarding(data?.data || null);
+      if (data?.data?.environmentMode) {
+        setForm((prev) => ({
+          ...prev,
+          environmentMode: data.data.environmentMode,
+          sandboxRecipientPhone: data.data.sandboxRecipientPhone || prev.sandboxRecipientPhone,
+          connectedBusinessPhone: data.data.channelConnectedPhone || prev.connectedBusinessPhone,
+        }));
+      }
     } catch {
       setOnboarding(null);
     }
@@ -86,6 +115,9 @@ export function WhatsAppSettings() {
           ...prev,
           status: summary?.data?.status || "DRAFT",
           phoneNumber: summary?.data?.connectedPhone || "",
+          connectedBusinessPhone: summary?.data?.connectedPhone || "",
+          sandboxRecipientPhone: summary?.data?.sandboxRecipientPhone || "",
+          environmentMode: summary?.data?.environmentMode || "sandbox",
           isActive: Boolean(summary?.data?.isActive),
         }));
         return;
@@ -106,6 +138,9 @@ export function WhatsAppSettings() {
           webhookVerifyToken: data.data.webhookVerifyToken || "",
           status: data.data.status || "DRAFT",
           isActive: Boolean(data.data.isActive),
+          environmentMode: data.data.environmentMode || "sandbox",
+          sandboxRecipientPhone: data.data.sandboxRecipientPhone || "",
+          connectedBusinessPhone: data.data.connectedBusinessPhone || data.data.phoneNumber || "",
         }));
       }
     } catch (err: any) {
@@ -140,6 +175,9 @@ export function WhatsAppSettings() {
         webhookVerifyToken: form.webhookVerifyToken,
         status: form.status,
         isActive: form.isActive,
+        environmentMode: form.environmentMode,
+        sandboxRecipientPhone: form.environmentMode === "sandbox" ? form.sandboxRecipientPhone : null,
+        connectedBusinessPhone: form.environmentMode === "production" ? form.connectedBusinessPhone : form.phoneNumber,
       });
       toast({ title: "Canal guardado" });
       await refreshState();
@@ -159,7 +197,7 @@ export function WhatsAppSettings() {
       toast({ title: data.ok ? "Conexión OK" : "Conexión incompleta" });
       await refreshState();
     } catch (err: any) {
-      toast({ title: "Error probando conexión", description: err.message, variant: "destructive" });
+      toast({ title: "Error validando conexión", description: err.message, variant: "destructive" });
     } finally {
       setTesting(false);
     }
@@ -191,30 +229,84 @@ export function WhatsAppSettings() {
 
   if (loading) return <Card><CardContent className="pt-6 text-sm text-muted-foreground">Cargando canal...</CardContent></Card>;
 
+  const runtimeMode = form.environmentMode || health?.environmentMode || "sandbox";
+  const displayStatus = statusLabel(health?.channelProductStatus || onboarding?.channelProductStatus);
+
   return (
     <Card>
       <CardHeader>
-        <h3 className="font-semibold">WhatsApp Cloud API</h3>
-        <p className="text-sm text-muted-foreground">Onboarding simple para conectar tu canal y operar el inbox premium.</p>
+        <h3 className="font-semibold">WhatsApp del negocio</h3>
+        <p className="text-sm text-muted-foreground">Conectá tu número real para operar el inbox, o usá sandbox para pruebas internas.</p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
-          <p><strong>Estado del canal:</strong> {health?.channelProductStatus || "incomplete"}</p>
-          <p><strong>Modo actual:</strong> {health?.environmentMode === "production" ? "Producción" : "Sandbox / Test"}</p>
-          <p><strong>Número conectado:</strong> {health?.connectedPhone || "-"}</p>
-          <p><strong>Último test:</strong> {health?.lastTestAt ? new Date(health.lastTestAt).toLocaleString() : "Sin test exitoso"}</p>
-          <p><strong>Inbox habilitado:</strong> {onboarding?.inboxEnabled ? "Sí" : "No"}</p>
-          <p><strong>Quién puede editar configuración técnica:</strong> admins del tenant / superadmin.</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <p><strong>Estado:</strong> {displayStatus}</p>
+            <Badge variant="secondary">{runtimeMode === "production" ? "Producción" : "Sandbox"}</Badge>
+            <Badge variant={onboarding?.inboxEnabled ? "outline" : "secondary"}>Inbox {onboarding?.inboxEnabled ? "activo" : "inactivo"}</Badge>
+          </div>
+          <p><strong>Número conectado:</strong> {health?.connectedPhone || onboarding?.channelConnectedPhone || "-"}</p>
+          <p><strong>Último test exitoso:</strong> {health?.lastTestAt ? new Date(health.lastTestAt).toLocaleString() : "Sin test"}</p>
+          <p><strong>Última validación:</strong> {health?.lastConnectionValidatedAt ? new Date(health.lastConnectionValidatedAt).toLocaleString() : "Sin validación"}</p>
+          <p><strong>Quién puede editar:</strong> owner/admin autorizado o superadmin.</p>
         </div>
 
-        <div className="rounded-md border p-3 text-sm">
-          <p className="font-medium mb-2">Pasos de onboarding</p>
-          <div className="space-y-1">
-            {(onboarding?.steps || []).map((step: any) => (
-              <p key={step.key} className="text-xs">{step.completed ? "✅" : "⬜"} {step.title}</p>
-            ))}
-          </div>
+        <div className="rounded-md border p-3 text-sm space-y-2">
+          <p className="font-medium">Checklist de onboarding</p>
+          {(onboarding?.steps || []).map((step: any) => (
+            <p key={step.key} className="text-xs">{step.completed ? "✅" : "⬜"} {step.title}</p>
+          ))}
         </div>
+
+        <div className="rounded-md border p-3 space-y-3">
+          <p className="font-medium">Paso 2: Elegí modo de conexión</p>
+          <div className="flex gap-2">
+            <Button variant={runtimeMode === "sandbox" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "sandbox" }))} disabled={!canEditTechnicalConfig}>Usar modo prueba</Button>
+            <Button variant={runtimeMode === "production" ? "default" : "outline"} onClick={() => setForm((p) => ({ ...p, environmentMode: "production" }))} disabled={!canEditTechnicalConfig}>Conectar número real</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {runtimeMode === "sandbox"
+              ? "Sandbox usa número de prueba y destinatarios autorizados. Ideal para validar integración sin operación real."
+              : "Producción conecta el número real del negocio para recibir y responder chats reales desde Inbox."}
+          </p>
+        </div>
+
+        {runtimeMode === "sandbox" ? (
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="font-medium">Paso 3: Configuración de prueba (sandbox)</p>
+            <div className="space-y-1">
+              <Label>Destinatario sandbox autorizado</Label>
+              <Input
+                value={form.sandboxRecipientPhone}
+                onChange={(e) => setForm((p) => ({ ...p, sandboxRecipientPhone: e.target.value }))}
+                placeholder="Ej: 542236979026"
+                disabled={!canEditTechnicalConfig}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-md border p-3 space-y-2">
+            <p className="font-medium">Paso 3: Conectar número real del negocio</p>
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="space-y-1">
+                <Label>Número conectado</Label>
+                <Input value={form.connectedBusinessPhone} onChange={(e) => setForm((p) => ({ ...p, connectedBusinessPhone: e.target.value, phoneNumber: e.target.value }))} placeholder="Ej: +54911..." disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>ID del número</Label>
+                <Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} placeholder="ID del phone number de Meta" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>ID de cuenta empresarial</Label>
+                <Input value={form.businessAccountId || ""} onChange={(e) => setForm((p) => ({ ...p, businessAccountId: e.target.value }))} placeholder="Business Account ID" disabled={!canEditTechnicalConfig} />
+              </div>
+              <div className="space-y-1">
+                <Label>Token de acceso</Label>
+                <Input value={form.accessToken || ""} onChange={(e) => setForm((p) => ({ ...p, accessToken: e.target.value }))} placeholder="Token de WhatsApp Cloud API" disabled={!canEditTechnicalConfig} />
+              </div>
+            </div>
+          </div>
+        )}
 
         {!canEditTechnicalConfig ? (
           <p className="text-xs text-muted-foreground">Vista operativa: la configuración técnica avanzada está restringida para tu rol.</p>
@@ -230,29 +322,26 @@ export function WhatsAppSettings() {
           <div className="grid gap-4 md:grid-cols-2">
             <div className="space-y-1"><Label>Provider</Label><Input value={form.provider} onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))} /></div>
             <div className="space-y-1"><Label>Estado del canal</Label><Input value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))} /></div>
-            <div className="space-y-1"><Label>Phone number</Label><Input value={form.phoneNumber} onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Phone number ID</Label><Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Business account ID</Label><Input value={form.businessAccountId || ""} onChange={(e) => setForm((p) => ({ ...p, businessAccountId: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Phone number base</Label><Input value={form.phoneNumber} onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))} /></div>
             <div className="space-y-1"><Label>Display name</Label><Input value={form.displayName || ""} onChange={(e) => setForm((p) => ({ ...p, displayName: e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Access token</Label><Input value={form.accessToken || ""} onChange={(e) => setForm((p) => ({ ...p, accessToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
-            <div className="space-y-1"><Label>App secret</Label><Input value={form.appSecret || ""} onChange={(e) => setForm((p) => ({ ...p, appSecret: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
-            <div className="space-y-1 md:col-span-2"><Label>Webhook verify token</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
+            <div className="space-y-1"><Label>App secret</Label><Input value={form.appSecret || ""} onChange={(e) => setForm((p) => ({ ...p, appSecret: e.target.value }))} placeholder="Masked tras guardar" /></div>
+            <div className="space-y-1"><Label>Webhook verify token</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Masked tras guardar" /></div>
           </div>
         ) : null}
 
         <div className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(checked) => setForm((p) => ({ ...p, isActive: checked }))} /><Label>Canal activo</Label></div>
 
         <div className="flex flex-wrap gap-2">
-          <Button onClick={saveChannel} disabled={saving || !canEditTechnicalConfig}>{saving ? "Guardando..." : "Guardar configuración"}</Button>
-          <Button variant="outline" onClick={testConnection} disabled={testing || !canEditTechnicalConfig}>{testing ? "Probando..." : "Validar conexión"}</Button>
+          <Button onClick={saveChannel} disabled={saving || !canEditTechnicalConfig}>{saving ? "Guardando..." : "Guardar y continuar"}</Button>
+          <Button variant="outline" onClick={testConnection} disabled={testing || !canEditTechnicalConfig}>{testing ? "Validando..." : "Validar canal"}</Button>
         </div>
 
         <div className="border rounded-md p-3 space-y-2">
-          <p className="text-sm font-medium">Modo prueba / sandbox</p>
-          <p className="text-xs text-muted-foreground">Usa template <code>hello_world</code> para validar conexión. Esto no reemplaza templates de producción.</p>
+          <p className="text-sm font-medium">Paso 4: Enviar mensaje de prueba</p>
+          <p className="text-xs text-muted-foreground">En sandbox se usa template <code>hello_world</code>. En producción sirve para validar la salida del número conectado.</p>
           <div className="grid md:grid-cols-2 gap-2">
-            <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+549..." />
-            <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Solo se usa en modo text_freeform" />
+            <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder={runtimeMode === "sandbox" ? "Destinatario autorizado" : "Cliente real"} />
+            <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Solo se usa en text_freeform" />
           </div>
           <p className="text-xs text-muted-foreground">Número normalizado para Meta: <strong>{normalizedRecipientPreview || "-"}</strong></p>
           <Button variant="secondary" onClick={sendTest} disabled={sending || !testPhone.trim()}>{sending ? "Enviando..." : "Enviar test"}</Button>

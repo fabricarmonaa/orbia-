@@ -44,6 +44,48 @@ function normalizePhone(phone?: string | null) {
   return String(phone).replace(/[^\d+]/g, "").trim();
 }
 
+
+type ChannelEnvironmentMode = "sandbox" | "production";
+type ChannelProductStatus = "not_configured" | "incomplete" | "sandbox_ready" | "production_ready" | "error";
+
+type ChannelMetadata = {
+  environmentMode?: ChannelEnvironmentMode;
+  sandboxRecipientPhone?: string | null;
+  connectedBusinessPhone?: string | null;
+  lastSuccessfulTestAt?: string | null;
+  lastConnectionValidatedAt?: string | null;
+};
+
+function readChannelMetadata(channel?: TenantWhatsappChannel | null): ChannelMetadata {
+  const raw = (channel?.metadataJson && typeof channel.metadataJson === "object") ? channel.metadataJson as any : {};
+  return {
+    environmentMode: raw.environmentMode === "production" ? "production" : raw.environmentMode === "sandbox" ? "sandbox" : undefined,
+    sandboxRecipientPhone: raw.sandboxRecipientPhone ? normalizePhone(String(raw.sandboxRecipientPhone)) : null,
+    connectedBusinessPhone: raw.connectedBusinessPhone ? normalizePhone(String(raw.connectedBusinessPhone)) : null,
+    lastSuccessfulTestAt: raw.lastSuccessfulTestAt ? String(raw.lastSuccessfulTestAt) : null,
+    lastConnectionValidatedAt: raw.lastConnectionValidatedAt ? String(raw.lastConnectionValidatedAt) : null,
+  };
+}
+
+function defaultEnvironmentMode() {
+  const mode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+  return mode === "template_hello_world_test" ? "sandbox" as const : "production" as const;
+}
+
+export function getChannelRuntimeInfo(channel: TenantWhatsappChannel | null) {
+  const metadata = readChannelMetadata(channel);
+  const environmentMode = metadata.environmentMode || defaultEnvironmentMode();
+  const channelProductStatus = computeChannelProductStatus(channel, environmentMode);
+  return {
+    environmentMode,
+    channelProductStatus,
+    sandboxRecipientPhone: metadata.sandboxRecipientPhone || null,
+    connectedBusinessPhone: metadata.connectedBusinessPhone || channel?.phoneNumber || null,
+    lastSuccessfulTestAt: metadata.lastSuccessfulTestAt || null,
+    lastConnectionValidatedAt: metadata.lastConnectionValidatedAt || null,
+  };
+}
+
 function extractMetaEvents(payload: any) {
   const out: Array<{ type: string; value: any; metadata?: any; contact?: any }> = [];
   for (const entry of payload?.entry || []) {
@@ -550,12 +592,12 @@ export async function listMessagesByConversation(tenantId: number, conversationI
 
 
 
-export function computeChannelProductStatus(channel: TenantWhatsappChannel | null, environmentMode: "sandbox" | "production") {
-  if (!channel) return "incomplete" as const;
-  if (!channel.isActive) return "incomplete" as const;
-  if (channel.status === "ERROR") return "error" as const;
-  if (!channel.phoneNumberId || !channel.phoneNumber) return "incomplete" as const;
-  return environmentMode === "sandbox" ? "sandbox" as const : "production" as const;
+export function computeChannelProductStatus(channel: TenantWhatsappChannel | null, environmentMode: ChannelEnvironmentMode): ChannelProductStatus {
+  if (!channel) return "not_configured";
+  if (channel.status === "ERROR") return "error";
+  if (!channel.isActive) return "incomplete";
+  if (!channel.phoneNumberId || !channel.phoneNumber) return "incomplete";
+  return environmentMode === "sandbox" ? "sandbox_ready" : "production_ready";
 }
 
 export async function getSuggestedTemplatesForConversation(tenantId: number, conversationId: number) {
@@ -604,6 +646,10 @@ export async function upsertTenantChannel(tenantId: number, payload: {
   webhookVerifyToken?: string | null;
   status?: string;
   isActive?: boolean;
+  environmentMode?: ChannelEnvironmentMode;
+  sandboxRecipientPhone?: string | null;
+  connectedBusinessPhone?: string | null;
+  markConnectionValidatedAt?: boolean;
 }) {
   const existing = await getTenantChannel(tenantId);
   const now = new Date();
@@ -638,6 +684,23 @@ export async function upsertTenantChannel(tenantId: number, payload: {
     replaceVerifyToken: shouldReplaceVerifyToken,
   });
 
+
+  const previousMetadata = readChannelMetadata(existing);
+  values.metadataJson = {
+    ...(existing?.metadataJson && typeof existing.metadataJson === "object" ? existing.metadataJson as any : {}),
+    environmentMode: payload.environmentMode || previousMetadata.environmentMode || defaultEnvironmentMode(),
+    sandboxRecipientPhone: payload.sandboxRecipientPhone !== undefined ? normalizePhone(payload.sandboxRecipientPhone) : (previousMetadata.sandboxRecipientPhone || null),
+    connectedBusinessPhone: payload.connectedBusinessPhone !== undefined ? normalizePhone(payload.connectedBusinessPhone) : (previousMetadata.connectedBusinessPhone || normalizePhone(payload.phoneNumber)),
+    lastSuccessfulTestAt: previousMetadata.lastSuccessfulTestAt || null,
+    lastConnectionValidatedAt: payload.markConnectionValidatedAt ? new Date().toISOString() : (previousMetadata.lastConnectionValidatedAt || null),
+  };
+
+  waLog("onboarding_state", {
+    tenantId,
+    environmentMode: (values.metadataJson as any)?.environmentMode,
+    channelProductStatus: computeChannelProductStatus(existing || null, ((values.metadataJson as any)?.environmentMode || defaultEnvironmentMode())),
+  });
+
   if (existing) {
     const [updated] = await db.update(tenantWhatsappChannels).set(values).where(eq(tenantWhatsappChannels.id, existing.id)).returning();
     return updated;
@@ -656,7 +719,7 @@ export async function upsertTenantChannel(tenantId: number, payload: {
     webhookVerifyTokenEncrypted: values.webhookVerifyTokenEncrypted || null,
     status: values.status || "DRAFT",
     isActive: Boolean(values.isActive),
-    metadataJson: {},
+    metadataJson: values.metadataJson || {},
     updatedAt: now,
   }).returning();
   return created;
@@ -673,7 +736,11 @@ export async function sendTestWhatsAppMessage(input: {
     throw new Error("Canal WhatsApp no activo para el tenant");
   }
 
-  const mode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+  const runtime = getChannelRuntimeInfo(channel);
+  const productionTestMode = (process.env.WHATSAPP_SEND_TEST_MODE_PRODUCTION || "text_freeform").toLowerCase();
+  const mode = runtime.environmentMode === "sandbox"
+    ? "template_hello_world_test"
+    : (productionTestMode === "template_hello_world_test" ? "template_hello_world_test" : "text_freeform");
   const normalizedTo = normalizeWhatsAppRecipientForMeta(input.to);
   const conversation = await findOrCreateConversation({
     tenantId: input.tenantId,
@@ -690,6 +757,7 @@ export async function sendTestWhatsAppMessage(input: {
     phoneNumberId: channel.phoneNumberId,
     businessAccountId: channel.businessAccountId,
     accessTokenSource: channel.accessTokenEncrypted ? "db_encrypted" : "missing",
+    environmentMode: runtime.environmentMode,
     modeRequested: mode,
   });
 
@@ -740,6 +808,17 @@ export async function sendTestWhatsAppMessage(input: {
       },
       processingStatus: "PROCESSED",
     });
+    await db
+      .update(tenantWhatsappChannels)
+      .set({
+        metadataJson: {
+          ...(channel.metadataJson && typeof channel.metadataJson === "object" ? channel.metadataJson as any : {}),
+          ...readChannelMetadata(channel),
+          lastSuccessfulTestAt: new Date().toISOString(),
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(tenantWhatsappChannels.id, channel.id));
 
     return {
       channel,
@@ -792,8 +871,10 @@ export async function sendTestWhatsAppMessage(input: {
 
 export function channelToSafeResponse(channel: TenantWhatsappChannel | null) {
   if (!channel) return null;
+  const runtime = getChannelRuntimeInfo(channel);
   return {
     ...channel,
+    ...runtime,
     accessToken: maskSecret(decryptSecret(channel.accessTokenEncrypted)),
     appSecret: maskSecret(decryptSecret(channel.appSecretEncrypted)),
     webhookVerifyToken: maskSecret(decryptSecret(channel.webhookVerifyTokenEncrypted)),

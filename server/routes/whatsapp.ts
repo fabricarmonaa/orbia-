@@ -19,9 +19,9 @@ import {
   getLastManualSendEvent,
   isWithin24hWindow,
   WhatsAppWindowClosedError,
-  computeChannelProductStatus,
   getSuggestedTemplatesForConversation,
   sendConversationTemplateMessage,
+  getChannelRuntimeInfo,
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
@@ -38,6 +38,9 @@ const channelSchema = z.object({
   status: z.enum(["DRAFT", "ACTIVE", "DISABLED", "ERROR"]).default("DRAFT"),
   isActive: z.boolean().default(false),
   branchId: z.coerce.number().int().positive().optional().nullable(),
+  environmentMode: z.enum(["sandbox", "production"]).optional(),
+  sandboxRecipientPhone: z.string().trim().max(40).optional().nullable(),
+  connectedBusinessPhone: z.string().trim().max(40).optional().nullable(),
 });
 
 const sendSchema = z.object({
@@ -53,19 +56,20 @@ export function registerWhatsappRoutes(app: Express) {
     const channel = await getTenantChannel(req.auth!.tenantId!);
     const lastTest = await getLastManualSendEvent(req.auth!.tenantId!);
     const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
-    const environmentMode = testMode === "template_hello_world_test" ? "sandbox" : "production";
-    const channelProductStatus = computeChannelProductStatus(channel, environmentMode);
+    const runtime = getChannelRuntimeInfo(channel);
     res.json({
       ok: true,
       signatureValidation: isWebhookSignatureValidationEnabled(),
       hasChannel: Boolean(channel),
       channelStatus: channel?.status || null,
-      channelProductStatus,
-      environmentMode,
+      channelProductStatus: runtime.channelProductStatus,
+      environmentMode: runtime.environmentMode,
       testMode,
-      connectedPhone: channel?.phoneNumber || null,
+      connectedPhone: runtime.connectedBusinessPhone || channel?.phoneNumber || null,
+      sandboxRecipientPhone: runtime.sandboxRecipientPhone,
       businessAccountId: channel?.businessAccountId || null,
-      lastTestAt: lastTest?.createdAt || null,
+      lastTestAt: runtime.lastSuccessfulTestAt || lastTest?.createdAt || null,
+      lastConnectionValidatedAt: runtime.lastConnectionValidatedAt || null,
       canEditTechnicalConfig: req.auth?.role === "admin",
     });
   });
@@ -101,23 +105,27 @@ export function registerWhatsappRoutes(app: Express) {
 
   app.get("/api/whatsapp/channels/summary", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
     const channel = await getTenantChannel(req.auth!.tenantId!);
-    const healthMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
-    const environmentMode = healthMode === "template_hello_world_test" ? "sandbox" : "production";
-    const channelProductStatus = computeChannelProductStatus(channel, environmentMode);
+    const runtime = getChannelRuntimeInfo(channel);
     const data = channel
       ? {
         status: channel.status,
         isActive: channel.isActive,
-        connectedPhone: channel.phoneNumber,
-        environmentMode,
-        channelProductStatus,
+        connectedPhone: runtime.connectedBusinessPhone || channel.phoneNumber,
+        sandboxRecipientPhone: runtime.sandboxRecipientPhone,
+        environmentMode: runtime.environmentMode,
+        channelProductStatus: runtime.channelProductStatus,
+        lastSuccessfulTestAt: runtime.lastSuccessfulTestAt,
+        lastConnectionValidatedAt: runtime.lastConnectionValidatedAt,
       }
       : {
         status: "DRAFT",
         isActive: false,
         connectedPhone: null,
-        environmentMode,
-        channelProductStatus,
+        sandboxRecipientPhone: null,
+        environmentMode: runtime.environmentMode,
+        channelProductStatus: runtime.channelProductStatus,
+        lastSuccessfulTestAt: null,
+        lastConnectionValidatedAt: null,
       };
     return res.json({ data });
   });
@@ -133,22 +141,24 @@ export function registerWhatsappRoutes(app: Express) {
     for (const a of addonsRes || []) addonsMap[a.addonKey] = Boolean(a.enabled);
     const messagingEnabled = Boolean(addonsMap.messaging_whatsapp);
     const inboxEnabled = Boolean(addonsMap.whatsapp_inbox);
-    const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
-    const environmentMode = testMode === "template_hello_world_test" ? "sandbox" : "production";
-    const channelProductStatus = computeChannelProductStatus(channelRes, environmentMode);
+    const runtime = getChannelRuntimeInfo(channelRes);
     const steps = [
-      { key: "activate_addons", title: "Activar addons", completed: messagingEnabled && inboxEnabled },
-      { key: "connect_channel", title: "Conectar canal", completed: Boolean(channelRes?.isActive) },
-      { key: "validate_test", title: "Validar mensaje de prueba", completed: false },
-      { key: "use_inbox", title: "Usar inbox", completed: inboxEnabled },
+      { key: "activate_addons", title: "Activar addon Mensajería WhatsApp", completed: messagingEnabled },
+      { key: "enable_inbox", title: "Activar addon WhatsApp Inbox", completed: inboxEnabled },
+      { key: "connect_channel", title: runtime.environmentMode === "production" ? "Conectar número real del negocio" : "Configurar modo prueba", completed: Boolean(channelRes?.isActive) },
+      { key: "validate_channel", title: "Validar canal", completed: Boolean(runtime.lastConnectionValidatedAt || runtime.lastSuccessfulTestAt) },
+      { key: "use_inbox", title: "Operar inbox", completed: inboxEnabled && Boolean(channelRes?.isActive) },
     ];
     return res.json({
       data: {
         messagingEnabled,
         inboxEnabled,
-        environmentMode,
-        channelProductStatus,
-        channelConnectedPhone: channelRes?.phoneNumber || null,
+        environmentMode: runtime.environmentMode,
+        channelProductStatus: runtime.channelProductStatus,
+        channelConnectedPhone: runtime.connectedBusinessPhone || channelRes?.phoneNumber || null,
+        sandboxRecipientPhone: runtime.sandboxRecipientPhone,
+        lastSuccessfulTestAt: runtime.lastSuccessfulTestAt,
+        lastConnectionValidatedAt: runtime.lastConnectionValidatedAt,
         canEditTechnicalConfig: req.auth?.role === "admin",
         steps,
       },
@@ -169,10 +179,31 @@ export function registerWhatsappRoutes(app: Express) {
   );
 
   app.post("/api/whatsapp/channels/test-connection", tenantAuth, requireAddon("messaging_whatsapp"), requireTenantAdmin, async (req, res) => {
-    const channel = await getTenantChannel(req.auth!.tenantId!);
+    const tenantId = req.auth!.tenantId!;
+    const channel = await getTenantChannel(tenantId);
     if (!channel) return res.status(404).json({ error: "Canal no configurado" });
     const healthy = Boolean(channel.phoneNumberId && channel.accessTokenEncrypted);
-    res.json({ ok: healthy, details: { provider: channel.provider, status: channel.status, isActive: channel.isActive } });
+    if (healthy) {
+      const safe = channelToSafeResponse(channel);
+      await upsertTenantChannel(tenantId, {
+        provider: channel.provider,
+        phoneNumber: channel.phoneNumber,
+        phoneNumberId: channel.phoneNumberId,
+        businessAccountId: channel.businessAccountId,
+        displayName: channel.displayName,
+        accessToken: safe?.accessToken,
+        appSecret: safe?.appSecret,
+        webhookVerifyToken: safe?.webhookVerifyToken,
+        status: channel.status,
+        isActive: channel.isActive,
+        environmentMode: safe?.environmentMode,
+        sandboxRecipientPhone: safe?.sandboxRecipientPhone,
+        connectedBusinessPhone: safe?.connectedBusinessPhone,
+        markConnectionValidatedAt: true,
+      });
+    }
+    const runtime = getChannelRuntimeInfo(await getTenantChannel(tenantId));
+    res.json({ ok: healthy, details: { provider: channel.provider, status: channel.status, isActive: channel.isActive, environmentMode: runtime.environmentMode, channelProductStatus: runtime.channelProductStatus } });
   });
 
   app.get("/api/whatsapp/conversations", tenantAuth, requireAddon("whatsapp_inbox"), enforceBranchScope, async (req, res) => {
