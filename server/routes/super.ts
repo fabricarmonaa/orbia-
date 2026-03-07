@@ -429,7 +429,7 @@ export function registerSuperRoutes(app: Express) {
     try {
       const tenantId = parseInt(req.params.tenantId as string);
       const payload = z.object({ addons: z.record(z.boolean()) }).parse(req.body);
-      const allowed = new Set(["barcode_scanner", "delivery", "messaging_whatsapp"]);
+      const allowed = new Set(["barcode_scanner", "delivery", "messaging_whatsapp", "whatsapp_inbox"]);
       for (const [addonCode, enabled] of Object.entries(payload.addons || {})) {
         if (!allowed.has(addonCode)) continue;
         await setTenantAddon(tenantId, addonCode, Boolean(enabled), req.auth?.userId ?? null);

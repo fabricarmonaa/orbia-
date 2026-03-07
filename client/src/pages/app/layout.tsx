@@ -21,6 +21,7 @@ import SettingsOrdersPage from "./settings-orders";
 import MessagingSettingsPage from "./messaging";
 import AgendaPage from "./agenda";
 import NotesPage from "./notes";
+import WhatsappConversationsPage from "./whatsapp-conversations";
 import PurchasesPage from "./purchases";
 import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
@@ -116,6 +117,7 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
               <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
               {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
+              {user?.role !== "CASHIER" && <Route path="/app/whatsapp/conversations" component={WhatsappConversationsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/agenda" component={AgendaPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/notes" component={NotesPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}

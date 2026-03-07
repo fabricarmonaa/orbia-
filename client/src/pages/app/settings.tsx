@@ -25,6 +25,7 @@ import { AdvancedSettings } from "@/components/settings/AdvancedSettings";
 
 import { OrderPresetsSettings } from "@/components/settings/OrderPresetsSettings";
 import PriceListPdfSettings from "@/components/pdfs/PriceListPdfSettings";
+import { WhatsAppSettings } from "@/components/settings/WhatsAppSettings";
 
 interface Config {
   businessName: string;
@@ -412,6 +413,11 @@ export default function SettingsPage() {
           id: "pdfs",
           label: "PDFs",
           content: <PriceListPdfSettings />,
+        },
+        {
+          id: "whatsapp",
+          label: "WhatsApp",
+          content: <WhatsAppSettings />,
         },
       ]
       : []),
