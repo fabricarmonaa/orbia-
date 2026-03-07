@@ -25,6 +25,7 @@ export const tenantBranding = pgTable(
     colorsJson: jsonb("colors_json").default({}),
     textsJson: jsonb("texts_json").default({}),
     linksJson: jsonb("links_json").default({}),
+    trackingConfigJson: jsonb("tracking_config_json").default({}),
     pdfConfigJson: jsonb("pdf_config_json").default({}),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

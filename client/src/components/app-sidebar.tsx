@@ -28,6 +28,8 @@ import {
   ReceiptText,
   Users,
   FileSpreadsheet,
+  CalendarDays,
+  NotebookPen,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -44,24 +46,33 @@ interface MenuItem {
   feature?: string;
   addon?: string;
   adminOnly?: boolean;
-  planCodes?: string[];
+  section: "operacion" | "productividad" | "configuracion";
+  highlight?: boolean;
 }
 
 const menuItems: MenuItem[] = [
-  { title: "Dashboard", url: "/app", icon: LayoutDashboard },
-  { title: "Pedidos", url: "/app/orders", icon: ClipboardList },
-  { title: "Caja", url: "/app/cash", icon: Wallet },
-  { title: "Productos", url: "/app/products", icon: Package, feature: "products" },
-  { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, feature: "purchases", adminOnly: true },
-  { title: "Clientes", url: "/app/customers", icon: Users, feature: "customers", adminOnly: true },
-  { title: "Ventas", url: "/app/pos", icon: ShoppingCart, feature: "pos" },
-  { title: "Historial ventas", url: "/app/sales", icon: ReceiptText, feature: "sales_history" },
-  { title: "Cajeros", url: "/app/cashiers", icon: Users, feature: "cashiers", adminOnly: true },
-  { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true },
-  { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery" },
-  { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp" },
-  { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true },
+  { title: "Dashboard", url: "/app", icon: LayoutDashboard, section: "operacion" },
+  { title: "Pedidos", url: "/app/orders", icon: ClipboardList, section: "operacion" },
+  { title: "Caja", url: "/app/cash", icon: Wallet, section: "operacion" },
+  { title: "Productos", url: "/app/products", icon: Package, feature: "products", section: "operacion" },
+  { title: "Compras", url: "/app/purchases", icon: FileSpreadsheet, feature: "purchases", adminOnly: true, section: "operacion" },
+  { title: "Clientes", url: "/app/customers", icon: Users, feature: "customers", adminOnly: true, section: "operacion" },
+  { title: "Ventas", url: "/app/pos", icon: ShoppingCart, feature: "pos", section: "operacion" },
+  { title: "Historial ventas", url: "/app/sales", icon: ReceiptText, feature: "sales_history", section: "operacion" },
+  { title: "Cajeros", url: "/app/cashiers", icon: Users, feature: "cashiers", adminOnly: true, section: "operacion" },
+  { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true, section: "operacion" },
+  { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery", section: "operacion" },
+  { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp", section: "operacion" },
+  { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad", highlight: true },
+  { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad", highlight: true },
+  { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true, section: "configuracion" },
 ];
+
+const sectionLabels: Record<MenuItem["section"], string> = {
+  operacion: "Operación",
+  productividad: "Productividad",
+  configuracion: "Configuración",
+};
 
 export function AppSidebar() {
   const [location] = useLocation();
@@ -71,7 +82,6 @@ export function AppSidebar() {
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
   const [lowStockAlerts, setLowStockAlerts] = useState(0);
   const isTenantAdmin = user?.role === "admin";
-  const planCode = (plan?.planCode || "").toUpperCase();
 
   useEffect(() => {
     apiRequest("GET", "/api/addons/status")
@@ -92,6 +102,12 @@ export function AppSidebar() {
   function handleLogout() {
     logout("manual");
   }
+
+  const visibleItems = menuItems
+    .filter((item) => !item.addon || addonStatus[item.addon])
+    .filter((item) => !item.adminOnly || isTenantAdmin)
+    .filter((item) => !item.feature || hasFeature(item.feature))
+    .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url));
 
   const initials = user?.fullName
     ?.split(" ")
@@ -126,35 +142,39 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Menú</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {menuItems
-                .filter((item) => !item.addon || addonStatus[item.addon])
-                .filter((item) => !item.adminOnly || isTenantAdmin)
-                .filter((item) => !item.feature || hasFeature(item.feature))
-                .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url))
-                .map((item) => {
-                  const blocked = item.feature && !hasFeature(item.feature);
-                  return (
-                    <SidebarMenuItem key={item.title}>
-                      <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                        <Link
-                          href={item.url}
-                          data-testid={`nav-${item.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}
-                        >
-                          <item.icon className="w-4 h-4" />
-                          <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>{item.url === "/app/stock/kardex" && lowStockAlerts > 0 ? <Badge variant="destructive" className="ml-auto text-[10px]">{lowStockAlerts}</Badge> : null}
-                          {blocked && <Lock className="w-3 h-3 ml-auto text-muted-foreground" />}
-                        </Link>
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  );
-                })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {(["operacion", "productividad", "configuracion"] as const).map((section) => {
+          const sectionItems = visibleItems.filter((item) => item.section === section);
+          if (!sectionItems.length) return null;
+
+          return (
+            <SidebarGroup key={section}>
+              <SidebarGroupLabel>{sectionLabels[section]}</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {sectionItems.map((item) => {
+                    const blocked = item.feature && !hasFeature(item.feature);
+                    return (
+                      <SidebarMenuItem key={item.title}>
+                        <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                          <Link
+                            href={item.url}
+                            data-testid={`nav-${item.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}
+                          >
+                            <item.icon className="w-4 h-4" />
+                            <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>
+                            {item.highlight && <Badge className="ml-auto text-[10px]" variant="outline">Nuevo</Badge>}
+                            {item.url === "/app/stock/kardex" && lowStockAlerts > 0 ? <Badge variant="destructive" className="ml-auto text-[10px]">{lowStockAlerts}</Badge> : null}
+                            {blocked && <Lock className="w-3 h-3 ml-auto text-muted-foreground" />}
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    );
+                  })}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          );
+        })}
       </SidebarContent>
       <SidebarFooter className="p-4 joyride-user-profile">
         <div className="flex items-center gap-3">

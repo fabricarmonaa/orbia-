@@ -29,7 +29,10 @@ export default function PublicTracking() {
         statusLabel: payload.statusLabel || null,
         statusColor: payload.statusColor,
         customerName: payload.customerName,
+        customerPhone: payload.customerPhone || null,
+        deliveryAddress: payload.deliveryAddress || null,
         createdAt: payload.createdAt,
+        updatedAt: payload.updatedAt || null,
         scheduledAt: payload.scheduledAt,
         closedAt: payload.closedAt,
         history: payload.history || [],
@@ -38,6 +41,7 @@ export default function PublicTracking() {
         trackingLayout: payload.trackingLayout || "classic",
         trackingTosText: payload.trackingTosText,
         tosUrl: payload.tosUrl || null,
+        trackingVisibility: payload.trackingVisibility || {},
       });
       const payloadBranding = payload.branding || {};
       // Objective E: no Orbia logo fallback — TrackingView shows placeholder icon for null
@@ -57,6 +61,10 @@ export default function PublicTracking() {
         links: {
           ...defaultTenantBranding.links,
           ...(payloadBranding.links || {}),
+        },
+        trackingConfig: {
+          ...defaultTenantBranding.trackingConfig,
+          ...(payloadBranding.trackingConfig || {}),
         },
         pdfConfig: {
           ...defaultTenantBranding.pdfConfig,
@@ -82,11 +90,15 @@ export default function PublicTracking() {
         statusColor: "#6B7280",
         customerName: "",
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         scheduledAt: null,
         closedAt: null,
         history: [],
         publicComments: [],
         customFields: [],
+        customerPhone: null,
+        deliveryAddress: null,
+        trackingVisibility: {},
         trackingLayout: "classic",
         trackingTosText: "",
       }}

@@ -26,6 +26,13 @@ services:
     container_name: orbia-ai
     env_file:
       - .env.production
+    environment:
+      AI_SERVICE_PORT: "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
     ports:
       - "8000:8000"
     restart: unless-stopped
@@ -37,6 +44,8 @@ services:
     container_name: orbia-web
     depends_on:
       postgres:
+        condition: service_healthy
+      ai:
         condition: service_healthy
     env_file:
       - .env.production

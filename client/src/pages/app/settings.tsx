@@ -107,17 +107,23 @@ export default function SettingsPage() {
     status: "En Proceso",
     statusColor: brandingForm.colors.trackingBadge,
     customerName: "Cliente Ejemplo",
+    customerPhone: "+54 9 223 555-1234",
+    deliveryAddress: "Alberti 1234, Mar del Plata",
     createdAt: new Date().toISOString(),
-    scheduledAt: null,
+    updatedAt: new Date().toISOString(),
+    scheduledAt: new Date(Date.now() + 1000 * 60 * 90).toISOString(),
     closedAt: null,
     history: [
       { status: "Recibido", color: brandingForm.colors.primary, date: new Date().toISOString(), note: null },
       { status: "En Proceso", color: brandingForm.colors.secondary, date: new Date().toISOString(), note: null },
       { status: "Listo", color: "#e5e7eb", date: "", note: null },
     ],
-    publicComments: [],
+    publicComments: [{ content: "Estamos preparando tu pedido", date: new Date().toISOString() }],
+    customFields: [{ label: "Fecha de entrega", value: "Mañana 18:00", fieldType: "DATETIME", updatedAt: new Date().toISOString() }],
     trackingLayout: config.trackingLayout || "classic",
     trackingTosText: brandingForm.texts.trackingFooter,
+    trackingVisibility: brandingForm.trackingConfig,
+    tosUrl: "/t/demo/tos",
   };
 
   useEffect(() => {
@@ -137,6 +143,7 @@ export default function SettingsPage() {
         colors: { ...defaultTenantBranding.colors, ...tenantBranding.colors },
         texts: { ...defaultTenantBranding.texts, ...tenantBranding.texts },
         links: { ...defaultTenantBranding.links, ...tenantBranding.links },
+        trackingConfig: { ...defaultTenantBranding.trackingConfig, ...(tenantBranding as any).trackingConfig },
         pdfConfig: { ...defaultTenantBranding.pdfConfig, ...tenantBranding.pdfConfig },
       });
     }
@@ -222,6 +229,7 @@ export default function SettingsPage() {
         colors: brandingForm.colors,
         texts: brandingForm.texts,
         links: brandingForm.links,
+        trackingConfig: brandingForm.trackingConfig,
         pdfConfig: brandingForm.pdfConfig,
       });
       toast({ title: "Personalización guardada" });
@@ -244,6 +252,7 @@ export default function SettingsPage() {
         colors: reset.colors,
         texts: reset.texts,
         links: reset.links,
+        trackingConfig: reset.trackingConfig,
         pdfConfig: reset.pdfConfig,
       });
       toast({ title: "Valores restaurados" });

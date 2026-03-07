@@ -12,7 +12,7 @@ import { badRequest, notFound, HttpError } from "../lib/http-errors";
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-const ALLOWED_FIELD_TYPES = new Set(["TEXT", "NUMBER", "FILE"] as const);
+const ALLOWED_FIELD_TYPES = new Set(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"] as const);
 const ALLOWED_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
 const MAX_PRESETS_PER_TYPE = 3;
 
@@ -47,19 +47,27 @@ export function slugifyPresetCode(label: string): string {
     .slice(0, 80) || "preset";
 }
 
-function normalizeFieldType(value: string): "TEXT" | "NUMBER" | "FILE" {
+function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME" {
   const normalized = String(value || "").trim().toUpperCase();
   if (!ALLOWED_FIELD_TYPES.has(normalized as any)) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "fieldType inválido");
   }
-  return normalized as "TEXT" | "NUMBER" | "FILE";
+  return normalized as any;
 }
 
-function normalizeConfig(fieldType: "TEXT" | "NUMBER" | "FILE", config: unknown): Record<string, unknown> {
+function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME", config: unknown): Record<string, unknown> {
   const base =
     config && typeof config === "object" && !Array.isArray(config)
       ? { ...(config as Record<string, unknown>) }
       : {};
+
+  if (fieldType === "SELECT") {
+    const rawOptions = Array.isArray((base as any).options) ? (base as any).options : [];
+    const options = Array.from(new Set(rawOptions.map((x: unknown) => String(x || "").trim()).filter(Boolean))).slice(0, 100);
+    if (options.length === 0) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El campo desplegable requiere opciones");
+    base.options = options;
+    return base;
+  }
 
   if (fieldType !== "FILE") return base;
 
@@ -409,6 +417,7 @@ export const orderPresetsStorage = {
       config?: unknown;
       fieldKey?: string;
       visibleInTracking?: boolean;
+      useInAgenda?: boolean;
     }
   ) {
     const preset = await getPresetOrThrow(tenantId, presetId);
@@ -445,6 +454,7 @@ export const orderPresetsStorage = {
       config,
       isActive: true,
       visibleInTracking: Boolean(payload.visibleInTracking),
+      useInAgenda: Boolean(payload.useInAgenda),
     };
 
     const [created] = await db.insert(orderFieldDefinitions).values(values).returning();
@@ -462,6 +472,7 @@ export const orderPresetsStorage = {
       config?: unknown;
       fieldKey?: string;
       visibleInTracking?: boolean;
+      useInAgenda?: boolean;
     }
   ) {
     const typeRow = await getTypeOrThrow(tenantId, code);
@@ -489,7 +500,7 @@ export const orderPresetsStorage = {
   async updateField(
     tenantId: number,
     fieldId: number,
-    patch: { label?: string; required?: boolean; config?: unknown; isActive?: boolean; visibleInTracking?: boolean }
+    patch: { label?: string; required?: boolean; config?: unknown; isActive?: boolean; visibleInTracking?: boolean; useInAgenda?: boolean }
   ) {
     const [current] = await db
       .select()
@@ -506,6 +517,7 @@ export const orderPresetsStorage = {
     if (patch.required !== undefined) update.required = Boolean(patch.required);
     if (patch.isActive !== undefined) update.isActive = Boolean(patch.isActive);
     if (patch.visibleInTracking !== undefined) update.visibleInTracking = Boolean(patch.visibleInTracking);
+    if (patch.useInAgenda !== undefined) update.useInAgenda = Boolean(patch.useInAgenda);
     if (patch.config !== undefined)
       update.config = normalizeConfig(current.fieldType as any, patch.config);
 

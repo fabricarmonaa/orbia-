@@ -15,6 +15,7 @@ import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
 import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
 import { generatePublicToken } from "../utils/public-token";
+import { syncOrderAgendaEvents } from "../services/agenda";
 
 /** Decimal-safe payment status calculation (tolerates floating-point rounding) */
 function calcPaymentStatus(paid: number, total: number): "UNPAID" | "PARTIAL" | "PAID" {
@@ -263,6 +264,7 @@ export function registerOrderRoutes(app: Express) {
 
         return { order: created, hasCashMovement };
       });
+      await syncOrderAgendaEvents(tenantId, data.order.id, req.auth!.userId);
       await refreshMetricsForDate(tenantId, new Date());
       const responseBody: Record<string, unknown> = { data: data.order };
       if (!data.hasCashMovement && paidNum > 0) responseBody.cashWarning = "Sin sesi\u00f3n de caja abierta: el ingreso no fue registrado";
@@ -296,6 +298,7 @@ export function registerOrderRoutes(app: Express) {
       const id = Number(req.params.id);
       const order = await storage.getOrderById(id, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
+      await syncOrderAgendaEvents(tenantId, id, req.auth!.userId);
       const customFields = await getOrderCustomFields(id, tenantId);
       return res.json({ data: { orderId: id, orderTypeCode: order.type, customFields } });
     } catch (err: any) {
@@ -379,6 +382,7 @@ export function registerOrderRoutes(app: Express) {
         await saveCustomFieldValues(id, tenantId, normalized.normalized);
       }
 
+      await syncOrderAgendaEvents(tenantId, id, req.auth!.userId);
       const saved = await storage.getOrderById(id, tenantId);
       const customFields = await getOrderCustomFields(id, tenantId);
       return res.json({ data: saved, customFields });
@@ -431,6 +435,7 @@ export function registerOrderRoutes(app: Express) {
           await storage.updateOrderTracking(orderId, tenantId, order.publicTrackingId, expiresAt);
         }
       }
+      await syncOrderAgendaEvents(tenantId, orderId, req.auth!.userId);
       await refreshMetricsForDate(tenantId, new Date());
       const updatedOrder = await storage.getOrderById(orderId, tenantId);
       res.json({ ok: true, data: updatedOrder });

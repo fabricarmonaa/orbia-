@@ -8,6 +8,7 @@ import {
   type InsertTenantBranding,
   type InsertAppBranding,
 } from "@shared/schema";
+import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
 const DEFAULT_COLORS = {
   primary: "#6366f1",
@@ -36,6 +37,9 @@ const DEFAULT_PDF = {
   footerText: "",
   showLogo: true,
 };
+
+const DEFAULT_TRACKING_CONFIG: TrackingVisibilityConfig = DEFAULT_TRACKING_VISIBILITY;
+const DEFAULT_TRACKING_CONFIG_RECORD = DEFAULT_TRACKING_CONFIG as unknown as Record<string, unknown>;
 
 function withCacheBusting(url: string | null, updatedAt?: Date | null) {
   if (!url) return null;
@@ -71,6 +75,7 @@ export const brandingStorage = {
     const colors = mergeDefaults(DEFAULT_COLORS, branding?.colorsJson as Record<string, unknown>);
     const texts = mergeDefaults(DEFAULT_TEXTS, branding?.textsJson as Record<string, unknown>);
     const links = mergeDefaults(DEFAULT_LINKS, branding?.linksJson as Record<string, unknown>);
+    const trackingConfig = mergeDefaults(DEFAULT_TRACKING_CONFIG_RECORD, branding?.trackingConfigJson as Record<string, unknown>) as Record<string, unknown>;
     const pdf = mergeDefaults(DEFAULT_PDF, branding?.pdfConfigJson as Record<string, unknown>);
     const updatedAt = branding?.updatedAt || new Date();
 
@@ -82,6 +87,7 @@ export const brandingStorage = {
       colors,
       texts,
       links,
+      trackingConfig,
       pdfConfig: pdf,
       updatedAt,
     };
@@ -111,6 +117,10 @@ export const brandingStorage = {
             ...(existing.linksJson as Record<string, unknown>),
             ...(payload.linksJson as Record<string, unknown>),
           },
+          trackingConfigJson: {
+            ...(existing.trackingConfigJson as Record<string, unknown>),
+            ...(payload.trackingConfigJson as Record<string, unknown>),
+          },
           pdfConfigJson: {
             ...(existing.pdfConfigJson as Record<string, unknown>),
             ...(payload.pdfConfigJson as Record<string, unknown>),
@@ -131,6 +141,7 @@ export const brandingStorage = {
         colorsJson: mergeDefaults(DEFAULT_COLORS, payload.colorsJson as Record<string, unknown>),
         textsJson: mergeDefaults(DEFAULT_TEXTS, payload.textsJson as Record<string, unknown>),
         linksJson: mergeDefaults(DEFAULT_LINKS, payload.linksJson as Record<string, unknown>),
+        trackingConfigJson: mergeDefaults(DEFAULT_TRACKING_CONFIG_RECORD, payload.trackingConfigJson as Record<string, unknown>),
         pdfConfigJson: mergeDefaults(DEFAULT_PDF, payload.pdfConfigJson as Record<string, unknown>),
       })
       .returning();

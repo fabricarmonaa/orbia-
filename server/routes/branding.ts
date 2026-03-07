@@ -73,6 +73,29 @@ const tenantBrandingSchema = z.object({
       web: linkValue.optional(),
     })
     .optional(),
+  trackingConfig: z
+    .object({
+      showLogo: z.boolean().optional(),
+      showBusinessName: z.boolean().optional(),
+      showOrderNumber: z.boolean().optional(),
+      showOrderType: z.boolean().optional(),
+      showCustomerName: z.boolean().optional(),
+      showCustomerPhone: z.boolean().optional(),
+      showDeliveryAddress: z.boolean().optional(),
+      showCurrentStatus: z.boolean().optional(),
+      showStatusHistory: z.boolean().optional(),
+      showCreatedAt: z.boolean().optional(),
+      showUpdatedAt: z.boolean().optional(),
+      showScheduledAt: z.boolean().optional(),
+      showClosedAt: z.boolean().optional(),
+      showPublicComments: z.boolean().optional(),
+      showDynamicFields: z.boolean().optional(),
+      showDynamicFieldUpdatedAt: z.boolean().optional(),
+      showTos: z.boolean().optional(),
+      showSocialLinks: z.boolean().optional(),
+      showPoweredBy: z.boolean().optional(),
+    })
+    .optional(),
   pdfConfig: z
     .object({
       headerText: z.string().transform((value) => sanitizeShortText(value, 120)).optional(),
@@ -141,6 +164,7 @@ export function registerBrandingRoutes(app: Express) {
         colorsJson: payload.colors ?? undefined,
         textsJson: payload.texts ?? undefined,
         linksJson: isEconomic ? { instagram: "", whatsapp: "", web: "" } : (payload.links ?? undefined),
+        trackingConfigJson: payload.trackingConfig ? { ...payload.trackingConfig, showPoweredBy: true } : undefined,
         pdfConfigJson: payload.pdfConfig ?? undefined,
       });
       const data = await storage.getTenantBranding(req.auth!.tenantId!);

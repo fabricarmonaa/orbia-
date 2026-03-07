@@ -64,7 +64,7 @@ type OrderPresetField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "NUMBER" | "FILE";
+  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
   required: boolean;
   sortOrder: number;
   isSystemDefault: boolean;
@@ -257,7 +257,7 @@ export default function OrdersPage() {
         const raw = customFieldInputs[field.id] || {};
         return {
           fieldId: field.id,
-          valueText: field.fieldType === "TEXT" ? (raw.valueText || "") : undefined,
+          valueText: ["TEXT","TEXT_LONG","DATE","TIME","DATETIME","CHECKBOX","SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
           valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
           fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
@@ -650,11 +650,15 @@ export default function OrdersPage() {
                             Visible
                           </label>
                         </div>
-                        {field.fieldType === "TEXT" ? (
+                        {field.fieldType === "TEXT" || field.fieldType === "TEXT_LONG" || field.fieldType === "DATE" || field.fieldType === "TIME" || field.fieldType === "DATETIME" || field.fieldType === "SELECT" ? (
                           <Input
+                            type={field.fieldType === "DATE" ? "date" : field.fieldType === "TIME" ? "time" : field.fieldType === "DATETIME" ? "datetime-local" : "text"}
                             value={customFieldInputs[field.id]?.valueText || ""}
                             onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+                            placeholder={field.fieldType === "SELECT" ? `Opciones: ${((field.config as any)?.options || []).join(", ")}` : undefined}
                           />
+                        ) : field.fieldType === "CHECKBOX" ? (
+                          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={(customFieldInputs[field.id]?.valueText || "false") === "true"} onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.checked ? "true" : "false" } }))} /> Marcar</label>
                         ) : field.fieldType === "NUMBER" ? (
                           <Input
                             type="number"

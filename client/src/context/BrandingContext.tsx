@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
 export interface TenantBrandingColors {
   primary: string;
@@ -35,6 +36,7 @@ export interface TenantBranding {
   colors: TenantBrandingColors;
   texts: TenantBrandingTexts;
   links: TenantBrandingLinks;
+  trackingConfig: TrackingVisibilityConfig;
   pdfConfig: TenantBrandingPdfConfig;
 }
 
@@ -72,6 +74,7 @@ const defaultTenantBranding: TenantBranding = {
     whatsapp: "",
     web: "",
   },
+  trackingConfig: DEFAULT_TRACKING_VISIBILITY,
   pdfConfig: {
     headerText: "",
     footerText: "",
@@ -136,6 +139,10 @@ export function BrandingProvider({ children }: { children: React.ReactNode }) {
           links: {
             ...defaultTenantBranding.links,
             ...(payload.links || {}),
+          },
+          trackingConfig: {
+            ...defaultTenantBranding.trackingConfig,
+            ...(payload.trackingConfig || {}),
           },
           pdfConfig: {
             ...defaultTenantBranding.pdfConfig,

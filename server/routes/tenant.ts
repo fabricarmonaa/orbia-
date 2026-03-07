@@ -15,6 +15,7 @@ import { pool } from "../db";
 import { getStatuses } from "../services/statuses";
 import { getTenantAddons as getTenantAddonsFlags } from "../services/tenant-addons";
 import { getPlanDisplayName } from "@shared/plan-display";
+import { dashboardAgendaBlocks } from "../services/agenda";
 
 
 const changePasswordSchema = z.object({
@@ -293,6 +294,8 @@ export function registerTenantRoutes(app: Express) {
       orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
       cash: { monthIncome: 0, monthExpense: 0, monthFixedExpense: 0, monthVariableExpense: 0, monthResult: 0 },
       products: { count: 0 },
+      agenda: { today: [], upcoming: [] },
+      notes: { active: [] },
     };
 
     try {
@@ -336,6 +339,8 @@ export function registerTenantRoutes(app: Express) {
       const monthExpense = Number((monthlyExpensesByType.fixed || 0) + (monthlyExpensesByType.variable || 0));
       const monthFixedExpense = Number(monthlyExpensesByType.fixed || 0);
       const monthVariableExpense = Number(monthlyExpensesByType.variable || 0);
+      const agenda = await dashboardAgendaBlocks(tenantId, branchId);
+      const notesRows = await pool.query(`SELECT id, title, content, remind_at, status, show_in_agenda FROM notes WHERE tenant_id = $1 ${branchId ? "AND branch_id = $2" : ""} AND status = 'ACTIVA' ORDER BY remind_at NULLS LAST, created_at DESC LIMIT 6`, branchId ? [tenantId, branchId] : [tenantId]);
 
       return res.json({
         orders: {
@@ -354,6 +359,8 @@ export function registerTenantRoutes(app: Express) {
         products: {
           count: Number(totalProducts || 0),
         },
+        agenda,
+        notes: { active: notesRows.rows || [] },
       });
     } catch (err) {
       console.error("[dashboard] DASHBOARD_SUMMARY_ERROR", err);

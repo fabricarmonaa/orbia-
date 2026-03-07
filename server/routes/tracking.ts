@@ -8,6 +8,7 @@ import { orderAttachments } from "@shared/schema";
 import { getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
+import { normalizeTrackingVisibilityConfig } from "@shared/tracking-config";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -46,6 +47,8 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const tenantSlug = (order as any).tenantSlug;
   const tosUrl = tenantSlug ? `/t/${tenantSlug}/tos` : null;
 
+  const trackingVisibility = normalizeTrackingVisibilityConfig((branding as any).trackingConfig || {});
+
   const historyFormatted = history.map((h) => {
     const maybeCode = normalizeStatusCode(String((h as any).statusCode || (h as any).status_code || ""));
     const s = maybeCode ? definitionsByCode.get(maybeCode) : null;
@@ -58,7 +61,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   });
 
   const allCustomFields = await getOrderCustomFields(order.id, tenantId);
-  const publicCustomFields = allCustomFields
+  const publicCustomFields = trackingVisibility.showDynamicFields ? allCustomFields
     .filter((f) => {
       if (f.visibleOverride === true) return true;
       if (f.visibleOverride === false) return false;
@@ -84,10 +87,13 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         label: f.label || "Campo",
         value: displayValue,
         fieldType: f.fieldType,
-        updatedAt: f.createdAt || null,
+        updatedAt: (f as any).updatedAt || f.createdAt || null,
         downloadUrl,
       };
-    });
+    }) : [];
+
+  const safeHistory = trackingVisibility.showStatusHistory ? historyFormatted : [];
+  const safeComments = trackingVisibility.showPublicComments ? publicComments : [];
 
   return {
     status: 200,
@@ -100,11 +106,14 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         statusLabel: resolvedCurrent?.label || null,
         statusColor: resolvedCurrent?.color || "#6B7280",
         customerName: order.customerName || "",
+        customerPhone: order.customerPhone || null,
+        deliveryAddress: [order.deliveryAddress, order.deliveryCity].filter(Boolean).join(", ") || null,
         createdAt: order.createdAt,
+        updatedAt: order.updatedAt || null,
         scheduledAt: order.scheduledAt,
         closedAt: order.closedAt,
-        history: historyFormatted,
-        publicComments: publicComments.map((c) => ({
+        history: safeHistory,
+        publicComments: safeComments.map((c) => ({
           content: c.content,
           date: c.createdAt,
         })),
@@ -112,12 +121,14 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         trackingLayout: config?.trackingLayout || "classic",
         trackingTosText: (branding.texts as any)?.trackingFooter || null,
         tosUrl,
+        trackingVisibility,
         branding: {
           displayName: branding.displayName,
           logoUrl,
           colors: branding.colors,
           texts: branding.texts,
           links: branding.links,
+          trackingConfig: trackingVisibility,
         },
         businessName: branding.displayName,
         logoUrl,

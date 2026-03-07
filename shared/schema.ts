@@ -33,3 +33,6 @@ export * from './schema/statuses';
 
 export * from './schema/order-presets';
 export * from './schema/providers';
+
+export * from './schema/agenda';
+export * from './schema/notes';
