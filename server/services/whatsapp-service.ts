@@ -11,6 +11,7 @@ import {
 import { db } from "../db";
 import { decryptSecret, encryptSecret, isMaskedSecretValue, maskSecret } from "./whatsapp-crypto";
 import { WhatsAppProviderError, resolveWhatsappProvider } from "./whatsapp-provider";
+import { whatsappRealtimeBus, type WhatsAppRealtimeEventType } from "./whatsapp-realtime";
 
 function isWhatsappDebugEnabled() {
   return String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() === "true";
@@ -187,6 +188,48 @@ function extractStatusError(statusPayload: any) {
   return { code, details };
 }
 
+async function buildConversationSnapshot(tenantId: number, conversationId: number) {
+  const [conversation] = await db
+    .select()
+    .from(whatsappConversations)
+    .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
+    .limit(1);
+  if (!conversation) return null;
+  return { ...conversation, windowOpen: isWithin24hWindow(conversation.lastInboundAt) };
+}
+
+async function buildMessageSnapshot(tenantId: number, messageId: number) {
+  const [message] = await db
+    .select()
+    .from(whatsappMessages)
+    .where(and(eq(whatsappMessages.tenantId, tenantId), eq(whatsappMessages.id, messageId)))
+    .limit(1);
+  return message || null;
+}
+
+async function emitRealtimeInboxEvent(input: {
+  eventType: WhatsAppRealtimeEventType;
+  tenantId: number;
+  conversationId: number;
+  messageId?: number;
+  changedFields?: string[];
+}) {
+  const conversation = await buildConversationSnapshot(input.tenantId, input.conversationId);
+  if (!conversation) return;
+  const message = input.messageId ? await buildMessageSnapshot(input.tenantId, input.messageId) : null;
+  whatsappRealtimeBus.publish({
+    eventType: input.eventType,
+    tenantId: input.tenantId,
+    branchId: conversation.branchId ?? null,
+    conversationId: input.conversationId,
+    messageId: input.messageId,
+    changedFields: input.changedFields,
+    timestamp: new Date().toISOString(),
+    conversation,
+    message: message || undefined,
+  });
+}
+
 export async function resolveWhatsAppChannelByPhoneNumberId(phoneNumberId: string) {
   const [channel] = await db
     .select()
@@ -261,7 +304,7 @@ export async function findOrCreateConversation(input: {
     )
     .limit(1);
 
-  if (found) return found;
+  if (found) return { conversation: found, created: false as const };
 
   const [created] = await db
     .insert(whatsappConversations)
@@ -276,7 +319,7 @@ export async function findOrCreateConversation(input: {
       lastMessageAt: new Date(),
     })
     .returning();
-  return created;
+  return { conversation: created, created: true as const };
 }
 
 export async function createInboundMessage(input: {
@@ -396,7 +439,7 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
         const from = normalizePhone(event.value?.from || "");
         const name = event.contact?.profile?.name || null;
 
-        const conversation = await findOrCreateConversation({
+        const { conversation, created: conversationCreated } = await findOrCreateConversation({
           tenantId: channel.tenantId,
           branchId: channel.branchId,
           channelId: channel.id,
@@ -404,8 +447,17 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
           customerName: name,
         });
 
+        if (conversationCreated) {
+          await emitRealtimeInboxEvent({
+            eventType: "conversation.created",
+            tenantId: channel.tenantId,
+            conversationId: conversation.id,
+            changedFields: ["status", "lastMessageAt"],
+          });
+        }
+
         if (messageType === "TEXT") {
-          await createInboundMessage({
+          const inboundMessage = await createInboundMessage({
             tenantId: channel.tenantId,
             conversationId: conversation.id,
             channelId: channel.id,
@@ -414,6 +466,19 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             customerName: name,
             rawPayload: event,
             messageType,
+          });
+          await emitRealtimeInboxEvent({
+            eventType: "message.created",
+            tenantId: channel.tenantId,
+            conversationId: conversation.id,
+            messageId: inboundMessage.id,
+            changedFields: ["unreadCount", "lastMessageAt", "lastInboundAt"],
+          });
+          await emitRealtimeInboxEvent({
+            eventType: "conversation.updated",
+            tenantId: channel.tenantId,
+            conversationId: conversation.id,
+            changedFields: ["unreadCount", "lastMessageAt", "lastInboundAt"],
           });
         }
 
@@ -432,8 +497,10 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
           FAILED: "FAILED",
         };
 
+        let statusMessageId: number | null = null;
+        let statusConversationId: number | null = null;
         if (providerMessageId) {
-          await db
+          const [updatedMessage] = await db
             .update(whatsappMessages)
             .set({
               status: statusMap[status] || "QUEUED",
@@ -445,7 +512,12 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
                 eq(whatsappMessages.channelId, channel.id),
                 eq(whatsappMessages.providerMessageId, providerMessageId),
               ),
-            );
+            )
+            .returning();
+          if (updatedMessage) {
+            statusMessageId = updatedMessage.id;
+            statusConversationId = updatedMessage.conversationId;
+          }
         }
 
         await db
@@ -456,6 +528,16 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             processedAt: new Date(),
           })
           .where(eq(whatsappWebhookEvents.id, baseEvent.id));
+
+        if (statusConversationId && statusMessageId) {
+          await emitRealtimeInboxEvent({
+            eventType: "message.status_updated",
+            tenantId: channel.tenantId,
+            conversationId: statusConversationId,
+            messageId: statusMessageId,
+            changedFields: ["status"],
+          });
+        }
 
         waLog("status_webhook", { status, providerMessageId, code, details, channelId: channel.id, tenantId: channel.tenantId });
       } else {
@@ -496,6 +578,14 @@ export async function markConversationAsRead(tenantId: number, conversationId: n
     .set({ unreadCount: 0, updatedAt: new Date() })
     .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
     .returning();
+  if (saved) {
+    await emitRealtimeInboxEvent({
+      eventType: "conversation.read",
+      tenantId,
+      conversationId,
+      changedFields: ["unreadCount"],
+    });
+  }
   return saved || null;
 }
 
@@ -505,6 +595,14 @@ export async function updateConversationStatus(tenantId: number, conversationId:
     .set({ status, updatedAt: new Date() })
     .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
     .returning();
+  if (saved) {
+    await emitRealtimeInboxEvent({
+      eventType: "conversation.status_changed",
+      tenantId,
+      conversationId,
+      changedFields: ["status"],
+    });
+  }
   return saved || null;
 }
 
@@ -514,6 +612,14 @@ export async function assignConversationToUser(tenantId: number, conversationId:
     .set({ assignedUserId, updatedAt: new Date() })
     .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
     .returning();
+  if (saved) {
+    await emitRealtimeInboxEvent({
+      eventType: "conversation.assigned",
+      tenantId,
+      conversationId,
+      changedFields: ["assignedUserId"],
+    });
+  }
   return saved || null;
 }
 
@@ -604,6 +710,20 @@ export async function sendConversationWhatsAppMessage(input: {
     processingStatus: "PROCESSED",
   });
 
+  await emitRealtimeInboxEvent({
+    eventType: "message.created",
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    changedFields: ["lastOutboundAt", "lastMessageAt"],
+  });
+  await emitRealtimeInboxEvent({
+    eventType: "conversation.updated",
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    changedFields: ["lastOutboundAt", "lastMessageAt"],
+  });
+
   return { conversation, message, result, normalizedTo: target.to, modeUsed: "text_freeform", windowOpen: true, targetSource: target.source };
 }
 
@@ -671,6 +791,20 @@ export async function sendConversationTemplateMessage(input: {
       result,
     },
     processingStatus: "PROCESSED",
+  });
+
+  await emitRealtimeInboxEvent({
+    eventType: "message.created",
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    changedFields: ["lastOutboundAt", "lastMessageAt"],
+  });
+  await emitRealtimeInboxEvent({
+    eventType: "conversation.updated",
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    changedFields: ["lastOutboundAt", "lastMessageAt"],
   });
 
   return { conversation, message, result, normalizedTo: target.to, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt), targetSource: target.source };
@@ -855,7 +989,7 @@ export async function sendTestWhatsAppMessage(input: {
     overrideTo: input.to,
   });
   const normalizedTo = target.to;
-  const conversation = await findOrCreateConversation({
+  const { conversation } = await findOrCreateConversation({
     tenantId: input.tenantId,
     branchId: channel.branchId,
     channelId: channel.id,

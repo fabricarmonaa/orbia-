@@ -25,6 +25,7 @@ import {
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
+import { whatsappRealtimeBus } from "../services/whatsapp-realtime";
 
 const channelSchema = z.object({
   provider: z.string().trim().min(2).max(20).default("meta"),
@@ -220,6 +221,61 @@ export function registerWhatsappRoutes(app: Express) {
     const runtime = runtimeForRequest(req, getChannelRuntimeInfo(await getTenantChannel(tenantId)));
     res.json({ ok: healthy, details: { provider: channel.provider, status: channel.status, isActive: channel.isActive, environmentMode: runtime.environmentMode, channelProductStatus: runtime.channelProductStatus } });
   });
+
+
+
+  app.get(
+    "/api/whatsapp/inbox/stream",
+    (req, _res, next) => {
+      const accessToken = typeof req.query.access_token === "string" ? req.query.access_token : "";
+      if (accessToken && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${accessToken}`;
+      }
+      next();
+    },
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.flushHeaders?.();
+
+      const write = (eventName: string, data: unknown) => {
+        res.write(`event: ${eventName}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+
+      write("ready", {
+        ok: true,
+        tenantId,
+        branchId,
+        timestamp: new Date().toISOString(),
+      });
+
+      const heartbeat = setInterval(() => {
+        write("heartbeat", { ts: Date.now() });
+      }, 25000);
+
+      const unsubscribe = whatsappRealtimeBus.subscribe({
+        tenantId,
+        branchId: branchId ?? null,
+        onEvent: (event) => {
+          write(event.eventType, event);
+        },
+      });
+
+      req.on("close", () => {
+        clearInterval(heartbeat);
+        unsubscribe();
+      });
+    },
+  );
 
   app.get("/api/whatsapp/conversations", tenantAuth, requireAddon("whatsapp_inbox"), enforceBranchScope, async (req, res) => {
     const tenantId = req.auth!.tenantId!;

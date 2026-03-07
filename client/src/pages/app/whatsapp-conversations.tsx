@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/auth";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { apiRequest, getToken } from "@/lib/auth";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 
 const STATUS_OPTIONS = ["OPEN", "HUMAN", "BOT", "CLOSED"] as const;
+
+type StreamStatus = "connecting" | "live" | "reconnecting" | "offline";
 
 export default function WhatsappConversationsPage() {
   const { toast } = useToast();
@@ -22,11 +24,50 @@ export default function WhatsappConversationsPage() {
   const [busyAction, setBusyAction] = useState<string | null>(null);
   const [templateSuggestions, setTemplateSuggestions] = useState<any[]>([]);
   const [selectedTemplateCode, setSelectedTemplateCode] = useState("hello_world");
+  const [streamStatus, setStreamStatus] = useState<StreamStatus>("connecting");
+  const [lastRealtimeAt, setLastRealtimeAt] = useState<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const currentSelectedIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    currentSelectedIdRef.current = selected?.id ?? null;
+  }, [selected?.id]);
 
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => new Date(b.lastMessageAt || b.createdAt).getTime() - new Date(a.lastMessageAt || a.createdAt).getTime()),
     [conversations],
   );
+
+  function upsertConversation(conversation: any) {
+    setConversations((prev: any[]) => {
+      const idx = prev.findIndex((item) => item.id === conversation.id);
+      if (idx === -1) return [conversation, ...prev];
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...conversation };
+      return next;
+    });
+    setSelected((prev: any) => (prev?.id === conversation.id ? { ...prev, ...conversation } : prev));
+  }
+
+  function upsertMessage(message: any) {
+    if (!message || currentSelectedIdRef.current !== message.conversationId) return;
+    setMessages((prev: any[]) => {
+      const idx = prev.findIndex((item) => item.id === message.id || (item.providerMessageId && item.providerMessageId === message.providerMessageId));
+      if (idx === -1) return [...prev, message];
+      const next = [...prev];
+      next[idx] = { ...next[idx], ...message };
+      return next;
+    });
+  }
+
+  function handleRealtimeEvent(payload: any) {
+    if (!payload || !payload.eventType) return;
+    if (payload.conversation) upsertConversation(payload.conversation);
+    if (payload.message) upsertMessage(payload.message);
+    setLastRealtimeAt(new Date().toISOString());
+  }
 
   async function loadConversations() {
     const res = await apiRequest("GET", "/api/whatsapp/conversations");
@@ -91,8 +132,6 @@ export default function WhatsappConversationsPage() {
       await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send`, { text: reply.trim() }, { skipAuthHandling: true });
       toast({ title: "Mensaje enviado" });
       setReply("");
-      await loadMessages(selected.id);
-      await loadConversations();
     } catch (err: any) {
       const msg = String(err?.message || "Error enviando mensaje");
       const friendly = msg.includes("24h") ? `${msg} (Sugerencia: enviar plantilla desde esta misma pantalla)` : msg;
@@ -108,8 +147,6 @@ export default function WhatsappConversationsPage() {
     try {
       await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode }, { skipAuthHandling: true });
       toast({ title: "Plantilla enviada" });
-      await loadMessages(selected.id);
-      await loadConversations();
     } catch (err: any) {
       toast({ title: "Error enviando plantilla", description: String(err?.message || "Error"), variant: "destructive" });
     } finally {
@@ -123,9 +160,6 @@ export default function WhatsappConversationsPage() {
     try {
       await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/mark-read`, {});
       toast({ title: "Conversación marcada como leída" });
-      await loadConversations();
-      const updated = { ...selected, unreadCount: 0 };
-      setSelected(updated);
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -137,10 +171,7 @@ export default function WhatsappConversationsPage() {
     if (!selected) return;
     setBusyAction("status");
     try {
-      const res = await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/status`, { status });
-      const data = await res.json();
-      setSelected(data.data || selected);
-      await loadConversations();
+      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/status`, { status });
       toast({ title: "Estado actualizado" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -154,10 +185,7 @@ export default function WhatsappConversationsPage() {
     setBusyAction("assign");
     try {
       const payload = { assignedUserId: assignedUserId === "none" ? null : Number(assignedUserId) };
-      const res = await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/assign`, payload);
-      const data = await res.json();
-      setSelected(data.data || selected);
-      await loadConversations();
+      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/assign`, payload);
       toast({ title: "Asignación actualizada" });
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -170,27 +198,114 @@ export default function WhatsappConversationsPage() {
     refreshAll();
   }, []);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Cargando inbox...</p>;
+  useEffect(() => {
+    if (!addonEnabled) return;
+    const token = getToken();
+    if (!token) return;
+
+    let closedByCleanup = false;
+
+    const closeStream = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+    };
+
+    const connect = () => {
+      closeStream();
+      const url = `/api/whatsapp/inbox/stream?access_token=${encodeURIComponent(token)}`;
+      const source = new EventSource(url);
+      eventSourceRef.current = source;
+      setStreamStatus(reconnectAttemptRef.current > 0 ? "reconnecting" : "connecting");
+
+      source.onopen = () => {
+        reconnectAttemptRef.current = 0;
+        setStreamStatus("live");
+      };
+
+      source.addEventListener("heartbeat", () => {
+        setLastRealtimeAt(new Date().toISOString());
+      });
+
+      source.onmessage = (event) => {
+        try {
+          const parsed = JSON.parse(event.data);
+          handleRealtimeEvent(parsed);
+        } catch {
+          // ignore parse errors in non-domain events
+        }
+      };
+
+      source.onerror = () => {
+        closeStream();
+        if (closedByCleanup) return;
+        reconnectAttemptRef.current += 1;
+        setStreamStatus("reconnecting");
+        const waitMs = Math.min(8000, 1000 * reconnectAttemptRef.current);
+        reconnectTimerRef.current = window.setTimeout(connect, waitMs);
+      };
+
+      const domainEvents = [
+        "conversation.created",
+        "conversation.updated",
+        "conversation.read",
+        "conversation.assigned",
+        "conversation.status_changed",
+        "message.created",
+        "message.status_updated",
+      ];
+
+      for (const eventType of domainEvents) {
+        source.addEventListener(eventType, (event) => {
+          try {
+            const parsed = JSON.parse((event as MessageEvent).data);
+            handleRealtimeEvent(parsed);
+          } catch {
+            // noop
+          }
+        });
+      }
+    };
+
+    connect();
+
+    return () => {
+      closedByCleanup = true;
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      closeStream();
+      setStreamStatus("offline");
+    };
+  }, [addonEnabled]);
+
+  if (loading) {
+    return <div className="p-6 text-sm text-muted-foreground">Cargando inbox de WhatsApp…</div>;
+  }
 
   if (!addonEnabled) {
     return (
-      <Card>
-        <CardHeader>
-          <h2 className="font-semibold">WhatsApp Inbox <Badge className="ml-2" variant="secondary">Addon</Badge></h2>
-        </CardHeader>
-        <CardContent className="space-y-2">
-          <p className="text-sm text-muted-foreground">Este módulo requiere el addon <strong>WhatsApp Inbox</strong>.</p>
-          <p className="text-sm text-muted-foreground">Contactá al administrador de la plataforma para habilitarlo en tu tenant y activar esta expansión premium.</p>
-        </CardContent>
-      </Card>
+      <div className="p-6 space-y-3">
+        <h1 className="text-2xl font-semibold">WhatsApp Inbox</h1>
+        <p className="text-sm text-muted-foreground">El addon <code>whatsapp_inbox</code> no está habilitado para este tenant.</p>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold tracking-tight">WhatsApp Inbox <Badge className="ml-2" variant="secondary">Addon</Badge></h1>
-        <Button variant="outline" onClick={refreshAll}>Refrescar</Button>
+        <div>
+          <h1 className="text-2xl font-semibold">WhatsApp Inbox</h1>
+          <p className="text-sm text-muted-foreground">Atención operativa en tiempo real con separación sandbox/producción ya aplicada en backend.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Badge variant={streamStatus === "live" ? "secondary" : "outline"}>{streamStatus === "live" ? "En vivo" : streamStatus === "reconnecting" ? "Reconectando" : streamStatus === "connecting" ? "Conectando" : "Sin conexión"}</Badge>
+          <span className="text-xs text-muted-foreground">{lastRealtimeAt ? `Último evento: ${new Date(lastRealtimeAt).toLocaleTimeString()}` : "Sin eventos aún"}</span>
+          <Button variant="outline" onClick={refreshAll}>Refrescar</Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
