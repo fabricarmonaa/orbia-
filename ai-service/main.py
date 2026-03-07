@@ -128,9 +128,9 @@ def parse_entities(text: str, intent: str) -> dict[str, Any]:
         entities["dni"] = dni_match.group(1)
 
     # Captura flexible si el usuario dice documento/documentos/dni con un número corto o largo.
-    explicit_doc = re.search(r"(?:dni|documento|documentos|nro\.?\s*de\s*documento|numero\s*de\s*documento)\s*(?:es|:)?\s*(\d{1,12})", normalized)
+    explicit_doc = re.search(r"(?:dni|documento|documentos|nro\.?\s*de\s*documento|numero\s*de\s*documento)\s*(?:es|:)?\s*((?:\d[\s,.-]*){1,15})", normalized)
     if explicit_doc:
-        entities["dni"] = explicit_doc.group(1)
+        entities["dni"] = re.sub(r"\D", "", explicit_doc.group(1))
 
     qty_match = re.search(r"\b(\d+)\s+(?:unidades?|u|x)\b", normalized) or re.search(r"\bde\s+(\d+)\b", normalized)
     if qty_match:
@@ -145,14 +145,22 @@ def parse_entities(text: str, intent: str) -> dict[str, Any]:
         r"nombre\s+([a-zA-Záéíóúñ\s]{3,80})",
         r"cliente\s+([a-zA-Záéíóúñ\s]{3,80})",
         r"usuario\s+([a-zA-Záéíóúñ\s]{3,80})",
+        r"se\s+llama\s+([a-zA-Záéíóúñ\s]{3,80})",
     ]
     for pattern in name_patterns:
         m = re.search(pattern, text, flags=re.IGNORECASE)
         if m:
-            candidate = re.sub(r"\s+(con|dni|documento|documentos).*$", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
+            candidate = re.sub(r"\s+(con|dni|documento|documentos|telefono|teléfono).*$", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
             if len(candidate) >= 3:
                 entities["name"] = candidate
                 break
+
+    # Teléfono: acepta dictado con espacios/comas/puntos, ej: "2, 3, 5, 0, 0, 7, 8, 3"
+    phone_match = re.search(r"(?:telefono|teléfono|celular|whatsapp|me llaman al|llamame al|llámame al)\s*(?:es|:|al)?\s*((?:\d[\s,.-]*){6,20})", normalized)
+    if phone_match:
+        phone_digits = re.sub(r"\D", "", phone_match.group(1))
+        if len(phone_digits) >= 6:
+            entities["phone"] = phone_digits
 
     if "producto" in normalized:
         m = re.search(r"producto\s+([a-zA-Z0-9áéíóúñ\s]{2,80})", text, flags=re.IGNORECASE)
@@ -173,13 +181,13 @@ def parse_intent(transcript: str) -> tuple[str, dict[str, Any], float]:
     if any(x in t for x in ["export", "dump", "todos los dni", "dame todos"]):
         return "blocked", {}, 1.0
 
-    if any(x in t for x in ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "crear un usuario", "registrar usuario"]):
+    if any(x in t for x in ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "crear un usuario", "registrar usuario", "cargar cliente", "cargame cliente", "cargame un cliente", "cargar un cliente", "dar de alta cliente", "dar de alta un cliente", "alta de cliente", "agregar cliente", "ingresar cliente"]):
         intent = "customer.create"
     elif any(x in t for x in ["compras a proveedor", "compra a proveedor", "compras de proveedor"]):
         intent = "provider.purchases"
     elif any(x in t for x in ["compras", "que compro", "qué compras hizo"]):
         intent = "customer.purchases"
-    elif any(x in t for x in ["buscar cliente", "busca cliente", "encontrar cliente"]):
+    elif any(x in t for x in ["buscar cliente", "busca cliente", "encontrar cliente", "mostrar cliente", "traer cliente", "consultar cliente"]):
         intent = "customer.search"
     elif any(x in t for x in ["crear producto", "crea producto"]):
         intent = "product.create"

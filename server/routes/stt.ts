@@ -60,10 +60,12 @@ function normalizeIntentForExecute(intent: string, transcript: string, entities:
   const normalizedTranscript = String(transcript || "").toLowerCase();
   const hasCustomerName = typeof entities?.name === "string" && entities.name.trim().length >= 3;
   const hasDni = String(entities?.dni || entities?.doc || "").replace(/\D/g, "").length >= 1;
+  const transcriptDoc = /(?:dni|documento|documentos|nro\.?\s*de\s*documento|numero\s*de\s*documento)\s*(?:es|:)?\s*((?:\d[\s,.-]*){1,15})/i.exec(normalizedTranscript);
+  const transcriptHasDoc = !!transcriptDoc && String(transcriptDoc[1] || "").replace(/\D/g, "").length >= 1;
 
   if (normalizedIntent === "customer.search") {
-    const soundsLikeCreate = ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "registrar usuario", "dar de alta cliente", "dar de alta usuario"].some((token) => normalizedTranscript.includes(token));
-    if (soundsLikeCreate && (hasCustomerName || hasDni)) {
+    const soundsLikeCreate = ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "registrar usuario", "dar de alta cliente", "dar de alta usuario", "cargar cliente", "cargame cliente", "cargame un cliente", "agregar cliente", "ingresar cliente"].some((token) => normalizedTranscript.includes(token));
+    if (soundsLikeCreate && (hasCustomerName || hasDni || transcriptHasDoc)) {
       return "customer.create";
     }
   }
@@ -251,7 +253,9 @@ export function registerSttRoutes(app: Express) {
         if (!branchScope.ok) return res.status(branchScope.status).json(branchScope.body);
       }
       if (detectExfiltration(JSON.stringify(payload.entities))) return res.status(403).json({ error: "Consulta no permitida", code: "DATA_EXFIL_BLOCKED" });
-      if (!consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: effectiveIntent, entities: payload.entities })) return res.status(403).json({ error: "Intent ticket inválido o expirado", code: "INTENT_TICKET_INVALID" });
+      const ticketAccepted = consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: effectiveIntent, entities: payload.entities })
+        || (effectiveIntent !== payload.intent && consumeIntentTicket({ ticket: payload.intentTicket, tenantId, userId, intent: payload.intent, entities: payload.entities }));
+      if (!ticketAccepted) return res.status(403).json({ error: "Intent ticket inválido o expirado", code: "INTENT_TICKET_INVALID" });
       if (!hasSearchFilters(effectiveIntent, payload.entities)) return res.status(400).json({ error: "Filtro insuficiente para búsqueda", code: "SEARCH_FILTER_REQUIRED" });
       if (effectiveIntent === "customer.purchases" && resolveCustomerPurchasesIntent(String(payload.transcript || "")) === "provider_purchases") return res.status(400).json({ error: "Para compras a proveedor usá el módulo de compras", code: "PROVIDER_PURCHASES_NOT_SUPPORTED" });
 
@@ -269,11 +273,18 @@ export function registerSttRoutes(app: Express) {
       let response: any = { type: "error" };
 
       if (effectiveIntent === "customer.create") {
-        const name = sanitizeShortText(String(payload.entities.name || ""), 200).trim();
-        const doc = String(payload.entities.dni || payload.entities.doc || "").replace(/\D/g, "");
-        if (!name || (doc && !/^\d{6,15}$/.test(doc))) return res.status(400).json({ error: "Datos inválidos" });
+        const transcript = String(payload.transcript || "");
+        const transcriptName = /(?:nombre|cliente|usuario|se\s+llama)\s+([a-zA-Záéíóúñ\s]{3,80})/i.exec(transcript)?.[1] || "";
+        const transcriptDocRaw = /(?:dni|documento|documentos|nro\.?\s*de\s*documento|numero\s*de\s*documento)\s*(?:es|:)?\s*((?:\d[\s,.-]*){1,15})/i.exec(transcript)?.[1] || "";
+        const transcriptPhoneRaw = /(?:telefono|teléfono|celular|whatsapp|me\s+llaman\s+al|llamame\s+al|llámame\s+al)\s*(?:es|:|al)?\s*((?:\d[\s,.-]*){6,20})/i.exec(transcript)?.[1] || "";
+
+        const name = sanitizeShortText(String(payload.entities.name || transcriptName || ""), 200).trim();
+        const doc = String(payload.entities.dni || payload.entities.doc || transcriptDocRaw || "").replace(/\D/g, "");
+        const phone = String(payload.entities.phone || payload.entities.telefono || payload.entities.tel || transcriptPhoneRaw || "").replace(/\D/g, "");
+
+        if (!name || (doc && !/^\d{1,15}$/.test(doc)) || (phone && !/^\d{6,20}$/.test(phone))) return res.status(400).json({ error: "Datos inválidos" });
         const created = await db.transaction(async (tx) => {
-          const [row] = await tx.insert(customers).values({ tenantId, name, doc: doc || null, isActive: true }).returning();
+          const [row] = await tx.insert(customers).values({ tenantId, name, doc: doc || null, phone: phone || null, isActive: true }).returning();
           await tx.update(sttInteractions).set({ status: STT_INTERACTION_STATUS.SUCCESS, updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
           return row;
         });
