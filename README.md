@@ -12,7 +12,7 @@
 Para evitar `502` en `/api/stt/interpret`, usar un único contrato:
 
 - Servicio AI en Docker: `ai` escuchando en `8000`.
-- Backend Node (`web`) debe usar `AI_SERVICE_URL=http://ai:8000`.
+- Backend Node (`web`) debe usar `AI_SERVICE_URL=http://ai:8000` (en local también acepta una lista separada por comas, ej. `http://ai:8000,http://127.0.0.1:8000`).
 - Opcional: `AI_SERVICE_HOST` + `AI_SERVICE_PORT` como fallback cuando no se define `AI_SERVICE_URL`.
 - Timeouts:
   - `AI_REQUEST_TIMEOUT_MS` (backend → AI)

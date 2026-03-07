@@ -96,6 +96,12 @@ function sttErrorResponse(err: any, supportId: string) {
       if ([400, 413, 415, 422].includes(status)) {
         return { status: 400, body: { ok: false, code: "STT_INVALID_PAYLOAD", message: "No pudimos procesar el audio o texto enviado.", supportId } };
       }
+      if (status === 429) {
+        return { status: 503, body: { ok: false, code: "STT_SERVICE_UNAVAILABLE", message: "Hay mucha demanda de voz en este momento. Reintentá en unos segundos.", supportId } };
+      }
+      if (status >= 500) {
+        return { status: 503, body: { ok: false, code: "STT_SERVICE_UNAVAILABLE", message: "El servicio de voz no está disponible en este momento.", supportId } };
+      }
       return { status: 502, body: { ok: false, code: "STT_BAD_RESPONSE", message: "La IA devolvió una respuesta inválida. Reintentá.", supportId } };
     }
   }
