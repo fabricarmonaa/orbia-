@@ -1,21 +1,24 @@
 import type { Express } from "express";
 import { z } from "zod";
-import { and, eq } from "drizzle-orm";
 import { tenantAuth, requireAddon, enforceBranchScope, requireTenantAdmin, blockBranchScope } from "../auth";
 import { validateBody, validateParams } from "../middleware/validate";
 import {
+  assignConversationToUser,
   channelToSafeResponse,
+  getConversationByIdScoped,
   getTenantChannel,
   isWebhookSignatureValidationEnabled,
   listConversationsByTenant,
   listMessagesByConversation,
+  markConversationAsRead,
   processIncomingWhatsAppWebhook,
+  sendConversationWhatsAppMessage,
   sendTestWhatsAppMessage,
+  updateConversationStatus,
   upsertTenantChannel,
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
-import { db } from "../db";
-import { whatsappConversations } from "@shared/schema";
+import { storage } from "../storage";
 
 const channelSchema = z.object({
   provider: z.string().trim().min(2).max(20).default("meta"),
@@ -92,7 +95,7 @@ export function registerWhatsappRoutes(app: Express) {
     res.json({ ok: healthy, details: { provider: channel.provider, status: channel.status, isActive: channel.isActive } });
   });
 
-  app.get("/api/whatsapp/conversations", tenantAuth, requireAddon("messaging_whatsapp"), enforceBranchScope, async (req, res) => {
+  app.get("/api/whatsapp/conversations", tenantAuth, requireAddon("whatsapp_inbox"), enforceBranchScope, async (req, res) => {
     const tenantId = req.auth!.tenantId!;
     const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
     const data = await listConversationsByTenant(tenantId, branchId);
@@ -102,17 +105,14 @@ export function registerWhatsappRoutes(app: Express) {
   app.get(
     "/api/whatsapp/conversations/:id/messages",
     tenantAuth,
-    requireAddon("messaging_whatsapp"),
+    requireAddon("whatsapp_inbox"),
     enforceBranchScope,
     validateParams(conversationIdSchema),
     async (req, res) => {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
-      const whereClause = branchId
-        ? and(eq(whatsappConversations.id, id), eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.branchId, branchId))
-        : and(eq(whatsappConversations.id, id), eq(whatsappConversations.tenantId, tenantId));
-      const [conversation] = await db.select().from(whatsappConversations).where(whereClause).limit(1);
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
       if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
       const data = await listMessagesByConversation(tenantId, id);
       res.json({ data });
@@ -145,27 +145,99 @@ export function registerWhatsappRoutes(app: Express) {
   app.post(
     "/api/whatsapp/conversations/:id/messages/send",
     tenantAuth,
-    requireAddon("messaging_whatsapp"),
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
     validateParams(conversationIdSchema),
     validateBody(z.object({ text: z.string().trim().min(1).max(4096) })),
     async (req, res) => {
       const tenantId = req.auth!.tenantId!;
       const conversationId = Number(req.params.id);
-      const [conversation] = await db
-        .select()
-        .from(whatsappConversations)
-        .where(and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.tenantId, tenantId)))
-        .limit(1);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, conversationId, branchId);
       if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
 
-      const result = await sendTestWhatsAppMessage({
-        tenantId,
-        executedByUserId: req.auth!.userId,
-        to: conversation.customerPhone,
-        text: req.body.text,
-      });
+      try {
+        const result = await sendConversationWhatsAppMessage({
+          tenantId,
+          conversationId,
+          executedByUserId: req.auth!.userId,
+          text: req.body.text,
+        });
+        return res.json({ data: result });
+      } catch (error: any) {
+        const providerError = error as WhatsAppProviderError;
+        const providerCode = providerError?.code || "unknown";
+        const providerDetails = providerError?.details || providerError?.message || "Error enviando mensaje";
+        return res.status(providerError?.status || 500).json({
+          error: `[META ${providerCode}] ${providerDetails}`,
+          code: "WHATSAPP_INBOX_SEND_FAILED",
+          providerCode,
+          providerDetails,
+          providerRaw: providerError?.raw || null,
+        });
+      }
+    },
+  );
 
-      res.json({ data: result });
+  app.post(
+    "/api/whatsapp/conversations/:id/mark-read",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+      const data = await markConversationAsRead(tenantId, id);
+      res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/status",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(z.object({ status: z.enum(["OPEN", "HUMAN", "BOT", "CLOSED"]) })),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+      const data = await updateConversationStatus(tenantId, id, req.body.status);
+      res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/assign",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    requireTenantAdmin,
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(z.object({ assignedUserId: z.union([z.null(), z.coerce.number().int().positive()]) })),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+
+      if (req.body.assignedUserId) {
+        const user = await storage.getUserById(req.body.assignedUserId, tenantId);
+        if (!user || !user.isActive || user.deletedAt) {
+          return res.status(400).json({ error: "Usuario de asignación inválido" });
+        }
+      }
+
+      const data = await assignConversationToUser(tenantId, id, req.body.assignedUserId ?? null);
+      res.json({ data });
     },
   );
 }

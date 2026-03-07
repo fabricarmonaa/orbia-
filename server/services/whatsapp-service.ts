@@ -339,6 +339,91 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
   return { processed };
 }
 
+
+export async function getConversationByIdScoped(tenantId: number, conversationId: number, branchId?: number | null) {
+  const whereClause = branchId
+    ? and(
+      eq(whatsappConversations.id, conversationId),
+      eq(whatsappConversations.tenantId, tenantId),
+      eq(whatsappConversations.branchId, branchId),
+    )
+    : and(eq(whatsappConversations.id, conversationId), eq(whatsappConversations.tenantId, tenantId));
+  const [conversation] = await db.select().from(whatsappConversations).where(whereClause).limit(1);
+  return conversation || null;
+}
+
+export async function markConversationAsRead(tenantId: number, conversationId: number) {
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ unreadCount: 0, updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
+    .returning();
+  return saved || null;
+}
+
+export async function updateConversationStatus(tenantId: number, conversationId: number, status: "OPEN" | "HUMAN" | "BOT" | "CLOSED") {
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ status, updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
+    .returning();
+  return saved || null;
+}
+
+export async function assignConversationToUser(tenantId: number, conversationId: number, assignedUserId: number | null) {
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ assignedUserId, updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
+    .returning();
+  return saved || null;
+}
+
+export async function sendConversationWhatsAppMessage(input: {
+  tenantId: number;
+  conversationId: number;
+  executedByUserId: number;
+  text: string;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, null);
+  if (!conversation) throw new Error("Conversación no encontrada");
+
+  const channel = await getTenantChannel(input.tenantId);
+  if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo para el tenant");
+
+  const provider = resolveWhatsappProvider(channel.provider);
+  const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
+
+  const result = await provider.sendTextMessage(channel, normalizedTo, input.text);
+
+  const message = await createOutboundMessage({
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    channelId: channel.id,
+    senderUserId: input.executedByUserId,
+    providerMessageId: result.providerMessageId || null,
+    contentText: input.text,
+    status: result.mocked ? "QUEUED" : "SENT",
+    rawPayload: { modeUsed: "inbox_text", normalizedTo, providerRaw: result.raw },
+  });
+
+  await persistWebhookEvent({
+    tenantId: input.tenantId,
+    channelId: channel.id,
+    eventType: "manual_inbox_send",
+    payload: {
+      conversationId: conversation.id,
+      normalizedTo,
+      text: input.text,
+      executedByUserId: input.executedByUserId,
+      result,
+    },
+    processingStatus: "PROCESSED",
+  });
+
+  return { conversation, message, result, normalizedTo, modeUsed: "inbox_text" };
+}
+
 export async function listConversationsByTenant(tenantId: number, branchId?: number | null) {
   const conditions = [eq(whatsappConversations.tenantId, tenantId)];
   if (branchId) conditions.push(eq(whatsappConversations.branchId, branchId));

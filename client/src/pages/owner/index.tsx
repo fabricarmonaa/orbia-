@@ -1345,6 +1345,15 @@ export default function OwnerDashboard() {
                                 data-testid={`switch-messaging-addon-${tenant.id}`}
                               />
                             </div>
+                            <div className="flex items-center gap-2">
+                              <Label className="text-xs text-muted-foreground whitespace-nowrap">WhatsApp Inbox (Addon)</Label>
+                              <Switch
+                                checked={!!addonStatus[tenant.id]?.whatsapp_inbox}
+                                disabled={togglingAddon === `${tenant.id}-whatsapp_inbox`}
+                                onCheckedChange={(checked) => toggleAddon(tenant.id, "whatsapp_inbox", checked)}
+                                data-testid={`switch-whatsapp-inbox-addon-${tenant.id}`}
+                              />
+                            </div>
                             <div className="flex items-center gap-2 rounded-md border px-2 py-1">
                               <Barcode className="w-4 h-4 text-muted-foreground" />
                               <Label className="text-xs text-muted-foreground whitespace-nowrap">Lector códigos</Label>
