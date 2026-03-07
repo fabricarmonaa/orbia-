@@ -24,11 +24,20 @@ import subprocess
 paths = []
 for root in site.getsitepackages():
     paths.extend(glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True))
+    paths.extend(glob.glob(os.path.join(root, "**", "libctranslate2*.so*"), recursive=True))
 
+seen = set()
+unique = []
 for so_path in paths:
+    if so_path in seen:
+        continue
+    seen.add(so_path)
+    unique.append(so_path)
+
+for so_path in unique:
     subprocess.run(["patchelf", "--clear-execstack", so_path], check=False)
 
-print(f"patched_ctranslate2_libs={len(paths)}")
+print(f"patched_ctranslate2_libs={len(unique)}")
 PY
 
 # Keep a lightweight smoke check that avoids importing ctranslate2 at build time.

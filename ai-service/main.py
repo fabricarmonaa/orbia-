@@ -70,16 +70,33 @@ def patch_ctranslate_execstack_once() -> None:
         import site
 
         patched = 0
+        candidates: list[str] = []
         for root in site.getsitepackages():
-            for so_path in glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True):
-                try:
-                    subprocess.run(["patchelf", "--clear-execstack", so_path], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    patched += 1
-                except Exception:
-                    continue
+            candidates.extend(glob.glob(os.path.join(root, "ctranslate2", "**", "*.so*"), recursive=True))
+            candidates.extend(glob.glob(os.path.join(root, "**", "libctranslate2*.so*"), recursive=True))
+
+        seen = set()
+        unique_candidates: list[str] = []
+        for so_path in candidates:
+            if so_path in seen:
+                continue
+            seen.add(so_path)
+            unique_candidates.append(so_path)
+
+        for so_path in unique_candidates:
+            try:
+                subprocess.run(
+                    ["patchelf", "--clear-execstack", so_path],
+                    check=False,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                patched += 1
+            except Exception:
+                continue
 
         os.environ["CTRANSLATE_EXECSTACK_PATCHED"] = "1"
-        print(json.dumps({"event": "ctranslate_patch", "patched": patched}))
+        print(json.dumps({"event": "ctranslate_patch", "patched": patched, "candidates": len(unique_candidates)}))
     except Exception as err:
         print(json.dumps({"event": "ctranslate_patch_error", "message": str(err)}))
 
