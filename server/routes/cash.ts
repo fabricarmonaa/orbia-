@@ -22,6 +22,15 @@ const cashMovementSchema = z.object({
   expenseDefinitionId: z.coerce.number().int().positive().optional().nullable(),
   sessionId: z.coerce.number().int().positive().optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
+  associatedCost: z.coerce.number().min(0).optional().default(0),
+});
+
+const editCashMovementSchema = z.object({
+  amount: z.coerce.number().positive(),
+  associatedCost: z.coerce.number().min(0).optional().default(0),
+  method: sanitizeOptionalShort(40),
+  category: sanitizeOptionalShort(80).nullable(),
+  description: sanitizeOptionalLong(200).nullable(),
 });
 
 export function registerCashRoutes(app: Express) {
@@ -188,6 +197,7 @@ export function registerCashRoutes(app: Express) {
         expenseDefinitionName,
         sessionId: payload.sessionId || null,
         branchId,
+        associatedCost: String(payload.associatedCost || 0),
         createdById: userId,
       });
 
@@ -210,6 +220,35 @@ export function registerCashRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "CASH_INVALID", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo crear movimiento", code: "CASH_MOVEMENT_CREATE_ERROR" });
+    }
+  });
+
+  app.patch("/api/cash/movements/:id", tenantAuth, enforceBranchScope, validateBody(editCashMovementSchema), async (req, res) => {
+    try {
+      const payload = req.body as z.infer<typeof editCashMovementSchema>;
+      const tenantId = req.auth!.tenantId!;
+      const movementId = parseInt(req.params.id as string);
+
+      const existing = await storage.getCashMovementById(movementId, tenantId);
+      if (!existing) {
+        return res.status(404).json({ error: "Movimiento no encontrado", code: "CASH_MOVEMENT_NOT_FOUND" });
+      }
+
+      const updated = await storage.updateCashMovement(movementId, tenantId, {
+        amount: String(payload.amount),
+        associatedCost: String(payload.associatedCost),
+        method: payload.method || existing.method,
+        category: payload.category !== undefined ? payload.category : existing.category,
+        description: payload.description !== undefined ? payload.description : existing.description,
+      });
+
+      await refreshMetricsForDate(tenantId, new Date());
+      res.json({ data: updated });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "CASH_INVALID", details: err.errors });
+      }
+      res.status(500).json({ error: "No se pudo actualizar movimiento", code: "CASH_MOVEMENT_UPDATE_ERROR" });
     }
   });
 

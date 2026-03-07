@@ -63,8 +63,8 @@ const menuItems: MenuItem[] = [
   { title: "Sucursales", url: "/app/branches", icon: Building2, feature: "branches", adminOnly: true, section: "operacion" },
   { title: "Delivery", url: "/app/delivery", icon: Truck, addon: "delivery", section: "operacion" },
   { title: "Mensajería", url: "/app/messaging", icon: MessageCircle, addon: "messaging_whatsapp", section: "operacion" },
-  { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad", highlight: true },
-  { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad", highlight: true },
+  { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad" },
+  { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true, section: "configuracion" },
 ];
 
@@ -106,7 +106,6 @@ export function AppSidebar() {
   const visibleItems = menuItems
     .filter((item) => !item.addon || addonStatus[item.addon])
     .filter((item) => !item.adminOnly || isTenantAdmin)
-    .filter((item) => !item.feature || hasFeature(item.feature))
     .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url));
 
   const initials = user?.fullName
@@ -142,39 +141,31 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
       <SidebarContent>
-        {(["operacion", "productividad", "configuracion"] as const).map((section) => {
-          const sectionItems = visibleItems.filter((item) => item.section === section);
-          if (!sectionItems.length) return null;
-
-          return (
-            <SidebarGroup key={section}>
-              <SidebarGroupLabel>{sectionLabels[section]}</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {sectionItems.map((item) => {
-                    const blocked = item.feature && !hasFeature(item.feature);
-                    return (
-                      <SidebarMenuItem key={item.title}>
-                        <SidebarMenuButton asChild isActive={isActive(item.url)}>
-                          <Link
-                            href={item.url}
-                            data-testid={`nav-${item.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}
-                          >
-                            <item.icon className="w-4 h-4" />
-                            <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>
-                            {item.highlight && <Badge className="ml-auto text-[10px]" variant="outline">Nuevo</Badge>}
-                            {item.url === "/app/stock/kardex" && lowStockAlerts > 0 ? <Badge variant="destructive" className="ml-auto text-[10px]">{lowStockAlerts}</Badge> : null}
-                            {blocked && <Lock className="w-3 h-3 ml-auto text-muted-foreground" />}
-                          </Link>
-                        </SidebarMenuButton>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          );
-        })}
+        <SidebarGroup>
+          <div className="px-2 py-2">
+            <SidebarMenu>
+              {visibleItems.map((item) => {
+                const blocked = item.feature && !hasFeature(item.feature);
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={isActive(item.url)}>
+                      <Link
+                        href={item.url}
+                        data-testid={`nav-${item.title.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")}`}
+                      >
+                        <item.icon className="w-4 h-4" />
+                        <span className={blocked ? "text-muted-foreground" : ""}>{item.title}</span>
+                        {item.highlight && <Badge className="ml-auto text-[10px]" variant="outline">Nuevo</Badge>}
+                        {item.url === "/app/stock/kardex" && lowStockAlerts > 0 ? <Badge variant="destructive" className="ml-auto text-[10px]">{lowStockAlerts}</Badge> : null}
+                        {blocked && <Lock className="w-3 h-3 ml-auto text-muted-foreground" />}
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
+          </div>
+        </SidebarGroup>
       </SidebarContent>
       <SidebarFooter className="p-4 joyride-user-profile">
         <div className="flex items-center gap-3">

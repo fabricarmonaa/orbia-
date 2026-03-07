@@ -5,16 +5,20 @@ ORBIA AI Service - deterministic STT + NLU parser.
 import os
 import re
 import asyncio
-import json
 import math
 import uuid
+import json
+import dateparser
 import tempfile
 import subprocess
 from pathlib import Path
 from difflib import SequenceMatcher
+from dateparser.search import search_dates
 from typing import Any
-
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Header
+from datetime import datetime, date
+from uuid import uuid4
+from fastapi import FastAPI, BackgroundTasks, File, Form, UploadFile, Header, Request, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -40,6 +44,7 @@ ai_semaphore = asyncio.Semaphore(max(1, AI_MAX_CONCURRENT_JOBS))
 ALLOWED_INTENTS = {
     "customer.create", "customer.search", "customer.purchases",
     "product.create", "product.search", "sale.create", "sale.search",
+    "agenda.create", "note.create",
 }
 
 
@@ -150,7 +155,7 @@ def parse_entities(text: str, intent: str) -> dict[str, Any]:
     for pattern in name_patterns:
         m = re.search(pattern, text, flags=re.IGNORECASE)
         if m:
-            candidate = re.sub(r"\s+(con|dni|documento|documentos|telefono|teléfono).*$", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
+            candidate = re.sub(r"\s+(con|dni|documento|documentos|telefono|teléfono|que|tiene|tienen|tenés|tenéis|teneis|y|mail|correo|email|para).*$", "", m.group(1).strip(), flags=re.IGNORECASE).strip()
             if len(candidate) >= 3:
                 entities["name"] = candidate
                 break
@@ -172,6 +177,33 @@ def parse_entities(text: str, intent: str) -> dict[str, Any]:
         if pm:
             entities["productName"] = pm.group(1).strip()
 
+    if intent in ("agenda.create", "note.create"):
+        # Tratamos de buscar de qué fecha habla ("para el martes", "el 8 de marzo", "a las 5", "mañana")
+        # Un enfoque simple es capturar el texto luego de "para el|para|el dia|el día|el|a las|mañana|hoy|pasado mañana" y pasar todo a dateparser
+        # search_dates es más tolerante a oraciones completas
+        found_dates = search_dates(
+            text, 
+            languages=['es'], 
+            settings={'TIMEZONE': 'America/Argentina/Buenos_Aires', 'RETURN_AS_TIMEZONE_AWARE': False, 'PREFER_DATES_FROM': 'future'}
+        )
+        if found_dates and len(found_dates) > 0:
+            entities["parsed_date"] = found_dates[0][1].isoformat()
+            
+        cmd_words = r"agendame|agendar|agenda|creame|crear|crea\s+una\s+nota|anota|anotar|recordame|recordatorio|agregar\s+nota|cita|turno|evento|reunión|reunion"
+        stripped = re.sub(rf"\b({cmd_words})\b", "", text, flags=re.IGNORECASE)
+        time_words = r"para\s+el\s+martes|para\s+el\s+lunes|para\s+el\s+miercoles|para\s+el\s+jueves|para\s+el\s+viernes|para\s+el\s+sabado|para\s+el\s+domingo|para\s+las|a\s+las|el\s+dia|el\s+día|mañana|hoy|pasado\s+mañana|para\s+hoy|para\s+mañana|el\s+\d{1,2}\s+de\s+[a-z]+|el\s+\d{1,2}"
+        stripped = re.sub(time_words, "", stripped, flags=re.IGNORECASE)
+        
+        # Limpiar preposiciones y artículos residuales al inicio
+        stripped = re.sub(r"^(un|una|para|el|la|los|las|de|que)\b", " ", stripped, flags=re.IGNORECASE)
+        candidate = re.sub(r"\s+", " ", stripped).strip()
+        if candidate:
+            # Capitalizar la primera letra
+            candidate = candidate[0].upper() + candidate[1:]
+            entities["title"] = candidate
+        else:
+            entities["title"] = "Nuevo evento" if intent == "agenda.create" else "Nueva nota"
+
     return entities
 
 
@@ -181,27 +213,45 @@ def parse_intent(transcript: str) -> tuple[str, dict[str, Any], float]:
     if any(x in t for x in ["export", "dump", "todos los dni", "dame todos"]):
         return "blocked", {}, 1.0
 
-    if any(x in t for x in ["crear cliente", "crea cliente", "registrar cliente", "crear usuario", "crea usuario", "crear un usuario", "registrar usuario", "cargar cliente", "cargame cliente", "cargame un cliente", "cargar un cliente", "dar de alta cliente", "dar de alta un cliente", "alta de cliente", "agregar cliente", "ingresar cliente"]):
-        intent = "customer.create"
-    elif any(x in t for x in ["compras a proveedor", "compra a proveedor", "compras de proveedor"]):
-        intent = "provider.purchases"
-    elif any(x in t for x in ["compras", "que compro", "qué compras hizo"]):
-        intent = "customer.purchases"
-    elif any(x in t for x in ["buscar cliente", "busca cliente", "encontrar cliente", "mostrar cliente", "traer cliente", "consultar cliente"]):
-        intent = "customer.search"
-    elif any(x in t for x in ["crear producto", "crea producto"]):
-        intent = "product.create"
-    elif any(x in t for x in ["buscar producto", "busca producto"]):
-        intent = "product.search"
-    elif any(x in t for x in ["hace una venta", "crear venta", "vender", "venta de"]):
-        intent = "sale.create"
-    elif any(x in t for x in ["buscar venta", "busca venta", "ventas"]):
-        intent = "sale.search"
-    else:
-        intent = "customer.search"
+    scores = {
+        "customer.create": 0, "customer.search": 0, "customer.purchases": 0,
+        "provider.purchases": 0, "product.create": 0, "product.search": 0,
+        "sale.create": 0, "sale.search": 0, "agenda.create": 0, "note.create": 0,
+    }
+
+    keywords = {
+        "customer.create": ["crear cliente", "crea cliente", "crea un cliente", "crear un cliente", "registrar cliente", "crear usuario", "crea usuario", "crea un usuario", "crear un usuario", "registrar usuario", "cargar cliente", "alta cliente", "agregar cliente", "ingresar cliente", "nuevo cliente", "creame", "creame un", "creame un usuario", "creame cliente", "creame un cliente"],
+        "customer.search": ["buscar cliente", "busca un cliente", "busca cliente", "buscar un cliente", "buscar un usuario", "busca un usuario", "encontrar cliente", "mostrar cliente", "traer cliente", "consultar cliente", "quien es", "datos de", "buscame al cliente", "traeme a"],
+        "customer.purchases": ["compras", "que compro", "qué compras hizo", "historial", "compras de", "que llevo", "que facturo"],
+        "provider.purchases": ["compras a proveedor", "compra a proveedor", "compras de proveedor", "historial proveedor", "facturas proveedor"],
+        "product.create": ["crear producto", "crea producto", "nuevo producto", "dar de alta un producto", "cargar producto"],
+        "product.search": ["buscar producto", "busca producto", "precio de", "cuanto sale", "cuanto cuesta", "buscame el producto", "consultar producto"],
+        "sale.create": ["hace una venta", "crear venta", "vender", "venta de", "cobrar", "vendido", "vendí", "facturar", "cobrar a", "vendiendo", "hacer un recibo de", "ingresar venta", "nueva venta"],
+        "sale.search": ["buscar venta", "busca venta", "ventas de", "ver facturas", "mostrar facturas de", "mostrar ventas"],
+        "agenda.create": ["agendar", "agenda", "calendario", "turno", "cita", "evento", "reunión", "reunion", "agendame", "programar cita", "programar reunión", "reserva un turno", "reservar turno"],
+        "note.create": ["nota", "notas", "anotar", "anota", "apuntar", "recordatorio", "recordame", "acordarme", "haceme acordar", "crear nota", "escribir nota", "nueva nota", "añadir nota", "añadir recordatorio"],
+    }
+
+    for intent_name, kw_list in keywords.items():
+        for kw in kw_list:
+            if kw in t:
+                # Más peso a las frases más precisas
+                scores[intent_name] += len(kw.split()) * 2
+
+    # Heurística estricta de desempate
+    # Si dijo explícitamente "nota" o "notas", pero también dijo "agendame" (ej. "agendame una nota")
+    # Python por defecto resolvería el empate a favor de agenda.create por el orden. Le damos bonus:
+    t_words = [w.strip() for w in re.split(r'\W+', t) if w.strip()]
+    if "nota" in t_words or "notas" in t_words:
+        scores["note.create"] += 3
+        scores["agenda.create"] -= 2
+
+    # Si hay solapamiento (ej: "anota una venta de"), note.create vs sale.create. 'venta de' capta más.
+    best_intent = max(scores.items(), key=lambda x: x[1])
+    intent = best_intent[0] if best_intent[1] > 0 else "customer.search"
 
     entities = parse_entities(transcript, intent)
-    confidence = 0.65 if intent == "customer.search" else 0.82
+    confidence = 0.65 if intent == "customer.search" and best_intent[1] == 0 else 0.85
     return intent, entities, confidence
 
 
@@ -228,6 +278,10 @@ def summary_for(intent: str, entities: dict[str, Any]) -> str:
         return f"Voy a crear el producto {entities.get('name', '')} con precio {entities.get('price', '')}.".strip()
     if intent == "sale.create":
         return f"Voy a crear una venta de {entities.get('quantity', 1)} {entities.get('productName', entities.get('name', 'producto'))}.".strip()
+    if intent == "agenda.create":
+        return f"Voy a agendar: {entities.get('title', 'nuevo evento')}...".strip()
+    if intent == "note.create":
+        return f"Voy a crear la nota: {entities.get('title', 'nuevo recordatorio')}...".strip()
     return f"Voy a ejecutar {intent}."
 
 

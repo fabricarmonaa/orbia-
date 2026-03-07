@@ -8,3 +8,4 @@ soundfile==0.12.1
 ctranslate2==4.4.0
 
 python-multipart==0.0.9
+dateparser==1.2.0

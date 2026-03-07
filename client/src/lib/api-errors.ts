@@ -50,7 +50,9 @@ export async function parseApiError(
   }
 
   const code = parsed?.code;
-  const fallbackMessage = parsed?.error || parsed?.message || raw || res.statusText;
+  const errorObj = parsed?.error;
+  const errorMsg = typeof errorObj === "object" && errorObj !== null ? errorObj.message : errorObj;
+  const fallbackMessage = errorMsg || parsed?.message || raw || res.statusText;
   let message = fallbackMessage;
 
   if (code && DEFAULT_MESSAGES[code]) {

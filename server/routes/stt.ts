@@ -13,7 +13,7 @@ import { storage } from "../storage";
 import { tenantAuth, requireFeature, enforceBranchScope, requirePlanCodes } from "../auth";
 import { sttRateLimiter, sttConcurrencyGuard, validateSttPayload } from "../middleware/stt-guards";
 import { strictSttLimiter } from "../middleware/http-rate-limit";
-import { customers, products, sttInteractions, sttLogs } from "@shared/schema";
+import { customers, products, sttInteractions, sttLogs, agendaEvents, notes } from "@shared/schema";
 import { sanitizeShortText } from "../security/sanitize";
 import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-ticket";
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
@@ -44,7 +44,7 @@ const uploadAudio = (req: Request, res: Response, next: NextFunction) => {
   });
 };
 
-const ALLOWED_INTENTS = new Set(["customer.create", "customer.search", "customer.purchases", "product.create", "product.search", "sale.create", "sale.search"]);
+const ALLOWED_INTENTS = new Set(["customer.create", "customer.search", "customer.purchases", "product.create", "product.search", "sale.create", "sale.search", "agenda.create", "note.create"]);
 
 const executeSchema = z.object({
   intent: z.string(),
@@ -335,9 +335,28 @@ export function registerSttRoutes(app: Express) {
         const created = await storage.createSaleAtomic({ tenantId, branchId, cashierUserId: req.auth!.cashierId || userId, currency: "ARS", paymentMethod: "efectivo", notes: "Venta generada por voz", customerId, discountType: "NONE", discountValue: 0, surchargeType: "NONE", surchargeValue: 0, items: [{ productId: product.id, quantity: Math.max(1, Math.trunc(quantity)), unitPrice: Number(product.price) }] });
         result = created.sale;
         response = { type: "navigation", navigation: { route: "/app/sales", params: { id: created.sale.id } }, data: created.sale };
+      } else if (effectiveIntent === "agenda.create") {
+        const title = sanitizeShortText(String(payload.entities.title || payload.transcript || "Nuevo evento"), 200).trim() || "Nuevo evento";
+        const startsAt = payload.entities.parsed_date ? new Date(payload.entities.parsed_date) : new Date();
+        const created = await db.transaction(async (tx) => {
+          const [row] = await tx.insert(agendaEvents).values({ tenantId, branchId, title, startsAt, createdById: userId, updatedById: userId, eventType: "MANUAL" }).returning();
+          await tx.update(sttInteractions).set({ status: STT_INTERACTION_STATUS.SUCCESS, updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          return row;
+        });
+        result = created;
+        response = { type: "navigation", navigation: { route: "/app/agenda", params: { id: created.id } }, data: created };
+      } else if (effectiveIntent === "note.create") {
+        const title = sanitizeShortText(String(payload.entities.title || payload.transcript || "Nueva nota"), 200).trim() || "Nueva nota";
+        const created = await db.transaction(async (tx) => {
+          const [row] = await tx.insert(notes).values({ tenantId, branchId, title, content: "", createdById: userId, updatedById: userId }).returning();
+          await tx.update(sttInteractions).set({ status: STT_INTERACTION_STATUS.SUCCESS, updatedAt: new Date() }).where(and(eq(sttInteractions.id, executeInteraction.id), eq(sttInteractions.tenantId, tenantId)));
+          return row;
+        });
+        result = created;
+        response = { type: "navigation", navigation: { route: "/app/notes", params: { id: created.id } }, data: created };
       }
 
-      if (!["customer.create", "product.create"].includes(effectiveIntent)) {
+      if (!["customer.create", "product.create", "agenda.create", "note.create"].includes(effectiveIntent)) {
         await storage.updateSttInteractionResult(executeInteraction.id, tenantId, {
           status: STT_INTERACTION_STATUS.SUCCESS,
           transcript: sanitizeShortText(payload.transcript || effectiveIntent, 500),
@@ -359,7 +378,7 @@ export function registerSttRoutes(app: Express) {
         if (last[0]?.status === "PENDING") {
           await storage.updateSttInteractionResult(last[0].id, tenantId, { status: STT_INTERACTION_STATUS.FAILED, errorCode: err?.code || "STT_EXECUTE_ERROR" });
         }
-      } catch {}
+      } catch { }
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.issues });
       return res.status(500).json({ error: "No se pudo ejecutar la acción", code: "STT_EXECUTE_ERROR" });
     }

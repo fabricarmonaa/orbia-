@@ -66,7 +66,24 @@ export default function CashPage() {
     method: "efectivo",
     category: "",
     description: "",
+    associatedCost: "",
+    associatedCostName: "",
+    associatedCostType: "costo", // "costo" (resta) o "ingreso" (suma)
+    impactNetProfit: true,
     expenseDefinitionId: "",
+  });
+
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [editingMovement, setEditingMovement] = useState<CashMovement | null>(null);
+  const [editForm, setEditForm] = useState({
+    amount: "",
+    associatedCost: "",
+    associatedCostName: "",
+    associatedCostType: "costo",
+    impactNetProfit: true,
+    category: "",
+    description: "",
+    method: "efectivo",
   });
 
   const [openingAmount, setOpeningAmount] = useState("");
@@ -145,13 +162,39 @@ export default function CashPage() {
   async function addMovement(e: React.FormEvent) {
     e.preventDefault();
     try {
+      let finalDescription = newMovement.description;
+      let finalAssociatedCost = parseFloat(newMovement.associatedCost) || 0;
+      let finalAmount = parseFloat(newMovement.amount) || 0;
+
+      const costName = newMovement.associatedCostName || "Tarifa Extra";
+      const isExtraIncome = newMovement.associatedCostType === "ingreso";
+
+      if (finalAssociatedCost > 0) {
+        if (!newMovement.impactNetProfit) {
+          finalDescription += `\n[${costName} de $${finalAssociatedCost} registrado como comentario - No modificó el total]`;
+          finalAssociatedCost = 0; // Se vuelve 0 para la db porque no impacta
+        } else {
+          if (isExtraIncome) {
+            // El usuario cobró más por esta tarifa. Se SUMA a lo que realmente cobró (amount real aumenta).
+            finalAmount += finalAssociatedCost;
+            finalDescription += `\n[Se le sumó al cobro un ingreso extra de $${finalAssociatedCost} en concepto de ${costName}]`;
+          } else {
+            // El usuario tuvo un gasto/costo. La db guarda associatedCost, nosotros lo restaremos visualmente después del amount neto.
+            finalDescription += `\n[Se le descontó costo/tarifa en contra de $${finalAssociatedCost} por ${costName}]`;
+          }
+        }
+      }
+
       await apiRequest("POST", "/api/cash/movements", {
         ...newMovement,
-        amount: parseFloat(newMovement.amount),
+        amount: finalAmount,
+        associatedCost: finalAssociatedCost || null,
+        description: finalDescription,
         sessionId: openSession?.id || null,
-        expenseDefinitionId: newMovement.expenseDefinitionId
-          ? parseInt(newMovement.expenseDefinitionId)
-          : null,
+        expenseDefinitionId:
+          newMovement.expenseDefinitionId && newMovement.expenseDefinitionId !== "__empty__"
+            ? parseInt(newMovement.expenseDefinitionId)
+            : null,
       });
       toast({ title: "Movimiento registrado" });
       setDialogOpen(false);
@@ -161,8 +204,51 @@ export default function CashPage() {
         method: "efectivo",
         category: "",
         description: "",
+        associatedCost: "",
+        associatedCostName: "",
+        associatedCostType: "costo",
+        impactNetProfit: true,
         expenseDefinitionId: "",
       });
+      fetchData();
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    }
+  }
+
+  async function updateMovement(e: React.FormEvent) {
+    e.preventDefault();
+    if (!editingMovement) return;
+    try {
+      let finalDescription = editForm.description;
+      let finalAssociatedCost = parseFloat(editForm.associatedCost) || 0;
+      let finalAmount = parseFloat(editForm.amount) || 0;
+
+      const costName = editForm.associatedCostName || "Tarifa Extra";
+      const isExtraIncome = editForm.associatedCostType === "ingreso";
+
+      if (finalAssociatedCost > 0) {
+        if (!editForm.impactNetProfit) {
+          finalDescription += `\n[${costName} de $${finalAssociatedCost} registrado como comentario - No modificó el total]`;
+          finalAssociatedCost = 0;
+        } else {
+          if (isExtraIncome) {
+            finalAmount += finalAssociatedCost;
+            finalDescription += `\n[Se le sumó al cobro un ingreso extra de $${finalAssociatedCost} en concepto de ${costName}]`;
+          } else {
+            finalDescription += `\n[Se le descontó costo/tarifa en contra de $${finalAssociatedCost} por ${costName}]`;
+          }
+        }
+      }
+
+      await apiRequest("PATCH", `/api/cash/movements/${editingMovement.id}`, {
+        ...editForm,
+        description: finalDescription,
+        amount: finalAmount,
+        associatedCost: finalAssociatedCost || null,
+      });
+      toast({ title: "Movimiento actualizado" });
+      setEditDialogOpen(false);
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -373,6 +459,68 @@ export default function CashPage() {
                                 </Select>
                               </div>
                             )}
+                            {newMovement.type === "ingreso" && (
+                              <div className="space-y-3 bg-secondary/30 p-3 rounded border">
+                                <div>
+                                  <Label className="text-xs text-muted-foreground uppercase mb-1 block">Tarifa Extra / Costo Asociado (Opcional)</Label>
+                                  <div className="flex flex-col gap-2 mb-2">
+                                    <div className="flex gap-2">
+                                      <Select
+                                        value={newMovement.associatedCostType}
+                                        onValueChange={(v) => setNewMovement({ ...newMovement, associatedCostType: v })}
+                                      >
+                                        <SelectTrigger className="w-[140px] shrink-0 text-xs h-9">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="costo">Gasto / Costo (-)</SelectItem>
+                                          <SelectItem value="ingreso">Cobro Extra (+)</SelectItem>
+                                        </SelectContent>
+                                      </Select>
+                                      <Input
+                                        placeholder="Concepto (ej: Envío)"
+                                        value={newMovement.associatedCostName}
+                                        onChange={(e) => setNewMovement({ ...newMovement, associatedCostName: e.target.value })}
+                                        className="flex-1 h-9"
+                                      />
+                                    </div>
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      placeholder="Importe $ 0.00"
+                                      value={newMovement.associatedCost}
+                                      onChange={(e) => setNewMovement({ ...newMovement, associatedCost: e.target.value })}
+                                      className="w-full h-9"
+                                    />
+                                  </div>
+                                </div>
+                                {(parseFloat(newMovement.associatedCost || "0") > 0) && (
+                                  <div className="flex items-start flex-col gap-1 mt-2">
+                                    <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                                      <input
+                                        type="checkbox"
+                                        checked={newMovement.impactNetProfit}
+                                        onChange={(e) => setNewMovement({ ...newMovement, impactNetProfit: e.target.checked })}
+                                        className="rounded border-gray-300 text-chart-2 focus:ring-chart-2"
+                                      />
+                                      Impactar este monto en mi caja
+                                    </label>
+                                    {!newMovement.impactNetProfit ? (
+                                      <p className="text-[10px] text-muted-foreground ml-6 leading-tight">
+                                        Solo quedará asentado como comentario ilustrativo sin modificar tu contabilidad total.
+                                      </p>
+                                    ) : (
+                                      <p className="text-[11px] font-semibold ml-6 px-2 py-1 bg-chart-2/10 text-chart-2 rounded uppercase border border-chart-2/20">
+                                        {newMovement.associatedCostType === "ingreso"
+                                          ? "Se sumará al ingreso reportado"
+                                          : "Se restará de mi ingreso neto"
+                                        }
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             <div className="space-y-2">
                               <Label>Descripción</Label>
                               <Input
@@ -496,6 +644,68 @@ export default function CashPage() {
                             </Select>
                           </div>
                         )}
+                        {newMovement.type === "ingreso" && (
+                          <div className="space-y-3 bg-secondary/30 p-3 rounded border">
+                            <div>
+                              <Label className="text-xs text-muted-foreground uppercase mb-1 block">Tarifa Extra / Costo Asociado (Opcional)</Label>
+                              <div className="flex flex-col gap-2 mb-2">
+                                <div className="flex gap-2">
+                                  <Select
+                                    value={newMovement.associatedCostType}
+                                    onValueChange={(v) => setNewMovement({ ...newMovement, associatedCostType: v })}
+                                  >
+                                    <SelectTrigger className="w-[140px] shrink-0 text-xs h-9">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="costo">Gasto / Costo (-)</SelectItem>
+                                      <SelectItem value="ingreso">Cobro Extra (+)</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <Input
+                                    placeholder="Concepto (ej: Envío)"
+                                    value={newMovement.associatedCostName}
+                                    onChange={(e) => setNewMovement({ ...newMovement, associatedCostName: e.target.value })}
+                                    className="flex-1 h-9"
+                                  />
+                                </div>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  placeholder="Importe $ 0.00"
+                                  value={newMovement.associatedCost}
+                                  onChange={(e) => setNewMovement({ ...newMovement, associatedCost: e.target.value })}
+                                  className="w-full h-9"
+                                />
+                              </div>
+                            </div>
+                            {(parseFloat(newMovement.associatedCost || "0") > 0) && (
+                              <div className="flex items-start flex-col gap-1 mt-2">
+                                <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                                  <input
+                                    type="checkbox"
+                                    checked={newMovement.impactNetProfit}
+                                    onChange={(e) => setNewMovement({ ...newMovement, impactNetProfit: e.target.checked })}
+                                    className="rounded border-gray-300 text-chart-2 focus:ring-chart-2"
+                                  />
+                                  Impactar este monto en mi caja
+                                </label>
+                                {!newMovement.impactNetProfit ? (
+                                  <p className="text-[10px] text-muted-foreground ml-6 leading-tight">
+                                    Solo quedará asentado como comentario ilustrativo sin modificar tu contabilidad total.
+                                  </p>
+                                ) : (
+                                  <p className="text-[11px] font-semibold ml-6 px-2 py-1 bg-chart-2/10 text-chart-2 rounded uppercase border border-chart-2/20">
+                                    {newMovement.associatedCostType === "ingreso"
+                                      ? "Se sumará al ingreso reportado"
+                                      : "Se restará de mi ingreso neto"
+                                    }
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                         <Button type="submit" className="w-full" data-testid="button-submit-movement">
                           Registrar Movimiento
                         </Button>
@@ -506,6 +716,110 @@ export default function CashPage() {
               )}
             </div>
           </div>
+
+          <Dialog open={editDialogOpen} onOpenChange={setEditDialogOpen}>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>Editar Movimiento</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={updateMovement} className="space-y-4 py-4">
+                <div className="space-y-2">
+                  <Label>Monto</Label>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    value={editForm.amount}
+                    onChange={(e) => setEditForm({ ...editForm, amount: e.target.value })}
+                    required
+                  />
+                </div>
+                {editingMovement?.type === "ingreso" && (
+                  <div className="space-y-3 bg-secondary/30 p-3 rounded border">
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase mb-1 block">Configurar Tarifa / Costo Adicional</Label>
+                      <div className="flex gap-2 flex-col mb-2">
+                        <div className="flex gap-2">
+                          <Select
+                            value={editForm.associatedCostType}
+                            onValueChange={(v) => setEditForm({ ...editForm, associatedCostType: v })}
+                          >
+                            <SelectTrigger className="w-[140px] shrink-0 text-xs h-9">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="costo">Gasto / Costo (-)</SelectItem>
+                              <SelectItem value="ingreso">Cobro Extra (+)</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <Input
+                            placeholder="Nombre ej: Costo Envío"
+                            value={editForm.associatedCostName}
+                            onChange={(e) => setEditForm({ ...editForm, associatedCostName: e.target.value })}
+                            className="flex-1 h-9"
+                          />
+                        </div>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          placeholder="$ 0.00"
+                          value={editForm.associatedCost}
+                          onChange={(e) => setEditForm({ ...editForm, associatedCost: e.target.value })}
+                          className="w-full h-9"
+                        />
+                      </div>
+                    </div>
+                    {parseFloat(editForm.associatedCost || "0") > 0 && (
+                      <div className="flex items-start flex-col gap-1 mt-2">
+                        <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
+                          <input
+                            type="checkbox"
+                            checked={editForm.impactNetProfit}
+                            onChange={(e) => setEditForm({ ...editForm, impactNetProfit: e.target.checked })}
+                            className="rounded border-gray-300 text-chart-2 focus:ring-chart-2"
+                          />
+                          Impactar en movimiento
+                        </label>
+                        {editForm.impactNetProfit ? (
+                          <p className="text-xs font-semibold text-chart-2 ml-6 px-2 py-1 bg-chart-2/10 rounded">
+                            {editForm.associatedCostType === "ingreso"
+                              ? `Cobro Recalculado: $${(parseFloat(editForm.amount || "0") + parseFloat(editForm.associatedCost || "0")).toLocaleString("es-AR")}`
+                              : `Neta Recalculada: $${(parseFloat(editForm.amount || "0") - parseFloat(editForm.associatedCost || "0")).toLocaleString("es-AR")}`
+                            }
+                          </p>
+                        ) : (
+                          <p className="text-[10px] text-muted-foreground ml-6 leading-tight">
+                            El costo será ilustrativo en la descripción y <b>NO</b> modificará los montos de dinero de la caja.
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <Label>Método</Label>
+                  <Select value={editForm.method} onValueChange={(v) => setEditForm({ ...editForm, method: v })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="efectivo">Efectivo / Caja</SelectItem>
+                      <SelectItem value="transferencia">Transferencia / Banco</SelectItem>
+                      <SelectItem value="tarjeta">Tarjeta</SelectItem>
+                      <SelectItem value="posnet">POSNET</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Descripción</Label>
+                  <Input
+                    value={editForm.description}
+                    onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                  />
+                </div>
+                <Button type="submit" className="w-full">Guardar Cambios</Button>
+              </form>
+            </DialogContent>
+          </Dialog>
 
           {showVoice && (
             <VoiceCommand
@@ -613,45 +927,77 @@ export default function CashPage() {
               </Card>
             ) : (
               <div className="space-y-2">
-                {activeMovements.map((m) => (
-                  <Card key={m.id} data-testid={`card-movement-${m.id}`}>
-                    <CardContent className="py-3">
-                      <div className="flex items-center justify-between gap-4 flex-wrap">
-                        <div className="flex items-center gap-3">
-                          <div className={`p-2 rounded-md ${m.type === "ingreso" ? "bg-chart-2/10" : "bg-destructive/10"}`}>
-                            {m.type === "ingreso" ? (
-                              <ArrowUpRight className="w-4 h-4 text-chart-2" />
-                            ) : (
-                              <ArrowDownRight className="w-4 h-4 text-destructive" />
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-sm font-medium">
-                              {m.expenseDefinitionName || m.description || m.category || m.type}
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-muted-foreground">{m.method}</span>
-                              {m.expenseDefinitionName && (
-                                <Badge variant="outline" className="text-xs">
-                                  {m.expenseDefinitionName}
-                                </Badge>
-                              )}
-                              {m.category && (
-                                <Badge variant="secondary" className="text-xs">{m.category}</Badge>
+                {activeMovements.map((m) => {
+                  const hasAssociatedCost = m.type === "ingreso" && parseFloat(m.associatedCost || "0") > 0;
+                  const netProfit = m.type === "ingreso" ? parseFloat(m.amount) - parseFloat(m.associatedCost || "0") : 0;
+                  return (
+                    <Card
+                      key={m.id}
+                      data-testid={`card-movement-${m.id}`}
+                      className="cursor-pointer hover:border-sidebar-accent transition-colors"
+                      onClick={() => {
+                        setEditingMovement(m);
+                        setEditForm({
+                          amount: m.amount,
+                          associatedCost: m.associatedCost || "",
+                          associatedCostName: "",
+                          associatedCostType: "costo",
+                          impactNetProfit: parseFloat(m.associatedCost || "0") > 0,
+                          category: m.category || "",
+                          description: m.description || "",
+                          method: m.method || "efectivo",
+                        });
+                        setEditDialogOpen(true);
+                      }}
+                    >
+                      <CardContent className="py-3">
+                        <div className="flex items-center justify-between gap-4 flex-wrap">
+                          <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-md ${m.type === "ingreso" ? "bg-chart-2/10" : "bg-destructive/10"}`}>
+                              {m.type === "ingreso" ? (
+                                <ArrowUpRight className="w-4 h-4 text-chart-2" />
+                              ) : (
+                                <ArrowDownRight className="w-4 h-4 text-destructive" />
                               )}
                             </div>
+                            <div>
+                              <p className="text-sm font-medium">
+                                {m.expenseDefinitionName || m.description || m.category || m.type}
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">{m.method}</span>
+                                {m.expenseDefinitionName && (
+                                  <Badge variant="outline" className="text-xs">
+                                    {m.expenseDefinitionName}
+                                  </Badge>
+                                )}
+                                {m.category && (
+                                  <Badge variant="secondary" className="text-xs">{m.category}</Badge>
+                                )}
+                                {hasAssociatedCost && (
+                                  <span className="text-[10px] bg-amber-500/10 text-amber-500 px-1.5 py-0.5 rounded ml-1 font-medium">
+                                    Costo Asociado: -${parseFloat(m.associatedCost || "0").toLocaleString("es-AR")}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <p className={`text-sm font-bold ${m.type === "ingreso" ? "text-chart-2" : "text-destructive"}`}>
+                              {m.type === "ingreso" ? "+" : "-"}${parseFloat(m.amount).toLocaleString("es-AR")}
+                            </p>
+                            {hasAssociatedCost && (
+                              <p className="text-[11px] font-semibold text-chart-2 mt-0.5" title="Monto ingresado restante y limpio hacia tu bolsillo (Ganancia Neta)">
+                                Neto: ${netProfit.toLocaleString("es-AR")}
+                              </p>
+                            )}
+                            <p className="text-[10px] text-muted-foreground mt-0.5">{formatDate(m.createdAt)}</p>
                           </div>
                         </div>
-                        <div className="text-right">
-                          <p className={`text-sm font-bold ${m.type === "ingreso" ? "text-chart-2" : "text-destructive"}`}>
-                            {m.type === "ingreso" ? "+" : "-"}${parseFloat(m.amount).toLocaleString("es-AR")}
-                          </p>
-                          <p className="text-xs text-muted-foreground">{formatDate(m.createdAt)}</p>
-                        </div>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
               </div>
             )}
           </div>

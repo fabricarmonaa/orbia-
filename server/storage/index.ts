@@ -101,7 +101,9 @@ export class DatabaseStorage implements IStorage {
   createCashSession = cashStorage.createCashSession;
   closeCashSession = cashStorage.closeCashSession;
   getCashMovements = cashStorage.getCashMovements;
+  getCashMovementById = cashStorage.getCashMovementById;
   createCashMovement = cashStorage.createCashMovement;
+  updateCashMovement = cashStorage.updateCashMovement;
   getMonthlyIncome = cashStorage.getMonthlyIncome;
   getMonthlyExpenses = cashStorage.getMonthlyExpenses;
   getMonthlyExpensesByType = cashStorage.getMonthlyExpensesByType;

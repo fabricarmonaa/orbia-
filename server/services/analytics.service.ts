@@ -4,6 +4,8 @@ import { products, saleItems, sales } from "@shared/schema";
 
 export type DashboardAnalytics = {
   avgTicket: number;
+  avgTicketVariation: number;
+  collectionEfficiency: { paid: number; unpaid: number };
   staleProducts60d: number;
   topProductMonth: {
     productId: number;
@@ -20,10 +22,37 @@ export async function getDashboardAnalytics(tenantId: number, branchId?: number 
 
   const branchCond = branchId ? eq(sales.branchId, branchId) : undefined;
 
-  const [avgRow] = await db
+  // Calculo de Ticket Promedio para periodo actual vs previo (Quincena = 15 dias)
+  const fifteenDaysAgo = new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000);
+  const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+  const [currentAvgRow] = await db
     .select({ avgTicket: sql<number>`COALESCE(AVG(${sales.totalAmount}), 0)` })
     .from(sales)
-    .where(and(eq(sales.tenantId, tenantId), branchCond));
+    .where(and(eq(sales.tenantId, tenantId), gte(sales.createdAt, fifteenDaysAgo), branchCond));
+
+  const [pastAvgRow] = await db
+    .select({ avgTicket: sql<number>`COALESCE(AVG(${sales.totalAmount}), 0)` })
+    .from(sales)
+    .where(and(eq(sales.tenantId, tenantId), gte(sales.createdAt, thirtyDaysAgo), lt(sales.createdAt, fifteenDaysAgo), branchCond));
+
+  const currentAvg = Number(currentAvgRow?.avgTicket || 0);
+  const pastAvg = Number(pastAvgRow?.avgTicket || 0);
+  const avgTicketVariation = pastAvg > 0 ? ((currentAvg - pastAvg) / pastAvg) * 100 : (currentAvg > 0 ? 100 : 0);
+
+  // Eficiencia de Cobro (Pedidos activos)
+  const [collectionRow] = await db
+    .select({
+      totalActiveValue: sql<number>`COALESCE(SUM(${sql.raw('orders.total_amount')}), 0)`,
+      totalActivePaid: sql<number>`COALESCE(SUM(${sql.raw('orders.paid_amount')}), 0)`
+    })
+    .from(sql.raw('orders'))
+    .innerJoin(sql.raw('order_statuses'), sql.raw('orders.status_id = order_statuses.id'))
+    .where(sql.raw(`orders.tenant_id = ${tenantId} AND order_statuses.is_final = false ${branchId ? `AND orders.branch_id = ${branchId}` : ''}`));
+
+  const paid = Number(collectionRow?.totalActivePaid || 0);
+  const totalValue = Number(collectionRow?.totalActiveValue || 0);
+  const unpaid = Math.max(0, totalValue - paid);
 
   const soldProductsLast60d = db
     .selectDistinct({ productId: saleItems.productId })
@@ -56,14 +85,16 @@ export async function getDashboardAnalytics(tenantId: number, branchId?: number 
     .limit(1);
 
   return {
-    avgTicket: Number(avgRow?.avgTicket || 0),
+    avgTicket: currentAvg,
+    avgTicketVariation: Math.round(avgTicketVariation),
+    collectionEfficiency: { paid, unpaid },
     staleProducts60d: Number(staleRow?.count || 0),
     topProductMonth: topProduct
       ? {
-          productId: Number(topProduct.productId),
-          name: String(topProduct.name || "Producto"),
-          units: Number(topProduct.units || 0),
-        }
+        productId: Number(topProduct.productId),
+        name: String(topProduct.name || "Producto"),
+        units: Number(topProduct.units || 0),
+      }
       : null,
   };
 }

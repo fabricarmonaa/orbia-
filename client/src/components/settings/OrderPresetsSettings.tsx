@@ -98,6 +98,7 @@ export function OrderPresetsSettings() {
     visibleInTracking: false,
     useInAgenda: false,
     allowedExtensions: [] as string[],
+    selectOptions: [] as string[],
   });
 
   const sortedFields = useMemo(
@@ -237,7 +238,7 @@ export function OrderPresetsSettings() {
       if (createForm.fieldType === "FILE") {
         payload.config = { allowedExtensions: createForm.allowedExtensions };
       }
-      if (createForm.fieldType === "SELECT") {
+      if (createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX") {
         payload.config = { options: (createForm as any).selectOptions.filter((x: string) => x.trim()) };
       }
       await apiJson(`/api/order-presets/presets/${activePresetId}/fields`, {
@@ -405,6 +406,16 @@ export function OrderPresetsSettings() {
                           />
                           Tracking
                         </label>
+
+                        {(f.fieldType === "DATE" || f.fieldType === "DATETIME") && (
+                          <label className="flex items-center gap-2 cursor-pointer text-muted-foreground hover:text-foreground">
+                            <Switch
+                              checked={Boolean(f.useInAgenda)}
+                              onCheckedChange={(checked) => patchField(f.id, { useInAgenda: checked })}
+                            />
+                            Usar en Agenda
+                          </label>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1">
@@ -419,6 +430,7 @@ export function OrderPresetsSettings() {
                             visibleInTracking: f.visibleInTracking,
                             useInAgenda: Boolean((f as any).useInAgenda),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
+                            selectOptions: (f.config as any)?.options || [],
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
@@ -524,9 +536,15 @@ export function OrderPresetsSettings() {
               <Select value={createForm.fieldType} onValueChange={(v) => setCreateForm((s) => ({ ...s, fieldType: v as any }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="TEXT">TEXT</SelectItem>
-                  <SelectItem value="NUMBER">NUMBER</SelectItem>
-                  <SelectItem value="FILE">FILE</SelectItem>
+                  <SelectItem value="TEXT">Texto Corto</SelectItem>
+                  <SelectItem value="TEXT_LONG">Texto Largo</SelectItem>
+                  <SelectItem value="NUMBER">Número</SelectItem>
+                  <SelectItem value="FILE">Archivo Adjunto</SelectItem>
+                  <SelectItem value="CHECKBOX">Casilla (Checkbox)</SelectItem>
+                  <SelectItem value="SELECT">Desplegable (Select)</SelectItem>
+                  <SelectItem value="DATE">Fecha</SelectItem>
+                  <SelectItem value="TIME">Hora</SelectItem>
+                  <SelectItem value="DATETIME">Fecha y Hora</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -538,6 +556,13 @@ export function OrderPresetsSettings() {
                 <Switch checked={createForm.visibleInTracking} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {createForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
               </label>
+
+              {(createForm.fieldType === "DATE" || createForm.fieldType === "DATETIME") && (
+                <label className="flex items-center gap-2 text-sm font-medium cursor-pointer border-t pt-3 mt-1">
+                  <Switch checked={createForm.useInAgenda} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, useInAgenda: checked }))} />
+                  <span className="flex items-center gap-1 text-primary">Mostrar automáticante en la Agenda</span>
+                </label>
+              )}
             </div>
 
             {createForm.fieldType === "FILE" ? (
@@ -554,6 +579,17 @@ export function OrderPresetsSettings() {
                     </label>
                   ))}
                 </div>
+              </div>
+            ) : null}
+
+            {createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX" ? (
+              <div className="space-y-3 p-3 bg-muted/50 rounded-md">
+                <Label>Opciones del desplegable (separadas por coma)</Label>
+                <Input
+                  value={createForm.selectOptions.join(", ")}
+                  onChange={(e) => setCreateForm(s => ({ ...s, selectOptions: e.target.value.split(",").map(x => x.trim()) }))}
+                  placeholder="Opción 1, Opción 2, Opción 3"
+                />
               </div>
             ) : null}
           </div>
@@ -585,6 +621,13 @@ export function OrderPresetsSettings() {
                 <Switch checked={editForm.visibleInTracking} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {editForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
               </label>
+
+              {(editTarget?.fieldType === "DATE" || editTarget?.fieldType === "DATETIME") && (
+                <label className="flex items-center gap-2 text-sm font-medium cursor-pointer border-t pt-3 mt-1">
+                  <Switch checked={editForm.useInAgenda} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, useInAgenda: checked }))} />
+                  <span className="flex items-center gap-1 text-primary">Mostrar automáticante en la Agenda</span>
+                </label>
+              )}
             </div>
 
             {editTarget?.fieldType === "FILE" ? (
@@ -603,6 +646,17 @@ export function OrderPresetsSettings() {
                 </div>
               </div>
             ) : null}
+
+            {editTarget?.fieldType === "SELECT" || editTarget?.fieldType === "CHECKBOX" ? (
+              <div className="space-y-3 p-3 bg-muted/50 rounded-md">
+                <Label>Opciones (separadas por coma)</Label>
+                <Input
+                  value={editForm.selectOptions.join(", ")}
+                  onChange={(e) => setEditForm(s => ({ ...s, selectOptions: e.target.value.split(",").map(x => x.trim()) }))}
+                  placeholder="Opción 1, Opción 2, Opción 3"
+                />
+              </div>
+            ) : null}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpenEditField(false)}>Cancelar</Button>
@@ -616,9 +670,15 @@ export function OrderPresetsSettings() {
                     label: editForm.label.trim(),
                     required: editForm.required,
                     isActive: editForm.isActive,
-                    visibleInTracking: editForm.visibleInTracking
+                    visibleInTracking: editForm.visibleInTracking,
                   };
+                  if (editTarget.fieldType === "DATE" || editTarget.fieldType === "DATETIME") {
+                    patch.useInAgenda = editForm.useInAgenda;
+                  }
                   if (editTarget.fieldType === "FILE") patch.config = { allowedExtensions: editForm.allowedExtensions };
+                  if (editTarget.fieldType === "SELECT" || editTarget.fieldType === "CHECKBOX") {
+                    patch.config = { ...(editTarget.config || {}), options: editForm.selectOptions.filter(x => x.trim()) };
+                  }
                   await patchField(editTarget.id, patch, "Campo actualizado");
                   setOpenEditField(false);
                 } finally {

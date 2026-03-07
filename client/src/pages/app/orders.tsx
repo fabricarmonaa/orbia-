@@ -257,7 +257,7 @@ export default function OrdersPage() {
         const raw = customFieldInputs[field.id] || {};
         return {
           fieldId: field.id,
-          valueText: ["TEXT","TEXT_LONG","DATE","TIME","DATETIME","CHECKBOX","SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
+          valueText: ["TEXT", "TEXT_LONG", "DATE", "TIME", "DATETIME", "CHECKBOX", "SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
           valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
           fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
@@ -573,60 +573,58 @@ export default function OrdersPage() {
                   />
                   <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Teléfono (Opcional)</Label>
+                  <Input
+                    placeholder="Ej: 11 1234-5678"
+                    value={newOrder.customerPhone}
+                    onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
+                    data-testid="input-customer-phone"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
                   <div className="space-y-2">
-                    <Label>Teléfono (Opcional)</Label>
-                    <Input
-                      placeholder="Ej: 11 1234-5678"
-                      value={newOrder.customerPhone}
-                      onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
-                      data-testid="input-customer-phone"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Monto Total</Label>
+                    <Label>Seña o Pago</Label>
                     <Input
                       type="number"
                       step="0.01"
-                      placeholder="0.00"
+                      placeholder="Ej: 5000"
+                      value={newOrder.paidAmount}
+                      min={0}
+                      max={newOrder.totalAmount || undefined}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        const tot = parseFloat(newOrder.totalAmount);
+                        if (!isNaN(val) && !isNaN(tot) && val > tot) return;
+                        setNewOrder({ ...newOrder, paidAmount: e.target.value });
+                      }}
+                      data-testid="input-paid-amount"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Valor Total</Label>
+                      <span className="text-[10px] font-medium opacity-70">
+                        {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
+                          ? "Sin monto"
+                          : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
+                            ? "Saldado ✓"
+                            : "Deuda"}
+                      </span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="Ej: 10000"
                       value={newOrder.totalAmount}
                       onChange={(e) => setNewOrder({ ...newOrder, totalAmount: e.target.value })}
                       data-testid="input-total-amount"
                     />
                   </div>
                 </div>
-                <div className="space-y-2 bg-primary/5 border border-primary/20 p-3 rounded-md">
-                  <div className="flex items-center justify-between">
-                    <Label>Seña / Monto pagado</Label>
-                    <span className="text-xs font-medium bg-primary/10 text-primary px-2 py-0.5 rounded">
-                      {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
-                        ? "Sin monto"
-                        : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
-                          ? "Pago Completo ✓"
-                          : newOrder.paidAmount && Number(newOrder.paidAmount) > 0
-                            ? `$${newOrder.paidAmount} / $${newOrder.totalAmount}`
-                            : "Impago"}
-                    </span>
-                  </div>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    placeholder="Dejar en 0 si no pagó nada"
-                    value={newOrder.paidAmount}
-                    min={0}
-                    max={newOrder.totalAmount || undefined}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      const tot = parseFloat(newOrder.totalAmount);
-                      if (!isNaN(val) && !isNaN(tot) && val > tot) return;
-                      setNewOrder({ ...newOrder, paidAmount: e.target.value });
-                    }}
-                    data-testid="input-paid-amount"
-                  />
-                </div>
 
                 <div className="space-y-2">
-                  <Label>Descripción</Label>
+                  <Label>Descripción (Opcional)</Label>
                   <Textarea
                     placeholder="Ingrese descripción..."
                     value={newOrder.description}
@@ -658,7 +656,41 @@ export default function OrdersPage() {
                             placeholder={field.fieldType === "SELECT" ? `Opciones: ${((field.config as any)?.options || []).join(", ")}` : undefined}
                           />
                         ) : field.fieldType === "CHECKBOX" ? (
-                          <label className="text-sm flex items-center gap-2"><input type="checkbox" checked={(customFieldInputs[field.id]?.valueText || "false") === "true"} onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.checked ? "true" : "false" } }))} /> Marcar</label>
+                          <div className="flex flex-col gap-2">
+                            {((field.config as any)?.options?.length ? (field.config as any).options : ["Marcar"]).map((opt: string) => {
+                              const isMultiple = (field.config as any)?.options?.length > 1;
+                              const currentValue = customFieldInputs[field.id]?.valueText || "false";
+                              const isChecked = isMultiple
+                                ? currentValue.split(",").includes(opt)
+                                : currentValue === "true";
+
+                              return (
+                                <label key={opt} className="text-sm flex items-center gap-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={isChecked}
+                                    onChange={(e) => {
+                                      setCustomFieldInputs((prev) => {
+                                        const prevObj = prev[field.id] || {};
+                                        let newValue = "false";
+                                        if (isMultiple) {
+                                          const prevVals = prevObj.valueText?.split(",").filter((x: string) => x) || [];
+                                          const nextVals = e.target.checked
+                                            ? [...prevVals, opt]
+                                            : prevVals.filter((x: string) => x !== opt);
+                                          newValue = nextVals.join(",");
+                                        } else {
+                                          newValue = e.target.checked ? "true" : "false";
+                                        }
+                                        return { ...prev, [field.id]: { ...prevObj, valueText: newValue } };
+                                      });
+                                    }}
+                                  />
+                                  {opt}
+                                </label>
+                              );
+                            })}
+                          </div>
                         ) : field.fieldType === "NUMBER" ? (
                           <Input
                             type="number"
@@ -938,10 +970,10 @@ export default function OrdersPage() {
                         {statuses
                           .filter((s) => (s as any).isActive !== false)
                           .map((s) => (
-                          <SelectItem key={s.id} value={String(s.code || "")}>
-                            {(s as any).label || s.name}
-                          </SelectItem>
-                        ))}
+                            <SelectItem key={s.id} value={String(s.code || "")}>
+                              {(s as any).label || s.name}
+                            </SelectItem>
+                          ))}
                       </SelectContent>
                     </Select>
                   </div>

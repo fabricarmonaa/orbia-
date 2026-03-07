@@ -99,7 +99,9 @@ export interface IStorage {
   closeCashSession(id: number, tenantId: number, branchId: number | null, closingAmount: string): Promise<void>;
 
   getCashMovements(tenantId: number): Promise<CashMovement[]>;
+  getCashMovementById(id: number, tenantId: number): Promise<CashMovement | undefined>;
   createCashMovement(data: InsertCashMovement): Promise<CashMovement>;
+  updateCashMovement(id: number, tenantId: number, data: Partial<InsertCashMovement>): Promise<CashMovement>;
   getMonthlyIncome(tenantId: number, branchId?: number | null): Promise<number>;
   getMonthlyExpenses(tenantId: number, branchId?: number | null): Promise<number>;
   getMonthlyExpensesByType(tenantId: number, branchId?: number | null): Promise<{ fixed: number; variable: number }>;

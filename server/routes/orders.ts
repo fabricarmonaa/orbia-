@@ -46,7 +46,7 @@ const sanitizeOptionalLong = (max: number) =>
 const customFieldSchema = z.object({
   fieldId: z.coerce.number().int().positive().optional(),
   fieldKey: z.string().trim().min(1).max(80).optional(),
-  valueText: z.string().optional().nullable(),
+  valueText: z.union([z.string(), z.array(z.string()), z.number(), z.boolean()]).transform(v => Array.isArray(v) ? v.join(", ") : String(v)).optional().nullable(),
   valueNumber: z.union([z.string(), z.number()]).optional().nullable(),
   fileId: z.union([z.string(), z.number()]).optional().nullable(),
   fileStorageKey: z.string().optional().nullable(),

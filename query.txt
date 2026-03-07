@@ -1,0 +1,10 @@
+﻿22|Agendame una nota que tengo que pagar.|agenda.create|{"title": "Una nota que tengo que pagar."}
+21|Agendame una nota que tengo que pagar.|agenda.create|{"title": "Una nota que tengo que pagar."}
+20|SMA, un rec...  ...enero.|customer.search|{}
+19|agendame un turno para el 8 de marzo|agenda.create|{"title": "Ag├¡ndame una para el 8 de marzo"}
+18|a generar una forma para el ritmo marzo|customer.search|{}
+17|crea un usuario fabricio lopez dni 3842|customer.search|{"dni": "3842", "name": "fabricio lopez"}
+16|Creo no s├® si yo lo p├®s de ney ventio de 32.|customer.search|{"quantity": 32}
+15|Criar un usuario para|customer.search|{"name": "para"}
+14|ag├¡ndame una cita para el 8 de marzo|agenda.create|{"title": "Ag├¡ndame una para el 8 de marzo"}
+13|Creo que uno suario con el nombre Juan ten├®is 487.|customer.search|{"name": "Juan ten├®is"}

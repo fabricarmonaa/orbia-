@@ -78,6 +78,21 @@ export const cashStorage = {
     const [movement] = await db.insert(cashMovements).values(data).returning();
     return movement;
   },
+  async getCashMovementById(id: number, tenantId: number) {
+    const [movement] = await db
+      .select()
+      .from(cashMovements)
+      .where(and(eq(cashMovements.id, id), eq(cashMovements.tenantId, tenantId)));
+    return movement;
+  },
+  async updateCashMovement(id: number, tenantId: number, data: Partial<InsertCashMovement>) {
+    const [updated] = await db
+      .update(cashMovements)
+      .set(data)
+      .where(and(eq(cashMovements.id, id), eq(cashMovements.tenantId, tenantId)))
+      .returning();
+    return updated;
+  },
   async getMonthlyIncome(tenantId: number, branchId?: number | null) {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { apiRequest, useAuth } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ClipboardList, Wallet, Package, TrendingUp, TrendingDown } from "lucide-react";
+import { ClipboardList, Wallet, Package, TrendingUp, TrendingDown, CalendarDays, Clock, NotebookPen, AlertCircle } from "lucide-react";
 
 type DashboardAnalytics = {
   avgTicket: number;
+  avgTicketVariation: number;
+  collectionEfficiency: { paid: number; unpaid: number };
   staleProducts60d: number;
   topProductMonth: { name: string; units: number } | null;
 };
@@ -43,7 +45,7 @@ export default function Dashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<DashboardSummary>(ZERO_SUMMARY);
-  const [analytics, setAnalytics] = useState<DashboardAnalytics>({ avgTicket: 0, staleProducts60d: 0, topProductMonth: null });
+  const [analytics, setAnalytics] = useState<DashboardAnalytics>({ avgTicket: 0, avgTicketVariation: 0, collectionEfficiency: { paid: 0, unpaid: 0 }, staleProducts60d: 0, topProductMonth: null });
 
   useEffect(() => {
     (async () => {
@@ -57,6 +59,11 @@ export default function Dashboard() {
         if (analyticsRes.ok && analyticsJson?.data) {
           setAnalytics({
             avgTicket: Number(analyticsJson.data.avgTicket || 0),
+            avgTicketVariation: Number(analyticsJson.data.avgTicketVariation || 0),
+            collectionEfficiency: {
+              paid: Number(analyticsJson.data.collectionEfficiency?.paid || 0),
+              unpaid: Number(analyticsJson.data.collectionEfficiency?.unpaid || 0),
+            },
             staleProducts60d: Number(analyticsJson.data.staleProducts60d || 0),
             topProductMonth: analyticsJson.data.topProductMonth || null,
           });
@@ -94,40 +101,26 @@ export default function Dashboard() {
   const cards = useMemo(
     () => [
       {
-        title: "Pedidos Totales",
-        value: summary.orders.totalCount.toLocaleString("es-AR"),
-        subtitle: `${summary.orders.openCount.toLocaleString("es-AR")} abiertos`,
-        icon: ClipboardList,
-      },
-      {
         title: "Ingresos del Mes",
         value: `$${summary.cash.monthIncome.toLocaleString("es-AR")}`,
         subtitle: "Mes actual",
         icon: Wallet,
       },
       {
-        title: "Ticket promedio",
-        value: `$${analytics.avgTicket.toLocaleString("es-AR", { maximumFractionDigits: 2 })}`,
-        subtitle: "Promedio por venta",
+        title: "Ticket Promedio",
+        value: `$${Math.round(analytics.avgTicket).toLocaleString("es-AR")}`,
+        subtitle: `${analytics.avgTicketVariation > 0 ? "+" : ""}${analytics.avgTicketVariation}% quincena actual`,
         icon: TrendingUp,
+        color: analytics.avgTicketVariation >= 0 ? "text-emerald-500" : "text-amber-500",
+        tooltip: "Gasto promedio por cada pedido en los últimos 15 días",
       },
       {
-        title: "Sin ventas 60 días",
-        value: analytics.staleProducts60d.toLocaleString("es-AR"),
-        subtitle: "Productos para revisar",
-        icon: TrendingDown,
-      },
-      {
-        title: "Top producto del mes",
-        value: analytics.topProductMonth?.name || "Sin datos",
-        subtitle: analytics.topProductMonth ? `${analytics.topProductMonth.units} unidades` : "Mes actual",
-        icon: Package,
-      },
-      {
-        title: "Productos",
-        value: summary.products.count.toLocaleString("es-AR"),
-        subtitle: "Catálogo activo",
-        icon: Package,
+        title: "Eficiencia de Cobro",
+        value: `${analytics.collectionEfficiency.paid > 0 || analytics.collectionEfficiency.unpaid > 0 ? Math.round((analytics.collectionEfficiency.paid / (analytics.collectionEfficiency.paid + analytics.collectionEfficiency.unpaid)) * 100) : 0}%`,
+        subtitle: `Pagado: $${analytics.collectionEfficiency.paid.toLocaleString("es-AR")} | Impago: $${analytics.collectionEfficiency.unpaid.toLocaleString("es-AR")}`,
+        icon: Wallet,
+        color: "text-blue-500",
+        tooltip: "Porcentaje de dinero realmente cobrado de todos tus pedidos activos a la fecha",
       },
     ],
     [summary, analytics]
@@ -226,26 +219,109 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader><CardTitle>Hoy en la agenda</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {(summary.agenda?.today || []).slice(0,4).map((ev: any) => <div key={`today-${ev.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{ev.title}</p><p className="text-xs text-muted-foreground">{new Date(ev.startsAt).toLocaleString("es-AR")}</p></div>)}
-            {(summary.agenda?.today || []).length === 0 && <p className="text-sm text-muted-foreground">Sin eventos para hoy.</p>}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Agenda Hoy */}
+        <Card className="shadow-sm border-border/60">
+          <CardHeader className="pb-3 border-b bg-muted/10">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-primary" />
+              Hoy en la Agenda
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {(summary.agenda?.today || []).length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                <CalendarDays className="w-10 h-10 mb-2 opacity-20" />
+                <p className="text-sm">Sin eventos para hoy</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {(summary.agenda?.today || []).slice(0, 5).map((ev: any) => (
+                  <div key={`today-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
+                    <div className="w-1.5 h-full self-stretch rounded-full bg-primary/20 shrink-0"></div>
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>{ev.allDay ? "Todo el día" : new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span>
+                        <span className="font-medium text-[10px] uppercase px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground ml-auto">{ev.eventType}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle>Próximos recordatorios</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {(summary.agenda?.upcoming || []).slice(0,5).map((ev: any) => <div key={`up-${ev.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{ev.title}</p><p className="text-xs text-muted-foreground">{new Date(ev.startsAt).toLocaleString("es-AR")}</p></div>)}
-            {(summary.agenda?.upcoming || []).length === 0 && <p className="text-sm text-muted-foreground">Sin próximos eventos.</p>}
+
+        {/* Próximos Recordatorios */}
+        <Card className="shadow-sm border-border/60">
+          <CardHeader className="pb-3 border-b bg-muted/10">
+            <CardTitle className="text-base flex items-center gap-2 text-orange-600">
+              <Clock className="w-5 h-5" />
+              Próximos Recordatorios
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {(summary.agenda?.upcoming || []).length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                <Clock className="w-10 h-10 mb-2 opacity-20" />
+                <p className="text-sm">Sin próximos eventos</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {(summary.agenda?.upcoming || []).slice(0, 5).map((ev: any) => (
+                  <div key={`up-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
+                    <div className="w-10 h-10 rounded-md bg-orange-50 border border-orange-100 flex flex-col items-center justify-center shrink-0">
+                      <span className="text-[10px] font-bold text-orange-600 uppercase leading-none">{new Date(ev.startsAt).toLocaleString("es-AR", { month: "short" })}</span>
+                      <span className="text-sm font-bold text-orange-800 leading-none mt-0.5">{new Date(ev.startsAt).getDate()}</span>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader><CardTitle>Notas activas</CardTitle></CardHeader>
-          <CardContent className="space-y-2">
-            {(summary.notes?.active || []).slice(0,5).map((n: any) => <div key={`note-${n.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{n.title}</p>{n.remind_at ? <p className="text-xs text-muted-foreground">{new Date(n.remind_at).toLocaleString("es-AR")}</p> : null}</div>)}
-            {(summary.notes?.active || []).length === 0 && <p className="text-sm text-muted-foreground">Sin notas activas.</p>}
+
+        {/* Notas Activas */}
+        <Card className="shadow-sm border-border/60">
+          <CardHeader className="pb-3 border-b bg-muted/10">
+            <CardTitle className="text-base flex items-center gap-2 text-indigo-600">
+              <NotebookPen className="w-5 h-5" />
+              Notas Activas
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            {(summary.notes?.active || []).length === 0 ? (
+              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                <NotebookPen className="w-10 h-10 mb-2 opacity-20" />
+                <p className="text-sm">Sin notas activas</p>
+              </div>
+            ) : (
+              <div className="divide-y">
+                {(summary.notes?.active || []).slice(0, 5).map((n: any) => {
+                  const isOverdue = n.remind_at && new Date(n.remind_at) < new Date();
+                  return (
+                    <div key={`note-${n.id}`} className={`p-4 hover:bg-muted/30 transition-colors ${isOverdue ? "bg-red-50/30" : ""}`}>
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-semibold text-sm truncate text-foreground">{n.title}</p>
+                        {isOverdue && <div title="Vencida" className="shrink-0"><AlertCircle className="w-4 h-4 text-red-500" /></div>}
+                      </div>
+                      {n.remind_at && (
+                        <p className={`text-xs mt-1.5 flex items-center gap-1 font-medium ${isOverdue ? "text-red-600" : "text-indigo-600"}`}>
+                          <Clock className="w-3.5 h-3.5" />
+                          {new Date(n.remind_at).toLocaleString("es-AR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

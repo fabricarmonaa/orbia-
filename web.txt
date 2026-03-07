@@ -1,0 +1,148 @@
+[Web Entrypoint] Waiting for postgres...
+[Web Entrypoint] Running SQL migrations idempotently (safe mode)...
+
+> rest-express@1.0.0 db:push
+> drizzle-kit push
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/app/drizzle.config.ts'
+Using 'pg' driver for database querying
+[⣷] Pulling schema from database...
+[2K[1G[⣯] Pulling schema from database...
+[2K[1G[⣟] Pulling schema from database...
+[2K[1G[⡿] Pulling schema from database...
+[2K[1G[⢿] Pulling schema from database...
+[2K[1G[⣻] Pulling schema from database...
+[2K[1G[⣽] Pulling schema from database...
+[2K[1G[⣷] Pulling schema from database...
+[2K[1G[⣯] Pulling schema from database...
+[2K[1G[⣟] Pulling schema from database...
+[2K[1G[⡿] Pulling schema from database...
+[2K[1G[⢿] Pulling schema from database...
+[2K[1G[⣻] Pulling schema from database...
+[2K[1G[⣽] Pulling schema from database...
+[2K[1G[⣷] Pulling schema from database...
+[2K[1G[⣯] Pulling schema from database...
+[2K[1G[⣟] Pulling schema from database...
+[2K[1G[⡿] Pulling schema from database...
+[2K[1G[⢿] Pulling schema from database...
+[2K[1G[⣻] Pulling schema from database...
+[2K[1G[⣽] Pulling schema from database...
+[2K[1G[⣷] Pulling schema from database...
+[2K[1G[⣯] Pulling schema from database...
+[2K[1G[⣟] Pulling schema from database...
+[2K[1G[✓] Pulling schema from database...
+[✓] Changes applied
+npm notice
+npm notice New major version of npm available! 10.8.2 -> 11.11.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.11.0
+npm notice To update run: npm install -g npm@11.11.0
+npm notice
+[Web Entrypoint] Starting server...
+5:04:50 AM [express] [BOOT] SEED env="false" → seedEnabled=false
+5:04:50 AM [express] [BOOT] Seeding disabled
+5:04:50 AM [express] Server running on port 5000
+5:04:58 AM [express] POST /api/auth/logout 200 in 4ms [598582d8-13dc-4f81-93a4-9ddf62aaac1c]
+5:04:59 AM [express] GET /api/addons/status 200 in 82ms [c98486ed-d5ca-49f6-8b96-e8258c27f6ff]
+5:04:59 AM [express] GET /api/me 200 in 115ms [a11c3eef-c316-485d-8093-5547f747d3be]
+5:04:59 AM [express] GET /api/me/plan 200 in 95ms [a58c025d-0059-49ee-8bd7-7bd5870fab39]
+5:04:59 AM [express] GET /api/branding/app 200 in 16ms [d03dacdc-6e03-4747-8e45-7140088d3f37]
+5:04:59 AM [express] GET /api/stock/alerts 200 in 99ms [9f6aa6c3-7af8-4fed-826c-947b49c0a90f]
+5:04:59 AM [express] GET /api/me/plan 200 in 97ms [85018251-617c-40f0-ba81-f56b1f5787e2]
+5:04:59 AM [express] GET /api/agenda/events 200 in 105ms [a9ef46dd-20e1-482f-90ef-ea069a35ce4f]
+5:04:59 AM [express] GET /api/branding/tenant 200 in 41ms [cf52444d-1e1e-47cf-8bd2-ebc88f9893a5]
+5:04:59 AM [express] GET /api/me/plan 200 in 45ms [387b7204-6974-4fe6-8e8f-5fc4a849457d]
+5:04:59 AM [express] GET /api/me/plan 200 in 59ms [9d5793be-6a68-4d4e-8f5b-ddbf5e3bcb3c]
+[stt_debug_upload] {
+  requestId: '1e43e4f7-e9d3-445f-a4dd-22fa3a859dc4',
+  clientMime: 'audio/webm',
+  size: 59222,
+  path: '/tmp/stt-1772859906291-76dfe0b3-8043-45b7-80f5-0d097e7aa76c.webm'
+}
+[stt_debug_magic_mime] {
+  filePath: '/tmp/stt-1772859906291-76dfe0b3-8043-45b7-80f5-0d097e7aa76c.webm',
+  detectedMime: 'video/webm'
+}
+5:05:24 AM [express] POST /api/stt/interpret 200 in 18486ms [1e43e4f7-e9d3-445f-a4dd-22fa3a859dc4]
+5:05:36 AM [express] POST /api/stt/interpret 200 in 51ms [eafff7c2-3c40-4741-a3ff-70c98003d483]
+5:05:39 AM [express] POST /api/stt/execute 200 in 26ms [466a8919-2d0d-420d-8f09-5327e10550b4]
+5:05:39 AM [express] POST /api/auth/logout 200 in 0ms [b58ea035-43dc-4cd9-a30a-f3d9f9ff8ac0]
+5:05:39 AM [express] GET /api/me 304 in 20ms [a22f8037-5e65-4491-9af3-5a38f41df047]
+5:05:40 AM [express] GET /api/agenda/events 200 in 18ms [f2fae1d7-5c13-4cc0-bbc9-25eb198a919a]
+5:05:40 AM [express] GET /api/branding/app 304 in 38ms [44c92d16-ca8f-4b40-8d5b-701cda353b9a]
+5:05:40 AM [express] GET /api/addons/status 304 in 63ms [9194e477-c10f-486c-9f92-ced4a212a283]
+5:05:40 AM [express] GET /api/me/plan 304 in 74ms [d1d4a998-c010-4584-a89e-4a9bd3b788f8]
+5:05:40 AM [express] GET /api/stock/alerts 304 in 67ms [e8a485cb-da1a-4d74-a8b3-acab77c83161]
+5:05:40 AM [express] GET /api/branding/tenant 304 in 59ms [cd0aa84f-7e34-46c4-8001-57141e780529]
+5:05:40 AM [express] GET /api/me/plan 304 in 15ms [cb4e0d9c-755f-4935-968b-45d7c6fa7519]
+5:05:40 AM [express] GET /api/me/plan 304 in 11ms [50c3047e-fc29-4f68-971f-e93bd31e29a0]
+5:05:40 AM [express] GET /api/me/plan 304 in 18ms [2e7597a5-589d-4830-b604-0600796ae659]
+5:05:43 AM [express] POST /api/auth/logout 200 in 0ms [c5870c37-ec37-404c-ba2a-a4c271c0aeb0]
+5:05:43 AM [express] GET /api/me 200 in 29ms [cda7924a-c43f-49da-b50c-3bc2d7e06e99]
+5:05:43 AM [express] GET /api/addons/status 200 in 27ms [fb12b1d4-0ab9-4b10-9086-669c541035c2]
+5:05:43 AM [express] GET /api/me/plan 200 in 40ms [5402c96a-67cc-4ffe-bffa-b6816fcbea4b]
+5:05:43 AM [express] GET /api/agenda/events 200 in 31ms [01b2cd23-ec17-4e22-aab0-22c8f8c39727]
+5:05:43 AM [express] GET /api/stock/alerts 200 in 42ms [8fd4c8df-1bd9-4938-ae13-35e451e4bcbe]
+5:05:43 AM [express] GET /api/me/plan 200 in 43ms [5c89f9ff-12c5-4f6e-9d7c-f19b25500db1]
+5:05:43 AM [express] GET /api/branding/app 200 in 9ms [d5abb409-79ff-49f8-86d9-a53728d3e2b4]
+5:05:43 AM [express] GET /api/me/plan 200 in 23ms [d007dbf9-97c3-4841-b2d2-0ac862e86fe6]
+5:05:43 AM [express] GET /api/me/plan 200 in 25ms [d965de4f-f536-42ef-bf32-f26127ab62ea]
+5:05:43 AM [express] GET /api/branding/tenant 200 in 19ms [5a7cc66b-de65-47e0-9e75-4e8c71182704]
+[stt_debug_upload] {
+  requestId: 'dc2b5fe3-e661-4687-8a7c-7fbbc31bd8e2',
+  clientMime: 'audio/webm',
+  size: 93998,
+  path: '/tmp/stt-1772859998317-49201f04-4afe-4615-b6e6-8ca02689ad3d.webm'
+}
+[stt_debug_magic_mime] {
+  filePath: '/tmp/stt-1772859998317-49201f04-4afe-4615-b6e6-8ca02689ad3d.webm',
+  detectedMime: 'video/webm'
+}
+5:06:41 AM [express] POST /api/stt/interpret 200 in 3256ms [dc2b5fe3-e661-4687-8a7c-7fbbc31bd8e2]
+[STT_INTERPRET_ERROR] {
+  requestId: 'f532441c-03f9-4195-b331-1af76c8eec33',
+  supportId: 'e8e43e1ef7e3',
+  message: 'AI_SERVICE_UNAVAILABLE',
+  code: 'AI_BAD_RESPONSE',
+  statusCode: undefined,
+  stack: 'AiClientError: AI_SERVICE_UNAVAILABLE\n' +
+    '    at qf (/app/dist/index.cjs:159:72141)\n' +
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)\n' +
+    '    at async upe (/app/dist/index.cjs:159:76268)\n' +
+    '    at async /app/dist/index.cjs:159:77673'
+}
+5:06:59 AM [express] POST /api/stt/interpret 503 in 43ms [f532441c-03f9-4195-b331-1af76c8eec33]
+5:08:32 AM [express] POST /api/auth/logout 200 in 1ms [0befc49f-059e-434b-a876-0683627c2d0b]
+5:08:32 AM [express] GET /api/me 200 in 59ms [7ed8efd4-a54e-4f4e-a507-d310fa8fc1d5]
+5:08:32 AM [express] GET /api/addons/status 200 in 56ms [316882fd-f59b-47bc-a23c-0bc95a0ab30a]
+5:08:32 AM [express] GET /api/stock/alerts 200 in 64ms [fe2437bd-bba5-4a8b-8d0c-5fd832ba9dc9]
+5:08:32 AM [express] GET /api/me/plan 200 in 81ms [67872d44-3311-4978-a303-79d457fbb2cc]
+5:08:32 AM [express] GET /api/me/plan 200 in 66ms [909a8b45-4e91-4a62-b597-11b13ae64b80]
+5:08:32 AM [express] GET /api/branding/app 200 in 8ms [109dd827-06f2-4921-936e-6554928b7cc1]
+5:08:32 AM [express] GET /api/me/plan 200 in 21ms [55fbfab4-4051-406b-af60-a62eea5aada3]
+5:08:32 AM [express] GET /api/me/plan 200 in 28ms [73cf7ec1-18f2-4d71-9553-0361b492c081]
+5:08:32 AM [express] GET /api/agenda/events 200 in 87ms [521ef9b6-ddb3-4f0d-98fe-ec7bc01aef61]
+5:08:32 AM [express] GET /api/branding/tenant 200 in 18ms [5614a39c-df57-416d-8408-71807dad40e6]
+[stt_debug_upload] {
+  requestId: '4beb7114-92ca-4321-a52e-2a89922159e7',
+  clientMime: 'audio/webm',
+  size: 77576,
+  path: '/tmp/stt-1772860118936-30ab8720-62b4-4e02-996a-70443e7f7958.webm'
+}
+[stt_debug_magic_mime] {
+  filePath: '/tmp/stt-1772860118936-30ab8720-62b4-4e02-996a-70443e7f7958.webm',
+  detectedMime: 'video/webm'
+}
+[STT_INTERPRET_ERROR] {
+  requestId: '4beb7114-92ca-4321-a52e-2a89922159e7',
+  supportId: 'e3f8cd34f222',
+  message: 'AI_SERVICE_UNAVAILABLE',
+  code: 'AI_BAD_RESPONSE',
+  statusCode: undefined,
+  stack: 'AiClientError: AI_SERVICE_UNAVAILABLE\n' +
+    '    at qf (/app/dist/index.cjs:159:72141)\n' +
+    '    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)\n' +
+    '    at async upe (/app/dist/index.cjs:159:76268)\n' +
+    '    at async /app/dist/index.cjs:159:77673'
+}
+5:08:40 AM [express] POST /api/stt/interpret 503 in 1083ms [4beb7114-92ca-4321-a52e-2a89922159e7]

@@ -312,27 +312,16 @@ export function registerTenantRoutes(app: Express) {
         branchId ? storage.getOrdersByBranch(tenantId, branchId, { limit: 200 }) : storage.getOrders(tenantId, { limit: 200 }),
       ]);
 
-      const pendingStatusIds = new Set(
+      const openStatusIds = new Set(
         statuses
-          .filter((s: any) => {
-            const normalized = String(s.name || "").trim().toUpperCase();
-            return normalized === "PENDIENTE" || normalized === "PENDING";
-          })
-          .map((s: any) => s.id)
-      );
-      const inProgressStatusIds = new Set(
-        statuses
-          .filter((s: any) => {
-            const normalized = String(s.name || "").trim().toUpperCase().replace(/\s+/g, "_");
-            return normalized === "EN_PROCESO" || normalized === "IN_PROGRESS";
-          })
+          .filter((s: any) => !s.isFinal)
           .map((s: any) => s.id)
       );
 
       const allOrders = allOrdersResult.data;
-      const pendingCount = allOrders.filter((o: any) => o.statusId && pendingStatusIds.has(o.statusId)).length;
-      const inProgressCount = allOrders.filter((o: any) => o.statusId && inProgressStatusIds.has(o.statusId)).length;
-      const openCount = pendingCount + inProgressCount;
+      const openCount = allOrders.filter((o: any) => o.statusId && openStatusIds.has(o.statusId)).length;
+      const pendingCount = 0; // Se puede calcular si fuese necesario, pero user solo ve openCount en el badge
+      const inProgressCount = 0;
 
       const monthIncome = Number(monthlySummary ? monthlySummary.cashInTotal : monthlyIncomeRaw) || 0;
       // We always rely on the live grouped computation for the expense breakdown because the monthly summary only holds the scalar total.

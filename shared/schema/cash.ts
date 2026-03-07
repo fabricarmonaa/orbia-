@@ -127,6 +127,7 @@ export const cashMovements = pgTable(
     expenseDefinitionName: varchar("expense_definition_name", { length: 200 }),
     orderId: integer("order_id").references(() => orders.id),
     saleId: integer("sale_id").references(() => sales.id),
+    associatedCost: numeric("associated_cost", { precision: 12, scale: 2 }).notNull().default("0"),
     // Generic entity reference (canonical pattern — no per-entity FK columns)
     entityType: varchar("entity_type", { length: 50 }),
     entityId: integer("entity_id"),

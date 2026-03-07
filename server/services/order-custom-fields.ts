@@ -93,17 +93,34 @@ export async function validateAndNormalizeCustomFields(
     } else if (def.fieldType === "CHECKBOX") {
       valueNumber = null;
       fileStorageKey = null;
-      const normalizedBool = String(valueText || "").trim().toLowerCase();
-      if (normalizedBool === "true" || normalizedBool === "1" || normalizedBool === "si") valueText = "true";
-      else if (normalizedBool === "false" || normalizedBool === "0" || normalizedBool === "no" || normalizedBool === "") valueText = normalizedBool ? "false" : null;
-      else throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Valor inválido para ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_BOOLEAN" });
+      const options = Array.isArray((def.config as any)?.options) ? (def.config as any).options.map((x: unknown) => String(x)) : [];
+      if (options.length === 0) {
+        const normalizedBool = String(valueText || "").trim().toLowerCase();
+        if (normalizedBool === "true" || normalizedBool === "1" || normalizedBool === "si") valueText = "true";
+        else if (normalizedBool === "false" || normalizedBool === "0" || normalizedBool === "no" || normalizedBool === "") valueText = normalizedBool ? "false" : null;
+        else throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Valor inválido para ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_BOOLEAN" });
+      } else {
+        if (valueText != null && String(valueText).trim() !== "") {
+          const selectedValues = String(valueText).split(",").map(v => v.trim()).filter(Boolean);
+          for (const val of selectedValues) {
+            if (!options.includes(val)) {
+              throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Opción inválida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_OPTION" });
+            }
+          }
+        }
+      }
       if (def.required && valueText == null) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
     } else if (def.fieldType === "SELECT") {
       valueNumber = null;
       fileStorageKey = null;
       const options = Array.isArray((def.config as any)?.options) ? (def.config as any).options.map((x: unknown) => String(x)) : [];
-      if (valueText != null && String(valueText).trim() !== "" && options.length > 0 && !options.includes(String(valueText))) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Opción inválida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_SELECT_OPTION" });
+      if (valueText != null && String(valueText).trim() !== "") {
+        const selectedValues = String(valueText).split(",").map(v => v.trim()).filter(Boolean);
+        for (const val of selectedValues) {
+          if (options.length > 0 && !options.includes(val)) {
+            throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Opción inválida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_SELECT_OPTION" });
+          }
+        }
       }
       if (def.required && !String(valueText || "").trim()) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
     } else if (def.fieldType === "DATE" || def.fieldType === "TIME" || def.fieldType === "DATETIME" || def.fieldType === "TEXT_LONG") {

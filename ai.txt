@@ -1,0 +1,58 @@
+INFO:     Started server process [7]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+{"event": "ai_startup", "workerTimeout": 25, "maxAudioSeconds": 20, "maxConcurrent": 2}
+INFO:     127.0.0.1:35078 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:57276 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59778 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:41906 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_request", "requestId": "1e43e4f7-e9d3-445f-a4dd-22fa3a859dc4", "hasAudio": true, "hasText": false}
+{"event": "ctranslate_patch", "patched": 2, "candidates": 2}
+INFO:     127.0.0.1:58078 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:41906 - "POST /stt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60646 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:39230 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_request", "requestId": "eafff7c2-3c40-4741-a3ff-70c98003d483", "hasAudio": false, "hasText": true}
+INFO:     172.18.0.5:39234 - "POST /stt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:37400 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:60618 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:56710 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49614 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54784 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35558 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50180 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:44778 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_request", "requestId": "dc2b5fe3-e661-4687-8a7c-7fbbc31bd8e2", "hasAudio": true, "hasText": false}
+INFO:     172.18.0.5:44778 - "POST /stt HTTP/1.1" 200 OK
+INFO:     127.0.0.1:35378 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:44452 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:51048 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_request", "requestId": "f532441c-03f9-4195-b331-1af76c8eec33", "hasAudio": false, "hasText": true}
+{"event": "stt_error", "requestId": "f532441c-03f9-4195-b331-1af76c8eec33", "message": "\"LANGUAGES\" is not a valid setting"}
+INFO:     172.18.0.5:51054 - "POST /stt HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:44724 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:40800 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53866 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55832 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:36376 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:43862 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54066 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33248 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:34868 - "GET /health HTTP/1.1" 200 OK
+INFO:     172.18.0.5:35142 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_request", "requestId": "4beb7114-92ca-4321-a52e-2a89922159e7", "hasAudio": true, "hasText": false}
+INFO:     127.0.0.1:54606 - "GET /health HTTP/1.1" 200 OK
+{"event": "stt_error", "requestId": "4beb7114-92ca-4321-a52e-2a89922159e7", "message": "\"LANGUAGES\" is not a valid setting"}
+INFO:     172.18.0.5:35142 - "POST /stt HTTP/1.1" 500 Internal Server Error
+INFO:     127.0.0.1:52254 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:41496 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46316 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:46180 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:55480 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:33926 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:38828 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:50518 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:39296 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:59264 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:58606 - "GET /health HTTP/1.1" 200 OK
