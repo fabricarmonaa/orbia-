@@ -7,8 +7,21 @@ import {
   type TenantWhatsappChannel,
 } from "@shared/schema";
 import { db } from "../db";
-import { decryptSecret, encryptSecret, maskSecret } from "./whatsapp-crypto";
-import { resolveWhatsappProvider } from "./whatsapp-provider";
+import { decryptSecret, encryptSecret, isMaskedSecretValue, maskSecret } from "./whatsapp-crypto";
+import { WhatsAppProviderError, resolveWhatsappProvider } from "./whatsapp-provider";
+
+function isWhatsappDebugEnabled() {
+  return String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() === "true";
+}
+
+function waLog(...args: unknown[]) {
+  if (!isWhatsappDebugEnabled()) return;
+  console.log("[WA]", ...args);
+}
+
+export function normalizeWhatsAppRecipientForMeta(input: string): string {
+  return String(input || "").replace(/\+/g, "").replace(/[\s\-()]/g, "").replace(/\D/g, "").trim();
+}
 
 function normalizePhone(phone?: string | null) {
   if (!phone) return "";
@@ -27,6 +40,13 @@ function extractMetaEvents(payload: any) {
     }
   }
   return out;
+}
+
+function extractStatusError(statusPayload: any) {
+  const first = statusPayload?.errors?.[0] || null;
+  const code = first?.code ? Number(first.code) : null;
+  const details = first?.error_data?.details || first?.title || first?.message || null;
+  return { code, details };
 }
 
 export async function resolveWhatsAppChannelByPhoneNumberId(phoneNumberId: string) {
@@ -263,6 +283,43 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
           .update(whatsappWebhookEvents)
           .set({ processingStatus: messageType === "TEXT" ? "PROCESSED" : "IGNORED", processedAt: new Date() })
           .where(eq(whatsappWebhookEvents.id, baseEvent.id));
+      } else if (event.type === "status") {
+        const status = String(event.value?.status || "").toUpperCase();
+        const providerMessageId = event.value?.id || null;
+        const { code, details } = extractStatusError(event.value);
+        const statusMap: Record<string, string> = {
+          SENT: "SENT",
+          DELIVERED: "DELIVERED",
+          READ: "READ",
+          FAILED: "FAILED",
+        };
+
+        if (providerMessageId) {
+          await db
+            .update(whatsappMessages)
+            .set({
+              status: statusMap[status] || "QUEUED",
+              rawPayloadJson: event,
+            })
+            .where(
+              and(
+                eq(whatsappMessages.tenantId, channel.tenantId),
+                eq(whatsappMessages.channelId, channel.id),
+                eq(whatsappMessages.providerMessageId, providerMessageId),
+              ),
+            );
+        }
+
+        await db
+          .update(whatsappWebhookEvents)
+          .set({
+            processingStatus: status === "FAILED" ? "FAILED" : "PROCESSED",
+            errorMessage: status === "FAILED" ? `status_failed:${code || "unknown"}:${details || "n/a"}` : null,
+            processedAt: new Date(),
+          })
+          .where(eq(whatsappWebhookEvents.id, baseEvent.id));
+
+        waLog("status_webhook", { status, providerMessageId, code, details, channelId: channel.id, tenantId: channel.tenantId });
       } else {
         await db
           .update(whatsappWebhookEvents)
@@ -328,9 +385,24 @@ export async function upsertTenantChannel(tenantId: number, payload: {
     updatedAt: now,
   };
 
-  if (payload.accessToken) values.accessTokenEncrypted = encryptSecret(payload.accessToken);
-  if (payload.appSecret) values.appSecretEncrypted = encryptSecret(payload.appSecret);
-  if (payload.webhookVerifyToken) values.webhookVerifyTokenEncrypted = encryptSecret(payload.webhookVerifyToken);
+  const incomingAccessToken = payload.accessToken ?? null;
+  const incomingAppSecret = payload.appSecret ?? null;
+  const incomingVerifyToken = payload.webhookVerifyToken ?? null;
+
+  const shouldReplaceAccessToken = Boolean(incomingAccessToken && !isMaskedSecretValue(incomingAccessToken));
+  const shouldReplaceAppSecret = Boolean(incomingAppSecret && !isMaskedSecretValue(incomingAppSecret));
+  const shouldReplaceVerifyToken = Boolean(incomingVerifyToken && !isMaskedSecretValue(incomingVerifyToken));
+
+  if (shouldReplaceAccessToken) values.accessTokenEncrypted = encryptSecret(incomingAccessToken);
+  if (shouldReplaceAppSecret) values.appSecretEncrypted = encryptSecret(incomingAppSecret);
+  if (shouldReplaceVerifyToken) values.webhookVerifyTokenEncrypted = encryptSecret(incomingVerifyToken);
+
+  waLog("upsert_channel_secret_source", {
+    tenantId,
+    replaceAccessToken: shouldReplaceAccessToken,
+    replaceAppSecret: shouldReplaceAppSecret,
+    replaceVerifyToken: shouldReplaceVerifyToken,
+  });
 
   if (existing) {
     const [updated] = await db.update(tenantWhatsappChannels).set(values).where(eq(tenantWhatsappChannels.id, existing.id)).returning();
@@ -367,36 +439,121 @@ export async function sendTestWhatsAppMessage(input: {
     throw new Error("Canal WhatsApp no activo para el tenant");
   }
 
+  const mode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+  const normalizedTo = normalizeWhatsAppRecipientForMeta(input.to);
   const conversation = await findOrCreateConversation({
     tenantId: input.tenantId,
     branchId: channel.branchId,
     channelId: channel.id,
-    customerPhone: input.to,
+    customerPhone: normalizedTo,
   });
 
   const provider = resolveWhatsappProvider(channel.provider);
-  const result = await provider.sendTextMessage(channel, normalizePhone(input.to), input.text);
 
-  const message = await createOutboundMessage({
-    tenantId: input.tenantId,
-    conversationId: conversation.id,
-    channelId: channel.id,
-    senderUserId: input.executedByUserId,
-    providerMessageId: result.providerMessageId || null,
-    contentText: input.text,
-    status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: result.raw,
+  waLog("send_test_start", {
+    originalRecipientInput: input.to,
+    normalizedRecipient: normalizedTo,
+    phoneNumberId: channel.phoneNumberId,
+    businessAccountId: channel.businessAccountId,
+    accessTokenSource: channel.accessTokenEncrypted ? "db_encrypted" : "missing",
+    modeRequested: mode,
   });
 
-  await persistWebhookEvent({
-    tenantId: input.tenantId,
-    channelId: channel.id,
-    eventType: "manual_send",
-    payload: { to: input.to, text: input.text, result, executedByUserId: input.executedByUserId },
-    processingStatus: "PROCESSED",
-  });
+  try {
+    const result = mode === "text_freeform"
+      ? await provider.sendTextMessage(channel, normalizedTo, input.text)
+      : await provider.sendTemplateMessage(channel, normalizedTo, "hello_world", [], "en_US");
 
-  return { channel, conversation, message, result };
+    waLog("send_test_meta_response", {
+      status: "ok",
+      modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+      payloadSent: {
+        messaging_product: "whatsapp",
+        to: normalizedTo,
+        type: mode === "text_freeform" ? "text" : "template",
+        templateName: mode === "text_freeform" ? undefined : "hello_world",
+        templateLang: mode === "text_freeform" ? undefined : "en_US",
+      },
+      raw: result.raw,
+    });
+
+    const message = await createOutboundMessage({
+      tenantId: input.tenantId,
+      conversationId: conversation.id,
+      channelId: channel.id,
+      senderUserId: input.executedByUserId,
+      providerMessageId: result.providerMessageId || null,
+      contentText: mode === "text_freeform" ? input.text : "[template:hello_world]",
+      status: result.mocked ? "QUEUED" : "SENT",
+      rawPayload: {
+        modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+        normalizedTo,
+        providerRaw: result.raw,
+      },
+    });
+
+    await persistWebhookEvent({
+      tenantId: input.tenantId,
+      channelId: channel.id,
+      eventType: "manual_send",
+      payload: {
+        originalRecipientInput: input.to,
+        normalizedTo,
+        text: input.text,
+        result,
+        modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+        executedByUserId: input.executedByUserId,
+      },
+      processingStatus: "PROCESSED",
+    });
+
+    return {
+      channel,
+      conversation,
+      message,
+      result,
+      modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+      normalizedTo,
+      messageId: result.providerMessageId || null,
+    };
+  } catch (error: any) {
+    const providerError = error as WhatsAppProviderError;
+    waLog("send_test_meta_response", {
+      status: "error",
+      modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+      payloadSent: {
+        messaging_product: "whatsapp",
+        to: normalizedTo,
+        type: mode === "text_freeform" ? "text" : "template",
+        templateName: mode === "text_freeform" ? undefined : "hello_world",
+        templateLang: mode === "text_freeform" ? undefined : "en_US",
+      },
+      responseStatus: providerError?.status,
+      responseBody: providerError?.raw,
+    });
+
+    await persistWebhookEvent({
+      tenantId: input.tenantId,
+      channelId: channel.id,
+      eventType: "manual_send_failed",
+      payload: {
+        originalRecipientInput: input.to,
+        normalizedTo,
+        modeUsed: mode === "text_freeform" ? "text_freeform" : "template_hello_world_test",
+        providerError: {
+          status: providerError?.status || null,
+          code: providerError?.code || null,
+          details: providerError?.details || providerError?.message || "unknown",
+          raw: providerError?.raw || null,
+        },
+        executedByUserId: input.executedByUserId,
+      },
+      processingStatus: "FAILED",
+      errorMessage: providerError?.details || providerError?.message || "send_test_failed",
+    });
+
+    throw error;
+  }
 }
 
 export function channelToSafeResponse(channel: TenantWhatsappChannel | null) {

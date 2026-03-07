@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -33,6 +33,10 @@ const emptyForm: WhatsappChannelForm = {
   isActive: false,
 };
 
+function normalizeRecipient(value: string) {
+  return String(value || "").replace(/\+/g, "").replace(/[\s\-()]/g, "").replace(/\D/g, "").trim();
+}
+
 export function WhatsAppSettings() {
   const { toast } = useToast();
   const [form, setForm] = useState<WhatsappChannelForm>(emptyForm);
@@ -43,13 +47,28 @@ export function WhatsAppSettings() {
   const [testPhone, setTestPhone] = useState("");
   const [testText, setTestText] = useState("Mensaje de prueba Orbia WhatsApp");
   const [webhookStatus, setWebhookStatus] = useState<string>("Sin verificar");
+  const [sendResult, setSendResult] = useState<{ messageId?: string | null; modeUsed?: string; normalizedTo?: string } | null>(null);
+
+  const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
 
   async function loadChannel() {
     try {
       const res = await apiRequest("GET", "/api/whatsapp/channels/current");
       const data = await res.json();
       if (data?.data) {
-        setForm((prev) => ({ ...prev, ...data.data }));
+        setForm((prev) => ({
+          ...prev,
+          provider: data.data.provider || "meta",
+          phoneNumber: data.data.phoneNumber || "",
+          phoneNumberId: data.data.phoneNumberId || "",
+          businessAccountId: data.data.businessAccountId || "",
+          displayName: data.data.displayName || "",
+          accessToken: data.data.accessToken || "",
+          appSecret: data.data.appSecret || "",
+          webhookVerifyToken: data.data.webhookVerifyToken || "",
+          status: data.data.status || "DRAFT",
+          isActive: Boolean(data.data.isActive),
+        }));
       }
     } catch (err: any) {
       toast({ title: "Error cargando canal", description: err.message, variant: "destructive" });
@@ -65,7 +84,18 @@ export function WhatsAppSettings() {
   async function saveChannel() {
     setSaving(true);
     try {
-      await apiRequest("PUT", "/api/whatsapp/channels/current", form);
+      await apiRequest("PUT", "/api/whatsapp/channels/current", {
+        provider: form.provider,
+        phoneNumber: form.phoneNumber,
+        phoneNumberId: form.phoneNumberId,
+        businessAccountId: form.businessAccountId,
+        displayName: form.displayName,
+        accessToken: form.accessToken,
+        appSecret: form.appSecret,
+        webhookVerifyToken: form.webhookVerifyToken,
+        status: form.status,
+        isActive: form.isActive,
+      });
       toast({ title: "Canal guardado" });
       await loadChannel();
     } catch (err: any) {
@@ -91,11 +121,22 @@ export function WhatsAppSettings() {
 
   async function sendTest() {
     setSending(true);
+    setSendResult(null);
     try {
-      await apiRequest("POST", "/api/whatsapp/messages/send-test", { to: testPhone, text: testText });
-      toast({ title: "Mensaje de prueba enviado" });
+      const res = await apiRequest("POST", "/api/whatsapp/messages/send-test", { to: testPhone, text: testText });
+      const data = await res.json();
+      const payload = data?.data || {};
+      setSendResult({
+        messageId: payload?.messageId || payload?.result?.providerMessageId || null,
+        modeUsed: payload?.modeUsed || null,
+        normalizedTo: payload?.normalizedTo || normalizedRecipientPreview,
+      });
+      toast({
+        title: "Mensaje de prueba enviado",
+        description: `mode=${payload?.modeUsed || "template_hello_world_test"} · to=${payload?.normalizedTo || normalizedRecipientPreview}`,
+      });
     } catch (err: any) {
-      toast({ title: "Error enviando", description: err.message, variant: "destructive" });
+      toast({ title: "Error enviando test", description: err.message || "Error no especificado", variant: "destructive" });
     } finally {
       setSending(false);
     }
@@ -131,11 +172,20 @@ export function WhatsAppSettings() {
 
         <div className="border rounded-md p-3 space-y-2">
           <p className="text-sm font-medium">Enviar mensaje de prueba</p>
+          <p className="text-xs text-muted-foreground">Sandbox/test usa por defecto template <code>hello_world</code> (<code>en_US</code>) para respetar la ventana de 24h.</p>
           <div className="grid md:grid-cols-2 gap-2">
             <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+549..." />
-            <Input value={testText} onChange={(e) => setTestText(e.target.value)} />
+            <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Solo se usa en modo text_freeform" />
           </div>
+          <p className="text-xs text-muted-foreground">Número normalizado para Meta: <strong>{normalizedRecipientPreview || "-"}</strong></p>
           <Button variant="secondary" onClick={sendTest} disabled={sending || !testPhone.trim()}>{sending ? "Enviando..." : "Enviar test"}</Button>
+          {sendResult ? (
+            <div className="text-xs rounded border p-2 bg-muted/30">
+              <p><strong>mode_used:</strong> {sendResult.modeUsed || "-"}</p>
+              <p><strong>normalized_to:</strong> {sendResult.normalizedTo || "-"}</p>
+              <p><strong>message_id:</strong> {sendResult.messageId || "-"}</p>
+            </div>
+          ) : null}
           <p className="text-xs text-muted-foreground">Estado webhook: {webhookStatus}</p>
         </div>
       </CardContent>

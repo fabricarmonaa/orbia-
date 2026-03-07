@@ -1,6 +1,27 @@
 import type { TenantWhatsappChannel } from "@shared/schema";
 import { decryptSecret } from "./whatsapp-crypto";
 
+export class WhatsAppProviderError extends Error {
+  status: number;
+  raw: any;
+  code?: number;
+  details?: string;
+
+  constructor(message: string, status: number, raw: any) {
+    super(message);
+    this.name = "WhatsAppProviderError";
+    this.status = status;
+    this.raw = raw;
+    const firstError = raw?.error_data?.details
+      ? { code: raw?.code, details: raw?.error_data?.details }
+      : raw?.error
+        ? { code: raw?.error?.code, details: raw?.error?.error_data?.details || raw?.error?.message }
+        : null;
+    this.code = firstError?.code;
+    this.details = firstError?.details;
+  }
+}
+
 export interface WhatsappProvider {
   sendTextMessage(channel: TenantWhatsappChannel, to: string, text: string): Promise<{ providerMessageId?: string; raw: unknown; mocked?: boolean }>;
   sendTemplateMessage(
@@ -8,6 +29,7 @@ export interface WhatsappProvider {
     to: string,
     templateCode: string,
     params?: string[],
+    languageCode?: string,
   ): Promise<{ providerMessageId?: string; raw: unknown; mocked?: boolean }>;
 }
 
@@ -16,12 +38,29 @@ class MetaWhatsappProvider implements WhatsappProvider {
     return decryptSecret(channel.accessTokenEncrypted);
   }
 
-  async sendTextMessage(channel: TenantWhatsappChannel, to: string, text: string) {
+  private async callMeta(channel: TenantWhatsappChannel, body: Record<string, unknown>) {
     const token = this.getToken(channel);
     if (!token || !channel.phoneNumberId) {
-      return { mocked: true, raw: { mocked: true, reason: "missing_credentials", to, text } };
+      return { mocked: true, raw: { mocked: true, reason: "missing_credentials", body } };
     }
 
+    const response = await fetch(`https://graph.facebook.com/v21.0/${channel.phoneNumberId}/messages`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    const raw = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new WhatsAppProviderError(`Meta API error (${response.status})`, response.status, raw);
+    }
+    return { providerMessageId: raw?.messages?.[0]?.id, raw };
+  }
+
+  async sendTextMessage(channel: TenantWhatsappChannel, to: string, text: string) {
     const body = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
@@ -29,29 +68,10 @@ class MetaWhatsappProvider implements WhatsappProvider {
       type: "text",
       text: { preview_url: false, body: text },
     };
-
-    const response = await fetch(`https://graph.facebook.com/v21.0/${channel.phoneNumberId}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const raw = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`Meta API error (${response.status}): ${JSON.stringify(raw)}`);
-    }
-    return { providerMessageId: raw?.messages?.[0]?.id, raw };
+    return this.callMeta(channel, body);
   }
 
-  async sendTemplateMessage(channel: TenantWhatsappChannel, to: string, templateCode: string, params: string[] = []) {
-    const token = this.getToken(channel);
-    if (!token || !channel.phoneNumberId) {
-      return { mocked: true, raw: { mocked: true, reason: "missing_credentials", to, templateCode, params } };
-    }
-
+  async sendTemplateMessage(channel: TenantWhatsappChannel, to: string, templateCode: string, params: string[] = [], languageCode = "es_AR") {
     const body = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
@@ -59,27 +79,13 @@ class MetaWhatsappProvider implements WhatsappProvider {
       type: "template",
       template: {
         name: templateCode,
-        language: { code: "es_AR" },
+        language: { code: languageCode },
         components: params.length
           ? [{ type: "body", parameters: params.map((value) => ({ type: "text", text: value })) }]
           : [],
       },
     };
-
-    const response = await fetch(`https://graph.facebook.com/v21.0/${channel.phoneNumberId}/messages`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(body),
-    });
-
-    const raw = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      throw new Error(`Meta API error (${response.status}): ${JSON.stringify(raw)}`);
-    }
-    return { providerMessageId: raw?.messages?.[0]?.id, raw };
+    return this.callMeta(channel, body);
   }
 }
 

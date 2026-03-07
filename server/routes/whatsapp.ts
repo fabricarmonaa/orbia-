@@ -12,8 +12,8 @@ import {
   processIncomingWhatsAppWebhook,
   sendTestWhatsAppMessage,
   upsertTenantChannel,
-  verifyMetaWebhookChallenge,
 } from "../services/whatsapp-service";
+import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { db } from "../db";
 import { whatsappConversations } from "@shared/schema";
 
@@ -45,14 +45,20 @@ export function registerWhatsappRoutes(app: Express) {
   });
 
   app.get("/api/whatsapp/webhook", async (req, res) => {
-    const mode = String(req.query["hub.mode"] || "");
-    const verifyToken = String(req.query["hub.verify_token"] || "");
-    const challenge = String(req.query["hub.challenge"] || "");
-    const verified = await verifyMetaWebhookChallenge(mode, verifyToken, challenge);
-    if (!verified) {
-      return res.status(403).json({ error: "Webhook verification failed" });
+    const mode = req.query["hub.mode"];
+    const token = req.query["hub.verify_token"];
+    const challenge = req.query["hub.challenge"];
+    const expected = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+
+    console.log("[WA WEBHOOK VERIFY] mode:", mode);
+    console.log("[WA WEBHOOK VERIFY] received:", token);
+    console.log("[WA WEBHOOK VERIFY] expected:", expected);
+
+    if (mode === "subscribe" && token === expected) {
+      return res.status(200).send(String(challenge));
     }
-    return res.status(200).send(verified.challenge);
+
+    return res.status(403).json({ error: "Webhook verification failed" });
   });
 
   app.post("/api/whatsapp/webhook", async (req, res) => {
@@ -114,13 +120,26 @@ export function registerWhatsappRoutes(app: Express) {
   );
 
   app.post("/api/whatsapp/messages/send-test", tenantAuth, requireAddon("messaging_whatsapp"), requireTenantAdmin, validateBody(sendSchema), async (req, res) => {
-    const result = await sendTestWhatsAppMessage({
-      tenantId: req.auth!.tenantId!,
-      executedByUserId: req.auth!.userId,
-      to: req.body.to,
-      text: req.body.text,
-    });
-    res.json({ data: result });
+    try {
+      const result = await sendTestWhatsAppMessage({
+        tenantId: req.auth!.tenantId!,
+        executedByUserId: req.auth!.userId,
+        to: req.body.to,
+        text: req.body.text,
+      });
+      return res.json({ data: result });
+    } catch (error: any) {
+      const providerError = error as WhatsAppProviderError;
+      const providerCode = providerError?.code || "unknown";
+      const providerDetails = providerError?.details || providerError?.message || "Error enviando mensaje de prueba";
+      return res.status(providerError?.status || 500).json({
+        error: `[META ${providerCode}] ${providerDetails}`,
+        code: "WHATSAPP_SEND_TEST_FAILED",
+        providerCode,
+        providerDetails,
+        providerRaw: providerError?.raw || null,
+      });
+    }
   });
 
   app.post(

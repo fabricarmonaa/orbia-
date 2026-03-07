@@ -39,3 +39,10 @@ export function maskSecret(value: string | null | undefined) {
   if (value.length <= 6) return "••••••";
   return `${value.slice(0, 3)}••••${value.slice(-3)}`;
 }
+
+export function isMaskedSecretValue(value: string | null | undefined) {
+  if (!value) return false;
+  const trimmed = String(value).trim();
+  if (!trimmed) return false;
+  return /[•●*]/.test(trimmed);
+}
