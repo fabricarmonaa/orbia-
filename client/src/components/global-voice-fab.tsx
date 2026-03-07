@@ -58,8 +58,8 @@ export function GlobalVoiceFab() {
       setOpen(true);
       setStatus("idle");
     } catch (err: any) {
-      setStatus("error");
-      toast({ title: err?.name === "AbortError" ? "Timeout" : "Error", description: err?.message || "No se pudo interpretar", variant: "destructive" });
+      setStatus("idle");
+      toast({ title: err?.name === "AbortError" ? "Timeout de voz" : "No pudimos interpretar", description: err?.message || "No se pudo interpretar", variant: "destructive" });
     } finally {
       window.clearTimeout(timer);
     }
@@ -82,8 +82,8 @@ export function GlobalVoiceFab() {
       };
       recorder.start();
     } catch {
-      setStatus("error");
-      toast({ title: "Error", description: "No se pudo iniciar el micrófono", variant: "destructive" });
+      setStatus("idle");
+      toast({ title: "Micrófono no disponible", description: "No se pudo iniciar el micrófono", variant: "destructive" });
     }
   };
 

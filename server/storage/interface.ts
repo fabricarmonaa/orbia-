@@ -229,6 +229,7 @@ export interface IStorage {
     colors: Record<string, unknown>;
     texts: Record<string, unknown>;
     links: Record<string, unknown>;
+    trackingConfig: Record<string, unknown>;
     pdfConfig: Record<string, unknown>;
     updatedAt: Date;
   }>;

@@ -19,9 +19,10 @@ type OrderField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "NUMBER" | "FILE";
+  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
   required: boolean;
   visibleInTracking: boolean;
+  useInAgenda?: boolean;
   sortOrder: number;
   config?: { allowedExtensions?: string[] };
   isActive: boolean;
@@ -82,10 +83,12 @@ export function OrderPresetsSettings() {
   const [openEditField, setOpenEditField] = useState(false);
   const [createForm, setCreateForm] = useState({
     label: "",
-    fieldType: "TEXT" as "TEXT" | "NUMBER" | "FILE",
+    fieldType: "TEXT" as "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
     required: false,
     visibleInTracking: false,
+    useInAgenda: false,
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
+    selectOptions: ["Opción 1", "Opción 2"] as string[],
   });
   const [editTarget, setEditTarget] = useState<OrderField | null>(null);
   const [editForm, setEditForm] = useState({
@@ -93,6 +96,7 @@ export function OrderPresetsSettings() {
     required: false,
     isActive: true,
     visibleInTracking: false,
+    useInAgenda: false,
     allowedExtensions: [] as string[],
   });
 
@@ -228,16 +232,20 @@ export function OrderPresetsSettings() {
         fieldType: createForm.fieldType,
         required: createForm.required,
         visibleInTracking: createForm.visibleInTracking,
+        useInAgenda: (createForm as any).useInAgenda,
       };
       if (createForm.fieldType === "FILE") {
         payload.config = { allowedExtensions: createForm.allowedExtensions };
+      }
+      if (createForm.fieldType === "SELECT") {
+        payload.config = { options: (createForm as any).selectOptions.filter((x: string) => x.trim()) };
       }
       await apiJson(`/api/order-presets/presets/${activePresetId}/fields`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"] });
+      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: ["Opción 1", "Opción 2"] } as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -409,6 +417,7 @@ export function OrderPresetsSettings() {
                             required: f.required,
                             isActive: f.isActive,
                             visibleInTracking: f.visibleInTracking,
+                            useInAgenda: Boolean((f as any).useInAgenda),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
                           });
                           setOpenEditField(true);

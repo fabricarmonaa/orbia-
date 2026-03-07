@@ -77,6 +77,8 @@ export const orderFieldDefinitions = pgTable(
     isSystemDefault: boolean("is_system_default").notNull().default(false),
     // Etapa B: visibility in public tracking page
     visibleInTracking: boolean("visible_in_tracking").notNull().default(false),
+    // Etapa Agenda: si este campo alimenta eventos de agenda automáticamente
+    useInAgenda: boolean("use_in_agenda").notNull().default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -139,7 +141,7 @@ export type InsertOrderFieldDefinition = z.infer<typeof insertOrderFieldDefiniti
 export type OrderFieldDefinition = typeof orderFieldDefinitions.$inferSelect;
 export type OrderFieldDefinitionPublic = Pick<
   OrderFieldDefinition,
-  "id" | "fieldKey" | "label" | "fieldType" | "required" | "sortOrder" | "config" | "isSystemDefault" | "visibleInTracking" | "presetId"
+  "id" | "fieldKey" | "label" | "fieldType" | "required" | "sortOrder" | "config" | "isSystemDefault" | "visibleInTracking" | "useInAgenda" | "presetId"
 >;
 
 export const insertOrderFieldValueSchema = createInsertSchema(orderFieldValues).omit({

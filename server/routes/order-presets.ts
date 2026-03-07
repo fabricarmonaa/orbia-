@@ -31,11 +31,12 @@ const patchPresetSchema = z
 
 const createFieldSchema = z.object({
   label: z.string().trim().min(1).max(160),
-  fieldType: z.enum(["TEXT", "NUMBER", "FILE"]),
+  fieldType: z.enum(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"]),
   required: z.boolean().optional(),
   fieldKey: z.string().trim().min(1).max(80).optional(),
   config: z.record(z.any()).optional(),
   visibleInTracking: z.boolean().optional(),
+  useInAgenda: z.boolean().optional(),
 });
 
 const patchFieldSchema = z
@@ -45,6 +46,7 @@ const patchFieldSchema = z
     config: z.record(z.any()).optional(),
     isActive: z.boolean().optional(),
     visibleInTracking: z.boolean().optional(),
+    useInAgenda: z.boolean().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, { message: "Debe enviar al menos un campo" });
 

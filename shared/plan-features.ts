@@ -32,6 +32,8 @@ export const FEATURES = {
     MARGIN_PRICING: "margin_pricing",
     EXCEL_IMPORT: "excel_import",
     CUSTOM_TOS: "custom_tos",
+    AGENDA: "agenda",
+    NOTES: "notes",
 } as const;
 
 export type FeatureKey = typeof FEATURES[keyof typeof FEATURES];
@@ -84,6 +86,8 @@ export const PLAN_DEFAULTS: Record<string, {
             margin_pricing: false,
             excel_import: false,
             custom_tos: false,
+            agenda: false,
+            notes: false,
         },
         limits: {
             customers_max: 50,
@@ -121,6 +125,8 @@ export const PLAN_DEFAULTS: Record<string, {
             margin_pricing: true,
             excel_import: true,
             custom_tos: false,
+            agenda: true,
+            notes: true,
         },
         limits: {
             customers_max: 1000,
@@ -158,6 +164,8 @@ export const PLAN_DEFAULTS: Record<string, {
             margin_pricing: true,
             excel_import: true,
             custom_tos: true,
+            agenda: true,
+            notes: true,
         },
         limits: {
             customers_max: 5000,

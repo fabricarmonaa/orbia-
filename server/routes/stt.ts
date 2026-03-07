@@ -17,7 +17,7 @@ import { customers, products, sttInteractions, sttLogs } from "@shared/schema";
 import { sanitizeShortText } from "../security/sanitize";
 import { issueIntentTicket, consumeIntentTicket } from "../services/stt-intent-ticket";
 import { detectExfiltration, hasSearchFilters, resolveCustomerPurchasesIntent } from "../services/stt-policy";
-import { aiPostForm, AiClientError } from "../services/ai-client";
+import { aiPostForm, aiEnsureHealthy, getAiServiceUrl, AiClientError } from "../services/ai-client";
 import { getIdempotencyKey } from "../services/idempotency";
 import { STT_INTERACTION_STATUS } from "../utils/status-codes";
 import { requireBranchScopeForOperation } from "../services/branch-scope";
@@ -80,6 +80,28 @@ async function validateAudioMime(filePath: string) {
   return mime;
 }
 
+function sttErrorResponse(err: any, supportId: string) {
+  if (Number(err?.statusCode) === 415 || err?.message === "UNSUPPORTED_MEDIA_TYPE") {
+    return { status: 415, body: { ok: false, code: "STT_INVALID_PAYLOAD", message: "Formato de audio no soportado", supportId } };
+  }
+  if (err instanceof AiClientError) {
+    if (err.code === "AI_TIMEOUT") {
+      return { status: 504, body: { ok: false, code: "STT_TIMEOUT", message: "La IA tardó demasiado en responder. Reintentá en unos segundos.", supportId } };
+    }
+    if (err.code === "AI_UNAVAILABLE" || err.code === "AI_UNHEALTHY") {
+      return { status: 503, body: { ok: false, code: "STT_SERVICE_UNAVAILABLE", message: "El servicio de voz no está disponible en este momento.", supportId } };
+    }
+    if (err.code === "AI_BAD_RESPONSE") {
+      const status = Number((err as any)?.details?.status || 502);
+      if ([400, 413, 415, 422].includes(status)) {
+        return { status: 400, body: { ok: false, code: "STT_INVALID_PAYLOAD", message: "No pudimos procesar el audio o texto enviado.", supportId } };
+      }
+      return { status: 502, body: { ok: false, code: "STT_BAD_RESPONSE", message: "La IA devolvió una respuesta inválida. Reintentá.", supportId } };
+    }
+  }
+  return { status: 502, body: { ok: false, code: "STT_BAD_RESPONSE", message: "No se pudo completar la interpretación por voz.", supportId } };
+}
+
 async function callAiInterpret(payload: { text?: string; history: Array<{ transcript: string; intent: string; entities: Record<string, unknown> }>; requestId: string; file?: Express.Multer.File }) {
   const form = new FormData();
   if (payload.file?.path) {
@@ -102,6 +124,16 @@ async function callAiInterpret(payload: { text?: string; history: Array<{ transc
 }
 
 export function registerSttRoutes(app: Express) {
+  app.get("/api/stt/health", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), async (req, res) => {
+    try {
+      await aiEnsureHealthy(true);
+      return res.json({ ok: true, code: "STT_OK", aiServiceUrl: getAiServiceUrl() });
+    } catch (err: any) {
+      const mapped = sttErrorResponse(err, supportIdFromRequestId(String(req.requestId || crypto.randomUUID())));
+      return res.status(mapped.status).json({ ...mapped.body, aiServiceUrl: getAiServiceUrl() });
+    }
+  });
+
   app.post("/api/stt/interpret", tenantAuth, requireFeature("stt"), requirePlanCodes(["ESCALA"]), strictSttLimiter, uploadAudio, sttRateLimiter, sttConcurrencyGuard, validateSttPayload, async (req, res) => {
     const requestId = String(req.requestId || req.headers["x-request-id"] || crypto.randomUUID());
     const supportId = supportIdFromRequestId(requestId);
@@ -137,6 +169,7 @@ export function registerSttRoutes(app: Express) {
         idempotencyKey: interactionKey,
       });
 
+      await aiEnsureHealthy(false);
       const response = await callAiInterpret({
         file: req.file || undefined,
         text: transcript,
@@ -175,16 +208,8 @@ export function registerSttRoutes(app: Express) {
       if (interaction && interaction.status !== "SUCCESS") {
         await storage.updateSttInteractionResult(interaction.id, tenantId, { status: STT_INTERACTION_STATUS.FAILED, errorCode: err?.code || err?.message || "STT_UPSTREAM_ERROR" });
       }
-      if (Number(err?.statusCode) === 415 || err?.message === "UNSUPPORTED_MEDIA_TYPE") {
-        return res.status(415).json({ ok: false, code: "STT_UNSUPPORTED_MEDIA", message: "Formato de audio no soportado", supportId });
-      }
-      if (err instanceof AiClientError) {
-        if (err.code === "AI_TIMEOUT") return res.status(504).json({ ok: false, code: "STT_UPSTREAM_ERROR", message: "Servicio de IA no disponible", supportId });
-        const status = Number((err as any)?.details?.status || 502);
-        if (status === 400 || status === 413) return res.status(status).json({ ok: false, code: "STT_UPSTREAM_ERROR", message: "Audio inválido", supportId });
-        return res.status(502).json({ ok: false, code: "STT_UPSTREAM_ERROR", message: "Servicio de IA no disponible", supportId });
-      }
-      return res.status(500).json({ ok: false, code: "STT_UPSTREAM_ERROR", message: "Servicio de IA no disponible", supportId });
+      const mapped = sttErrorResponse(err, supportId);
+      return res.status(mapped.status).json(mapped.body);
     } finally {
       await cleanupTempFile(req.file?.path);
     }

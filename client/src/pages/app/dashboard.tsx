@@ -27,12 +27,16 @@ type DashboardSummary = {
   products: {
     count: number;
   };
+  agenda?: { today: Array<any>; upcoming: Array<any> };
+  notes?: { active: Array<any> };
 };
 
 const ZERO_SUMMARY: DashboardSummary = {
   orders: { openCount: 0, totalCount: 0, pendingCount: 0, inProgressCount: 0 },
   cash: { monthIncome: 0, monthExpense: 0, monthFixedExpense: 0, monthVariableExpense: 0, monthResult: 0 },
   products: { count: 0 },
+  agenda: { today: [], upcoming: [] },
+  notes: { active: [] },
 };
 
 export default function Dashboard() {
@@ -73,6 +77,8 @@ export default function Dashboard() {
               monthResult: Number(json.cash?.monthResult || 0),
             },
             products: { count: Number(json.products?.count || 0) },
+            agenda: { today: json.agenda?.today || [], upcoming: json.agenda?.upcoming || [] },
+            notes: { active: json.notes?.active || [] },
           });
         } else {
           setSummary(ZERO_SUMMARY);
@@ -220,6 +226,30 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <Card>
+          <CardHeader><CardTitle>Hoy en la agenda</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {(summary.agenda?.today || []).slice(0,4).map((ev: any) => <div key={`today-${ev.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{ev.title}</p><p className="text-xs text-muted-foreground">{new Date(ev.startsAt).toLocaleString("es-AR")}</p></div>)}
+            {(summary.agenda?.today || []).length === 0 && <p className="text-sm text-muted-foreground">Sin eventos para hoy.</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Próximos recordatorios</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {(summary.agenda?.upcoming || []).slice(0,5).map((ev: any) => <div key={`up-${ev.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{ev.title}</p><p className="text-xs text-muted-foreground">{new Date(ev.startsAt).toLocaleString("es-AR")}</p></div>)}
+            {(summary.agenda?.upcoming || []).length === 0 && <p className="text-sm text-muted-foreground">Sin próximos eventos.</p>}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader><CardTitle>Notas activas</CardTitle></CardHeader>
+          <CardContent className="space-y-2">
+            {(summary.notes?.active || []).slice(0,5).map((n: any) => <div key={`note-${n.id}`} className="text-sm border-b pb-2 last:border-0"><p className="font-medium">{n.title}</p>{n.remind_at ? <p className="text-xs text-muted-foreground">{new Date(n.remind_at).toLocaleString("es-AR")}</p> : null}</div>)}
+            {(summary.notes?.active || []).length === 0 && <p className="text-sm text-muted-foreground">Sin notas activas.</p>}
+          </CardContent>
+        </Card>
+      </div>
+
     </div>
   );
 }

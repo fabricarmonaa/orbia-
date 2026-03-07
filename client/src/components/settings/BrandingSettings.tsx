@@ -47,7 +47,7 @@ interface BrandingSettingsProps {
   minTrackingHours: number;
   maxTrackingHours: number;
   brandingForm: TenantBranding;
-  setBrandingForm: (value: TenantBranding) => void;
+  setBrandingForm: (value: TenantBranding | ((prev: TenantBranding) => TenantBranding)) => void;
   brandingSaving: boolean;
   brandingUploading: boolean;
   tenantLogoInputRef: React.RefObject<HTMLInputElement>;
@@ -82,6 +82,28 @@ export function BrandingSettings({
   const maxHours = maxTrackingHours > 0 ? maxTrackingHours : 24;
   const trackingPlanText = useMemo(() => `Tu plan permite entre ${minHours} y ${maxHours} horas.`, [minHours, maxHours]);
   const isEconomic = (planCode || "").toUpperCase() === "ECONOMICO";
+  const trackingFieldToggles = [
+    { key: "showLogo", label: "Mostrar logo" },
+    { key: "showBusinessName", label: "Mostrar nombre del negocio" },
+    { key: "showOrderNumber", label: "Mostrar número de pedido" },
+    { key: "showOrderType", label: "Mostrar tipo" },
+    { key: "showCustomerName", label: "Mostrar nombre del cliente" },
+    { key: "showCustomerPhone", label: "Mostrar teléfono del cliente" },
+    { key: "showDeliveryAddress", label: "Mostrar dirección de entrega" },
+    { key: "showCreatedAt", label: "Mostrar fecha de creación" },
+    { key: "showUpdatedAt", label: "Mostrar fecha de actualización" },
+    { key: "showScheduledAt", label: "Mostrar fecha/hora programada" },
+    { key: "showClosedAt", label: "Mostrar fecha de cierre" },
+    { key: "showCurrentStatus", label: "Mostrar estado actual" },
+    { key: "showStatusHistory", label: "Mostrar historial de estados" },
+    { key: "showPublicComments", label: "Mostrar notas públicas" },
+    { key: "showDynamicFields", label: "Mostrar campos dinámicos" },
+    { key: "showDynamicFieldUpdatedAt", label: "Mostrar 'Actualizado' en dinámicos" },
+    { key: "showTos", label: "Mostrar Términos y condiciones" },
+    { key: "showSocialLinks", label: "Mostrar links sociales" },
+    { key: "showPoweredBy", label: "Mostrar Powered by" },
+  ] as const;
+
 
   return (
     <>
@@ -436,6 +458,33 @@ export function BrandingSettings({
                   </div>
                 </div>
 
+                {/* Vista pública de seguimiento */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <Label>Vista pública de seguimiento</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Definí exactamente qué campos base se muestran en el link público.</p>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {trackingFieldToggles.map((item) => (
+                      <label key={item.key} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                        <span className="text-sm">{item.label}</span>
+                        <Switch
+                          checked={Boolean((brandingForm as any).trackingConfig?.[item.key])}
+                          onCheckedChange={(checked) =>
+                            setBrandingForm((prev) => ({
+                              ...prev,
+                              trackingConfig: { ...prev.trackingConfig, [item.key]: checked },
+                            }))
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Regla: si desactivás “estado actual” e “historial”, no se mostrará información de estados.
+                  </p>
+                </div>
+
                 {/* Save buttons */}
                 <div className="flex items-center gap-2">
                   <Button type="submit" disabled={brandingSaving}>
@@ -470,10 +519,10 @@ export function BrandingSettings({
                     variant="outline"
                     size="sm"
                     className="flex-1"
-                    onClick={() => window.open(`/tracking/preview`, "_blank")}
+                    onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
                   >
                     <ExternalLink className="w-4 h-4 mr-2" />
-                    Ver en nueva pestaña
+                    Ir a la vista previa
                   </Button>
                 </div>
               </div>

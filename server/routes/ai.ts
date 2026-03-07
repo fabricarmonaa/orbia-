@@ -38,7 +38,8 @@ export function registerAiRoutes(app: Express) {
       return res.json({ ok: true, upstream: getAiServiceUrl(), health });
     } catch (err) {
       const payload = aiErrorPayload(err);
-      return res.status(payload.code === "AI_TIMEOUT" ? 504 : 502).json(payload);
+      const status = payload.code === "AI_TIMEOUT" ? 504 : (payload.code === "AI_UNHEALTHY" || payload.code === "AI_UNAVAILABLE" ? 503 : 502);
+      return res.status(status).json(payload);
     }
   });
 
@@ -55,7 +56,8 @@ export function registerAiRoutes(app: Express) {
       return res.json({ ok: true, data: body });
     } catch (err) {
       const payload = aiErrorPayload(err);
-      return res.status(payload.code === "AI_TIMEOUT" ? 504 : 502).json(payload);
+      const status = payload.code === "AI_TIMEOUT" ? 504 : (payload.code === "AI_UNHEALTHY" || payload.code === "AI_UNAVAILABLE" ? 503 : 502);
+      return res.status(status).json(payload);
     } finally {
       if (req.file?.path) await fs.unlink(req.file.path).catch(() => undefined);
     }

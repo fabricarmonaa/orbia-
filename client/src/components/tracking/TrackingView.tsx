@@ -2,6 +2,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
+import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
 export interface TrackingOrderData {
   orderNumber: number;
@@ -11,29 +12,19 @@ export interface TrackingOrderData {
   statusLabel?: string | null;
   statusColor: string;
   customerName: string;
+  customerPhone?: string | null;
+  deliveryAddress?: string | null;
   createdAt: string;
+  updatedAt?: string | null;
   scheduledAt: string | null;
   closedAt: string | null;
-  history: Array<{
-    status: string;
-    color: string;
-    date: string;
-    note: string | null;
-  }>;
-  publicComments: Array<{
-    content: string;
-    date: string;
-  }>;
-  customFields?: Array<{
-    label: string;
-    value: string | null;
-    fieldType: string;
-    updatedAt?: string | null;
-    downloadUrl?: string | null;
-  }>;
+  history: Array<{ status: string; color: string; date: string; note: string | null }>;
+  publicComments: Array<{ content: string; date: string }>;
+  customFields?: Array<{ label: string; value: string | null; fieldType: string; updatedAt?: string | null; downloadUrl?: string | null }>;
   trackingLayout: string;
   trackingTosText?: string | null;
   tosUrl?: string | null;
+  trackingVisibility?: Partial<TrackingVisibilityConfig>;
 }
 
 interface TrackingViewProps {
@@ -45,7 +36,7 @@ interface TrackingViewProps {
   loading?: boolean;
 }
 
-function formatDate(d: string | null) {
+function formatDate(d: string | null | undefined) {
   if (!d) return "";
   return new Date(d).toLocaleDateString("es-AR", {
     day: "2-digit",
@@ -68,338 +59,134 @@ function getContrastText(hex: string) {
 function prettifyStatusCode(code?: string | null) {
   const normalized = String(code || "").trim();
   if (!normalized) return "";
-  return normalized
-    .toLowerCase()
-    .split("_")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  return normalized.toLowerCase().split("_").filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
 export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
   if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-md space-y-4">
-          <div className="h-8 w-48 mx-auto bg-muted rounded-md" />
-          <div className="h-48 w-full rounded-md bg-muted" />
-          <div className="h-32 w-full rounded-md bg-muted" />
-        </div>
-      </div>
-    );
+    return <div className="min-h-screen bg-background flex items-center justify-center p-4"><div className="w-full max-w-md space-y-4"><div className="h-8 w-48 mx-auto bg-muted rounded-md" /><div className="h-48 w-full rounded-md bg-muted" /><div className="h-32 w-full rounded-md bg-muted" /></div></div>;
   }
-
   if (error) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="text-center">
-          <AlertCircle className="w-16 h-16 mx-auto text-destructive mb-4" />
-          <h1 className="text-xl font-bold mb-2">No disponible</h1>
-          <p className="text-muted-foreground">{error}</p>
-        </div>
-      </div>
-    );
+    return <div className="min-h-screen bg-background flex items-center justify-center p-4"><div className="text-center"><AlertCircle className="w-16 h-16 mx-auto text-destructive mb-4" /><h1 className="text-xl font-bold mb-2">No disponible</h1><p className="text-muted-foreground">{error}</p></div></div>;
   }
 
+  const v = { ...DEFAULT_TRACKING_VISIBILITY, ...(branding.trackingConfig || {}), ...(order.trackingVisibility || {}) };
   const layout = order.trackingLayout || "classic";
   const renderedStatus = order.statusLabel || order.status || prettifyStatusCode(order.statusCode) || "Sin estado";
   const colors = branding.colors;
   const bgColor = colors.background || "#ffffff";
   const textColor = colors.text || getContrastText(bgColor);
-  const mutedText = getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.6)" : "rgba(0,0,0,0.5)";
+  const mutedText = getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.56)";
+
+  const infoItems = [
+    { show: v.showOrderType, label: "Tipo", value: order.type || "-" },
+    { show: v.showCustomerName, label: "Cliente", value: order.customerName || "-" },
+    { show: v.showCustomerPhone, label: "Teléfono", value: order.customerPhone || "-" },
+    { show: v.showDeliveryAddress, label: "Dirección", value: order.deliveryAddress || "-" },
+    { show: v.showCreatedAt, label: "Creado", value: formatDate(order.createdAt) || "-" },
+    { show: v.showUpdatedAt, label: "Actualizado", value: formatDate(order.updatedAt) || "-" },
+    { show: v.showScheduledAt && !!order.scheduledAt, label: "Programado", value: formatDate(order.scheduledAt) || "-" },
+    { show: v.showClosedAt && !!order.closedAt, label: "Cerrado", value: formatDate(order.closedAt) || "-" },
+  ].filter((x) => x.show);
 
   const headerSection = (
-    <div className="text-center py-4 rounded-md" style={{ backgroundColor: colors.trackingHeader }}>
-      {branding.logoUrl ? (
-        <img
-          src={branding.logoUrl}
-          alt={branding.displayName}
-          className="w-14 h-14 rounded-md object-cover mx-auto mb-3"
-          data-testid="img-tracking-logo"
-        />
-      ) : (
-        <div
-          className="inline-flex items-center justify-center w-12 h-12 rounded-md mb-3"
-          style={{ backgroundColor: colors.trackingButton }}
-        >
-          <PackageSearch className="w-6 h-6" style={{ color: getContrastText(colors.trackingButton) }} />
-        </div>
-      )}
-      <h1 className="text-lg font-bold tracking-tight" style={{ color: getContrastText(colors.trackingHeader) }}>
-        {branding.texts.trackingHeader || "Seguimiento"}
-      </h1>
-      {branding.displayName && (
-        <p className="text-sm" style={{ color: mutedText }}>{branding.displayName}</p>
-      )}
+    <div className="text-center py-5 rounded-xl" style={{ backgroundColor: colors.trackingHeader }}>
+      {v.showLogo && (branding.logoUrl ? <img src={branding.logoUrl} alt={branding.displayName} className="w-14 h-14 rounded-md object-cover mx-auto mb-3" data-testid="img-tracking-logo" /> : <div className="inline-flex items-center justify-center w-12 h-12 rounded-md mb-3" style={{ backgroundColor: colors.trackingButton }}><PackageSearch className="w-6 h-6" style={{ color: getContrastText(colors.trackingButton) }} /></div>)}
+      <h1 className="text-lg font-bold tracking-tight" style={{ color: getContrastText(colors.trackingHeader) }}>{branding.texts.trackingHeader || "Seguimiento"}</h1>
+      {v.showBusinessName && branding.displayName ? <p className="text-sm mt-1" style={{ color: mutedText }}>{branding.displayName}</p> : null}
     </div>
   );
 
   const orderInfoSection = (
     <Card style={{ borderColor: `${colors.primary}20` }}>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between gap-4 mb-4">
-          <div>
-            <p className="text-sm text-muted-foreground">Pedido</p>
-            <p className="text-xl font-bold" data-testid="text-tracking-order-number">
-              #{order.orderNumber}
-            </p>
+      <CardContent className="pt-6 space-y-5">
+        {(v.showOrderNumber || v.showCurrentStatus) && (
+          <div className="flex items-center justify-between gap-4">
+            {v.showOrderNumber ? <div><p className="text-sm text-muted-foreground">Pedido</p><p className="text-xl font-bold" data-testid="text-tracking-order-number">#{order.orderNumber}</p></div> : <span />}
+            {v.showCurrentStatus ? <Badge style={{ backgroundColor: order.statusColor || colors.trackingBadge, color: "#fff" }} className="text-sm" data-testid="badge-tracking-status">{renderedStatus}</Badge> : null}
           </div>
-          <Badge
-            style={{ backgroundColor: order.statusColor || colors.trackingBadge, color: "#fff" }}
-            className="text-sm"
-            data-testid="badge-tracking-status"
-          >
-            {renderedStatus}
-          </Badge>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-4 text-sm">
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Tipo</p>
-            <p className="font-medium">{order.type}</p>
-          </div>
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Cliente</p>
-            <p className="font-medium">{order.customerName || "-"}</p>
-          </div>
-          <div className="space-y-1">
-            <p className="text-muted-foreground">Creado</p>
-            <p className="font-medium">{formatDate(order.createdAt)}</p>
-          </div>
-          {order.closedAt && (
-            <div className="space-y-1">
-              <p className="text-muted-foreground">Cerrado</p>
-              <p className="font-medium">{formatDate(order.closedAt)}</p>
-            </div>
-          )}
-          {order.customFields?.map((field, idx) => (
-            <div key={idx} className="col-span-1 md:col-span-2 rounded-md border bg-muted/20 p-3 space-y-2">
-              <p className="text-muted-foreground">
-                {field.label}: <span className="font-medium text-foreground">{field.value || "-"}</span>
-              </p>
-              <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-                {field.downloadUrl ? (
-                  <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a>
-                ) : <span />}
-                <p className="text-xs text-muted-foreground/80">Actualizado: {formatDate(field.updatedAt || null) || "-"}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+        )}
 
-  const classicHistory = order.history.length > 0 && (
-    <Card>
-      <CardHeader className="pb-3">
-        <h3 className="font-semibold flex items-center gap-2">
-          <Clock className="w-4 h-4" />
-          Historial
-        </h3>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {order.history.map((h, i) => (
-            <div key={i} className="flex gap-3">
-              <div className="flex flex-col items-center">
-                <div
-                  className="w-3 h-3 rounded-full flex-shrink-0 mt-1"
-                  style={{ backgroundColor: h.color }}
-                />
-                {i < order.history.length - 1 && (
-                  <div className="w-px flex-1 bg-border mt-1" />
-                )}
+        {infoItems.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5 text-sm">
+            {infoItems.map((item) => (
+              <div key={item.label} className="space-y-1.5">
+                <p className="text-muted-foreground">{item.label}</p>
+                <p className="font-medium break-words">{item.value}</p>
               </div>
-              <div className="pb-4">
-                <p className="text-sm font-medium">{h.status}</p>
-                <p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>
-                {h.note && (
-                  <p className="text-sm text-muted-foreground mt-1">{h.note}</p>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
+            ))}
+          </div>
+        ) : null}
 
-  const cardsHistory = order.history.length > 0 && (
-    <div>
-      <h3 className="font-semibold flex items-center gap-2 mb-3">
-        <Clock className="w-4 h-4" />
-        Historial
-      </h3>
-      <div className="grid grid-cols-2 gap-3">
-        {order.history.map((h, i) => (
-          <Card key={i} style={{ borderLeftColor: h.color, borderLeftWidth: "3px" }}>
-            <CardContent className="p-3">
-              <p className="text-sm font-medium">{h.status}</p>
-              <p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>
-              {h.note && <p className="text-xs text-muted-foreground mt-1">{h.note}</p>}
-            </CardContent>
-          </Card>
-        ))}
-      </div>
-    </div>
-  );
-
-  const stepperHistory = order.history.length > 0 && (
-    <Card>
-      <CardHeader className="pb-3">
-        <h3 className="font-semibold flex items-center gap-2">
-          <Clock className="w-4 h-4" />
-          Historial
-        </h3>
-      </CardHeader>
-      <CardContent>
-        <div className="flex items-center gap-1 overflow-x-auto pb-2">
-          {order.history.map((h, i) => (
-            <div key={i} className="flex items-center flex-shrink-0">
-              <div className="flex flex-col items-center">
-                <div
-                  className="w-8 h-8 rounded-full flex items-center justify-center"
-                  style={{ backgroundColor: h.color }}
-                >
-                  <CheckCircle2 className="w-4 h-4 text-white" />
+        {v.showDynamicFields && order.customFields && order.customFields.length > 0 ? (
+          <div className="pt-2 space-y-3">
+            <p className="text-sm font-semibold">Datos adicionales</p>
+            {order.customFields.map((field, idx) => (
+              <div key={`${field.label}-${idx}`} className="rounded-lg border bg-muted/20 p-3.5 space-y-2.5">
+                <p className="text-xs uppercase tracking-wide text-muted-foreground">{field.label}</p>
+                <p className="font-medium break-words">{field.value || "-"}</p>
+                <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
+                  {field.downloadUrl ? <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a> : <span />}
+                  {v.showDynamicFieldUpdatedAt ? <p className="text-xs text-muted-foreground/80">Actualizado: {formatDate(field.updatedAt) || "-"}</p> : null}
                 </div>
-                <p className="text-xs font-medium mt-1 text-center max-w-[80px] truncate">{h.status}</p>
-                <p className="text-xs text-muted-foreground">{formatDate(h.date).split(",")[0]}</p>
               </div>
-              {i < order.history.length - 1 && (
-                <ArrowRight className="w-4 h-4 text-muted-foreground mx-1 flex-shrink-0" />
-              )}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   );
 
-  const minimalHistory = order.history.length > 0 && (
-    <div className="space-y-2">
-      {order.history.map((h, i) => (
-        <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-          <div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: h.color }} />
-          <span className="text-sm font-medium flex-1">{h.status}</span>
-          <span className="text-xs text-muted-foreground">{formatDate(h.date)}</span>
-        </div>
-      ))}
-    </div>
-  );
-
-  const historySection = layout === "cards" ? cardsHistory
-    : layout === "stepper" ? stepperHistory
-      : layout === "minimal" ? minimalHistory
-        : classicHistory;
-
-  const commentsSection = order.publicComments.length > 0 && (
+  const classicHistory = v.showStatusHistory && order.history.length > 0 && (
     <Card>
-      <CardHeader className="pb-3">
-        <h3 className="font-semibold">Notas</h3>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-3">
-          {order.publicComments.map((c, i) => (
-            <div key={i} className="p-3 rounded-md bg-muted/50">
-              <p className="text-sm">{c.content}</p>
-              <p className="text-xs text-muted-foreground mt-1">{formatDate(c.date)}</p>
-            </div>
-          ))}
-        </div>
-      </CardContent>
+      <CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader>
+      <CardContent><div className="space-y-4">{order.history.map((h, i) => <div key={i} className="flex gap-3"><div className="flex flex-col items-center"><div className="w-3 h-3 rounded-full flex-shrink-0 mt-1" style={{ backgroundColor: h.color }} />{i < order.history.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}</div><div className="pb-4"><p className="text-sm font-medium">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>{h.note && <p className="text-sm text-muted-foreground mt-1">{h.note}</p>}</div></div>)}</div></CardContent>
     </Card>
   );
 
-  const hasLinks = branding.links?.instagram || branding.links?.whatsapp || branding.links?.web;
+  const cardsHistory = v.showStatusHistory && order.history.length > 0 && (
+    <div><h3 className="font-semibold flex items-center gap-2 mb-3"><Clock className="w-4 h-4" />Historial</h3><div className="grid grid-cols-2 gap-3">{order.history.map((h, i) => <Card key={i} style={{ borderLeftColor: h.color, borderLeftWidth: "3px" }}><CardContent className="p-3"><p className="text-sm font-medium">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>{h.note && <p className="text-xs text-muted-foreground mt-1">{h.note}</p>}</CardContent></Card>)}</div></div>
+  );
+
+  const stepperHistory = v.showStatusHistory && order.history.length > 0 && (
+    <Card><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="flex items-center gap-1 overflow-x-auto pb-2">{order.history.map((h, i) => <div key={i} className="flex items-center flex-shrink-0"><div className="flex flex-col items-center"><div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: h.color }}><CheckCircle2 className="w-4 h-4 text-white" /></div><p className="text-xs font-medium mt-1 text-center max-w-[80px] truncate">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date).split(",")[0]}</p></div>{i < order.history.length - 1 && <ArrowRight className="w-4 h-4 text-muted-foreground mx-1 flex-shrink-0" />}</div>)}</div></CardContent></Card>
+  );
+
+  const minimalHistory = v.showStatusHistory && order.history.length > 0 && (
+    <div className="space-y-2">{order.history.map((h, i) => <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}><div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: h.color }} /><span className="text-sm font-medium flex-1">{h.status}</span><span className="text-xs text-muted-foreground">{formatDate(h.date)}</span></div>)}</div>
+  );
+
+  const historySection = layout === "cards" ? cardsHistory : layout === "stepper" ? stepperHistory : layout === "minimal" ? minimalHistory : classicHistory;
+
+  const commentsSection = v.showPublicComments && order.publicComments.length > 0 && (
+    <Card><CardHeader className="pb-3"><h3 className="font-semibold">Notas</h3></CardHeader><CardContent><div className="space-y-3">{order.publicComments.map((c, i) => <div key={i} className="p-3 rounded-md bg-muted/50"><p className="text-sm">{c.content}</p><p className="text-xs text-muted-foreground mt-1">{formatDate(c.date)}</p></div>)}</div></CardContent></Card>
+  );
+
+  const hasLinks = v.showSocialLinks && (branding.links?.instagram || branding.links?.whatsapp || branding.links?.web);
   const socialLinksSection = hasLinks && (
     <div className="flex justify-center items-center gap-4 py-2">
-      {branding.links.instagram && (
-        <a
-          href={branding.links.instagram}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="p-2 rounded-full transition-opacity hover:opacity-80"
-          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
-          title="Instagram"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-            <path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zM12 0C8.741 0 8.333.014 7.053.072 2.695.272.273 2.69.073 7.052.014 8.333 0 8.741 0 12c0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98C8.333 23.986 8.741 24 12 24c3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98C15.668.014 15.259 0 12 0zm0 5.838a6.162 6.162 0 100 12.324 6.162 6.162 0 000-12.324zM12 16a4 4 0 110-8 4 4 0 010 8zm6.406-11.845a1.44 1.44 0 100 2.881 1.44 1.44 0 000-2.881z" />
-          </svg>
-        </a>
-      )}
-      {branding.links.whatsapp && (
-        <a
-          href={branding.links.whatsapp}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="p-2 rounded-full transition-opacity hover:opacity-80"
-          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
-          title="WhatsApp"
-        >
-          <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
-            <path d="M11.99 2A10 10 0 1 0 22 12 10 10 0 0 0 11.99 2zM12 20.35a8.38 8.38 0 0 1-4.27-1.16L3.4 20l1.1-4.14A8.34 8.34 0 0 1 3.65 12a8.35 8.35 0 1 1 8.35 8.35zm4.61-5.65c-.25-.13-1.49-.74-1.72-.82-.23-.08-.4-.13-.57.12-.17.26-.64.82-.79 1-.15.17-.3.2-.55.07A6.87 6.87 0 0 1 10 12.63c-.4-.68-.04-1.05.2-1.53.08-.17.18-.32.26-.48.09-.16.04-.3-.01-.43-.05-.13-.57-1.38-.79-1.89-.2-.5-.42-.43-.57-.44h-.48c-.17 0-.46.06-.7.31-.24.26-.92.9-9.2 2.22s1.42 2.75 1.61 3.01c.21.28 1.94 2.97 4.71 4.14 2 1.04 2.88 1.13 3.93 1.05.9-.06 2.06-.82 2.37-1.63.31-.8.31-1.49.22-1.63-.1-.14-.36-.2-.61-.31z" />
-          </svg>
-        </a>
-      )}
-      {branding.links.web && (
-        <a
-          href={branding.links.web}
-          target="_blank"
-          rel="noreferrer noopener"
-          className="p-2 rounded-full transition-opacity hover:opacity-80 flex items-center justify-center gap-1.5"
-          style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }}
-          title="Sitio Web"
-        >
-          <Globe className="w-5 h-5" />
-        </a>
-      )}
+      {branding.links.instagram && <a href={branding.links.instagram} target="_blank" rel="noreferrer noopener" className="p-2 rounded-full transition-opacity hover:opacity-80" style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }} title="Instagram"><svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2zm8.37 1.5H7.88A4.38 4.38 0 0 0 3.5 7.88v8.24A4.38 4.38 0 0 0 7.88 20.5h8.24A4.38 4.38 0 0 0 20.5 16.12V7.88A4.38 4.38 0 0 0 16.12 3.5zM12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10zm0 1.5A3.5 3.5 0 1 0 12 15.5 3.5 3.5 0 0 0 12 8.5zm5.25-1.9a1.15 1.15 0 1 1 0 2.3 1.15 1.15 0 0 1 0-2.3z" /></svg></a>}
+      {branding.links.whatsapp && <a href={branding.links.whatsapp} target="_blank" rel="noreferrer noopener" className="p-2 rounded-full transition-opacity hover:opacity-80" style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }} title="WhatsApp"><svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M11.99 2A10 10 0 1 0 22 12 10 10 0 0 0 11.99 2zM12 20.35a8.38 8.38 0 0 1-4.27-1.16L3.4 20l1.1-4.14A8.34 8.34 0 0 1 3.65 12a8.35 8.35 0 1 1 8.35 8.35z" /></svg></a>}
+      {branding.links.web && <a href={branding.links.web} target="_blank" rel="noreferrer noopener" className="p-2 rounded-full transition-opacity hover:opacity-80 flex items-center justify-center gap-1.5" style={{ backgroundColor: `${colors.primary}15`, color: colors.primary }} title="Sitio Web"><Globe className="w-5 h-5" /></a>}
     </div>
   );
 
-  // Objective C: show ToS as a link button to the separate TOS page;
-  // fallback to inline text for tenants without a slug
-  const tosSection = (() => {
-    if (order.tosUrl) {
-      return (
-        <div className="flex justify-center pt-1">
-          <a
-            href={order.tosUrl}
-            target="_blank"
-            rel="noreferrer noopener"
-            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-opacity hover:opacity-80"
-            style={{ borderColor: `${colors.primary}40`, color: mutedText }}
-            data-testid="link-tracking-tos"
-          >
-            <span>T&amp;érminos y condiciones</span>
-          </a>
-        </div>
-      );
-    }
-    if (order.trackingTosText) {
-      return (
-        <div className="text-xs p-3 rounded-md" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>
-          {order.trackingTosText}
-        </div>
-      );
-    }
+  const tosSection = v.showTos ? (() => {
+    if (order.tosUrl) return <div className="flex justify-center pt-1"><a href={order.tosUrl} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-opacity hover:opacity-80" style={{ borderColor: `${colors.primary}40`, color: mutedText }} data-testid="link-tracking-tos"><span>Términos y condiciones</span></a></div>;
+    if (order.trackingTosText) return <div className="text-xs p-3 rounded-md" style={{ backgroundColor: `${colors.primary}10`, color: mutedText }}>{order.trackingTosText}</div>;
     return null;
-  })();
+  })() : null;
 
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
-      <div className="max-w-md mx-auto space-y-4">
+      <div className="max-w-xl mx-auto space-y-5">
         {headerSection}
         {orderInfoSection}
         {historySection}
         {commentsSection}
         {socialLinksSection}
         {tosSection}
-        {mode === "public" && (
-          <p className="text-center text-xs py-4" style={{ color: mutedText }}>
-            Powered by {appName || "ORBIA"}
-          </p>
-        )}
+        {mode === "public" && v.showPoweredBy && <p className="text-center text-xs py-4" style={{ color: mutedText }}>Powered by {appName || "ORBIA"}</p>}
       </div>
     </div>
   );
