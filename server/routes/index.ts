@@ -33,6 +33,7 @@ import { registerAnalyticsRoutes } from "./analytics";
 import { registerProviderRoutes } from "./providers";
 import { registerAgendaRoutes } from "./agenda";
 import { registerNotesRoutes } from "./notes";
+import { registerWhatsappRoutes } from "./whatsapp";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
   app.get("/health", (_req, res) => {
@@ -72,5 +73,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerProviderRoutes(app);
   registerAgendaRoutes(app);
   registerNotesRoutes(app);
+  registerWhatsappRoutes(app);
   return httpServer;
 }

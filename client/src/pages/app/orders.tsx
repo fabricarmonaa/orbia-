@@ -443,6 +443,10 @@ export default function OrdersPage() {
       }
       const text = data.renderedText || "";
       setRenderedMessage(text);
+      const sendMode = data.sendMode || "wa_me_fallback";
+      if (sendMode === "official_api_ready") {
+        toast({ title: "Canal API activo", description: "Usando fallback wa.me en esta fase." });
+      }
       openWhatsApp(data.normalizedPhone, text);
     } catch (err: any) {
       toast({ title: "Error enviando mensaje", description: err.message, variant: "destructive" });

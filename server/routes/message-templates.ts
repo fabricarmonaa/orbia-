@@ -6,6 +6,7 @@ import { db } from "../db";
 import { messageTemplates } from "@shared/schema";
 import { storage } from "../storage";
 import { normalizePhoneE164, renderTemplate } from "../lib/messaging";
+import { getTenantChannel } from "../services/whatsapp-service";
 
 const createTemplateSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -70,8 +71,10 @@ export function registerMessageTemplateRoutes(app: Express) {
         : and(eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt), eq(messageTemplates.isActive, true));
       const data = await db.select().from(messageTemplates).where(where).orderBy(desc(messageTemplates.updatedAt));
       const config = await storage.getConfig(tenantId);
+      const channel = await getTenantChannel(tenantId);
       const defaultCountry = String((config?.configJson as any)?.defaultCountry || "AR");
-      res.json({ data, defaultCountry });
+      const sendMode = channel?.isActive ? "official_api_ready" : "wa_me_fallback";
+      res.json({ data, defaultCountry, sendMode });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
@@ -152,9 +155,11 @@ export function registerMessageTemplateRoutes(app: Express) {
       const { templateBody, orderId } = renderSchema.parse(req.body || {});
       const { context, order, config } = await buildContext(tenantId, orderId);
       const renderedText = renderTemplate(templateBody, context);
+      const channel = await getTenantChannel(tenantId);
       const defaultCountry = String((config?.configJson as any)?.defaultCountry || "AR");
       const normalizedPhone = normalizePhoneE164(order?.customerPhone || "", defaultCountry);
-      res.json({ renderedText, normalizedPhone, context });
+      const sendMode = channel?.isActive ? "official_api_ready" : "wa_me_fallback";
+      res.json({ renderedText, normalizedPhone, context, sendMode });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", details: err.errors });
