@@ -2,6 +2,7 @@ import { boolean, index, integer, jsonb, pgTable, serial, text, timestamp, uniqu
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { branches } from "./branches";
+import { customers } from "./customers";
 import { tenants } from "./tenants";
 import { users } from "./users";
 
@@ -33,10 +34,20 @@ export const whatsappConversations = pgTable("whatsapp_conversations", {
   tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
   branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
   channelId: integer("channel_id").notNull().references(() => tenantWhatsappChannels.id, { onDelete: "cascade" }),
-  customerId: integer("customer_id"),
+  customerId: integer("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  customerMatchConfidence: integer("customer_match_confidence"),
+  linkedManuallyByUserId: integer("linked_manually_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  linkedAt: timestamp("linked_at"),
   customerPhone: varchar("customer_phone", { length: 40 }).notNull(),
   customerName: varchar("customer_name", { length: 200 }),
-  status: varchar("status", { length: 20 }).notNull().default("OPEN"),
+  status: varchar("status", { length: 30 }).notNull().default("OPEN"),
+  ownerMode: varchar("owner_mode", { length: 20 }).notNull().default("human"),
+  handoffStatus: varchar("handoff_status", { length: 20 }).notNull().default("none"),
+  automationEnabled: boolean("automation_enabled").notNull().default(false),
+  automationPausedReason: text("automation_paused_reason"),
+  assignedAt: timestamp("assigned_at"),
+  lastHumanInterventionAt: timestamp("last_human_intervention_at"),
+  hasHumanIntervention: boolean("has_human_intervention").notNull().default(false),
   assignedUserId: integer("assigned_user_id").references(() => users.id, { onDelete: "set null" }),
   unreadCount: integer("unread_count").notNull().default(0),
   lastInboundAt: timestamp("last_inbound_at"),
@@ -92,10 +103,29 @@ export const whatsappWebhookEvents = pgTable("whatsapp_webhook_events", {
   index("idx_whatsapp_webhook_events_created_at").on(table.createdAt),
 ]);
 
+export const whatsappConversationEvents = pgTable("whatsapp_conversation_events", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  branchId: integer("branch_id").references(() => branches.id, { onDelete: "set null" }),
+  channelId: integer("channel_id").references(() => tenantWhatsappChannels.id, { onDelete: "set null" }),
+  conversationId: integer("conversation_id").notNull().references(() => whatsappConversations.id, { onDelete: "cascade" }),
+  messageId: integer("message_id").references(() => whatsappMessages.id, { onDelete: "set null" }),
+  customerId: integer("customer_id").references(() => customers.id, { onDelete: "set null" }),
+  actorUserId: integer("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  eventType: varchar("event_type", { length: 80 }).notNull(),
+  payloadJson: jsonb("payload_json").notNull().default({}),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  index("idx_whatsapp_conversation_events_conversation").on(table.conversationId, table.createdAt),
+  index("idx_whatsapp_conversation_events_tenant").on(table.tenantId, table.createdAt),
+  index("idx_whatsapp_conversation_events_type").on(table.eventType),
+]);
+
 export const insertTenantWhatsappChannelSchema = createInsertSchema(tenantWhatsappChannels).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappConversationSchema = createInsertSchema(whatsappConversations).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappMessageSchema = createInsertSchema(whatsappMessages).omit({ id: true, createdAt: true });
 export const insertWhatsappWebhookEventSchema = createInsertSchema(whatsappWebhookEvents).omit({ id: true, createdAt: true });
+export const insertWhatsappConversationEventSchema = createInsertSchema(whatsappConversationEvents).omit({ id: true, createdAt: true });
 
 export type TenantWhatsappChannel = typeof tenantWhatsappChannels.$inferSelect;
 export type InsertTenantWhatsappChannel = z.infer<typeof insertTenantWhatsappChannelSchema>;
@@ -105,3 +135,5 @@ export type WhatsappMessage = typeof whatsappMessages.$inferSelect;
 export type InsertWhatsappMessage = z.infer<typeof insertWhatsappMessageSchema>;
 export type WhatsappWebhookEvent = typeof whatsappWebhookEvents.$inferSelect;
 export type InsertWhatsappWebhookEvent = z.infer<typeof insertWhatsappWebhookEventSchema>;
+export type WhatsappConversationEvent = typeof whatsappConversationEvents.$inferSelect;
+export type InsertWhatsappConversationEvent = z.infer<typeof insertWhatsappConversationEventSchema>;

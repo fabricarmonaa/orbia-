@@ -5,7 +5,9 @@ import {
   whatsappConversations,
   whatsappMessages,
   whatsappWebhookEvents,
+  whatsappConversationEvents,
   messageTemplates,
+  customers,
   type TenantWhatsappChannel,
 } from "@shared/schema";
 import { db } from "../db";
@@ -20,6 +22,69 @@ function isWhatsappDebugEnabled() {
 function waLog(...args: unknown[]) {
   if (!isWhatsappDebugEnabled()) return;
   console.log("[WA]", ...args);
+}
+
+
+const TEMPLATE_USAGE_TYPES = [
+  "greeting",
+  "follow_up",
+  "reengagement",
+  "confirmation",
+  "reminder",
+  "quote_or_budget",
+  "handoff_human",
+  "error_fallback",
+  "closing",
+  "custom",
+] as const;
+
+type TemplateUsageType = typeof TEMPLATE_USAGE_TYPES[number];
+
+const CONVERSATION_STATUS_ALLOWED = [
+  "OPEN",
+  "PENDING_CUSTOMER",
+  "PENDING_BUSINESS",
+  "WAITING_INTERNAL",
+  "RESOLVED",
+  "CLOSED",
+] as const;
+
+export type ConversationOperationalStatus = typeof CONVERSATION_STATUS_ALLOWED[number];
+
+export const CONVERSATION_OWNER_MODES = ["human", "assisted", "auto"] as const;
+export type ConversationOwnerMode = typeof CONVERSATION_OWNER_MODES[number];
+
+export const CONVERSATION_HANDOFF_STATUSES = ["none", "requested", "active", "completed"] as const;
+export type ConversationHandoffStatus = typeof CONVERSATION_HANDOFF_STATUSES[number];
+
+function normalizeTemplateUsageType(raw?: string | null): TemplateUsageType {
+  const value = String(raw || "").trim().toLowerCase();
+  const mapping: Record<string, TemplateUsageType> = {
+    general: "custom",
+    greeting: "greeting",
+    reengagement: "reengagement",
+    fallback: "error_fallback",
+    human_handoff: "handoff_human",
+    confirmation: "confirmation",
+    order_followup: "follow_up",
+  };
+  if ((TEMPLATE_USAGE_TYPES as readonly string[]).includes(value)) return value as TemplateUsageType;
+  if (mapping[value]) return mapping[value];
+  return "custom";
+}
+
+function inferTemplateUsageType(key?: string | null, body?: string | null): TemplateUsageType {
+  const source = `${String(key || "")} ${String(body || "")}`.toLowerCase();
+  if (source.includes("saludo") || source.includes("hola") || source.includes("greeting")) return "greeting";
+  if (source.includes("seguimiento") || source.includes("follow")) return "follow_up";
+  if (source.includes("reengagement") || source.includes("reenganche")) return "reengagement";
+  if (source.includes("confirm")) return "confirmation";
+  if (source.includes("recordatorio") || source.includes("reminder")) return "reminder";
+  if (source.includes("presupuesto") || source.includes("quote") || source.includes("budget")) return "quote_or_budget";
+  if (source.includes("humano") || source.includes("handoff") || source.includes("asesor")) return "handoff_human";
+  if (source.includes("error") || source.includes("fallback")) return "error_fallback";
+  if (source.includes("cierre") || source.includes("closing")) return "closing";
+  return "custom";
 }
 
 
@@ -257,6 +322,47 @@ export async function verifyMetaWebhookChallenge(mode?: string, verifyToken?: st
   return { challenge, channel: matched };
 }
 
+export async function persistConversationDomainEvent(input: {
+  tenantId: number;
+  branchId?: number | null;
+  channelId?: number | null;
+  conversationId: number;
+  messageId?: number | null;
+  customerId?: number | null;
+  actorUserId?: number | null;
+  eventType: string;
+  payload?: unknown;
+}) {
+  const [saved] = await db
+    .insert(whatsappConversationEvents)
+    .values({
+      tenantId: input.tenantId,
+      branchId: input.branchId || null,
+      channelId: input.channelId || null,
+      conversationId: input.conversationId,
+      messageId: input.messageId || null,
+      customerId: input.customerId || null,
+      actorUserId: input.actorUserId || null,
+      eventType: input.eventType,
+      payloadJson: input.payload || {},
+    })
+    .returning();
+  return saved;
+}
+
+export async function listConversationTimeline(tenantId: number, conversationId: number, branchId?: number | null) {
+  const conditions = [
+    eq(whatsappConversationEvents.tenantId, tenantId),
+    eq(whatsappConversationEvents.conversationId, conversationId),
+  ];
+  if (branchId) conditions.push(eq(whatsappConversationEvents.branchId, branchId));
+  return db
+    .select()
+    .from(whatsappConversationEvents)
+    .where(and(...conditions))
+    .orderBy(desc(whatsappConversationEvents.createdAt));
+}
+
 export async function persistWebhookEvent(event: {
   tenantId?: number | null;
   channelId?: number | null;
@@ -306,15 +412,27 @@ export async function findOrCreateConversation(input: {
 
   if (found) return { conversation: found, created: false as const };
 
+  const customerRows = await db
+    .select()
+    .from(customers)
+    .where(eq(customers.tenantId, input.tenantId))
+    .limit(2000);
+  const matchedCustomer = customerRows.find((row) => normalizeWhatsAppRecipientForMeta(row.phone || "") === normalizeWhatsAppRecipientForMeta(customerPhone)) || null;
+
   const [created] = await db
     .insert(whatsappConversations)
     .values({
       tenantId: input.tenantId,
       branchId: input.branchId || null,
       channelId: input.channelId,
+      customerId: matchedCustomer?.id || null,
+      customerMatchConfidence: matchedCustomer ? 100 : null,
+      linkedAt: matchedCustomer ? new Date() : null,
       customerPhone,
-      customerName: input.customerName || null,
+      customerName: input.customerName || matchedCustomer?.name || null,
       status: "OPEN",
+      ownerMode: "human",
+      handoffStatus: "none",
       unreadCount: 0,
       lastMessageAt: new Date(),
     })
@@ -395,7 +513,7 @@ export async function createOutboundMessage(input: {
 
   await db
     .update(whatsappConversations)
-    .set({ lastOutboundAt: now, lastMessageAt: now, updatedAt: now })
+    .set({ lastOutboundAt: now, lastMessageAt: now, hasHumanIntervention: true, lastHumanInterventionAt: now, updatedAt: now })
     .where(eq(whatsappConversations.id, input.conversationId));
 
   return msg;
@@ -454,6 +572,15 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             conversationId: conversation.id,
             changedFields: ["status", "lastMessageAt"],
           });
+          await persistConversationDomainEvent({
+            tenantId: channel.tenantId,
+            branchId: channel.branchId,
+            channelId: channel.id,
+            conversationId: conversation.id,
+            customerId: conversation.customerId,
+            eventType: "whatsapp.conversation.created",
+            payload: { source: "webhook_inbound" },
+          });
         }
 
         if (messageType === "TEXT") {
@@ -479,6 +606,16 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             tenantId: channel.tenantId,
             conversationId: conversation.id,
             changedFields: ["unreadCount", "lastMessageAt", "lastInboundAt"],
+          });
+          await persistConversationDomainEvent({
+            tenantId: channel.tenantId,
+            branchId: channel.branchId,
+            channelId: channel.id,
+            conversationId: conversation.id,
+            messageId: inboundMessage.id,
+            customerId: conversation.customerId,
+            eventType: "whatsapp.message.inbound",
+            payload: { providerMessageId: inboundMessage.providerMessageId, messageType: inboundMessage.messageType },
           });
         }
 
@@ -537,6 +674,15 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             messageId: statusMessageId,
             changedFields: ["status"],
           });
+          await persistConversationDomainEvent({
+            tenantId: channel.tenantId,
+            branchId: channel.branchId,
+            channelId: channel.id,
+            conversationId: statusConversationId,
+            messageId: statusMessageId,
+            eventType: "whatsapp.message.status_updated",
+            payload: { status: statusMap[status] || "QUEUED", providerMessageId },
+          });
         }
 
         waLog("status_webhook", { status, providerMessageId, code, details, channelId: channel.id, tenantId: channel.tenantId });
@@ -559,6 +705,14 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
   return { processed };
 }
 
+
+
+function normalizeConversationStatus(raw: string): ConversationOperationalStatus {
+  const value = String(raw || "").trim().toUpperCase();
+  if ((CONVERSATION_STATUS_ALLOWED as readonly string[]).includes(value)) return value as ConversationOperationalStatus;
+  if (value === "HUMAN" || value === "BOT") return "PENDING_BUSINESS";
+  return "OPEN";
+}
 
 export async function getConversationByIdScoped(tenantId: number, conversationId: number, branchId?: number | null) {
   const whereClause = branchId
@@ -585,14 +739,23 @@ export async function markConversationAsRead(tenantId: number, conversationId: n
       conversationId,
       changedFields: ["unreadCount"],
     });
+    await persistConversationDomainEvent({
+      tenantId,
+      branchId: saved.branchId,
+      channelId: saved.channelId,
+      conversationId,
+      customerId: saved.customerId,
+      eventType: "whatsapp.conversation.read",
+      payload: { unreadCount: 0 },
+    });
   }
   return saved || null;
 }
 
-export async function updateConversationStatus(tenantId: number, conversationId: number, status: "OPEN" | "HUMAN" | "BOT" | "CLOSED") {
+export async function updateConversationStatus(tenantId: number, conversationId: number, status: ConversationOperationalStatus) {
   const [saved] = await db
     .update(whatsappConversations)
-    .set({ status, updatedAt: new Date() })
+    .set({ status: normalizeConversationStatus(status), updatedAt: new Date() })
     .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
     .returning();
   if (saved) {
@@ -602,6 +765,15 @@ export async function updateConversationStatus(tenantId: number, conversationId:
       conversationId,
       changedFields: ["status"],
     });
+    await persistConversationDomainEvent({
+      tenantId,
+      branchId: saved.branchId,
+      channelId: saved.channelId,
+      conversationId,
+      customerId: saved.customerId,
+      eventType: "whatsapp.conversation.status_changed",
+      payload: { status: saved.status },
+    });
   }
   return saved || null;
 }
@@ -609,7 +781,7 @@ export async function updateConversationStatus(tenantId: number, conversationId:
 export async function assignConversationToUser(tenantId: number, conversationId: number, assignedUserId: number | null) {
   const [saved] = await db
     .update(whatsappConversations)
-    .set({ assignedUserId, updatedAt: new Date() })
+    .set({ assignedUserId, assignedAt: assignedUserId ? new Date() : null, updatedAt: new Date() })
     .where(and(eq(whatsappConversations.tenantId, tenantId), eq(whatsappConversations.id, conversationId)))
     .returning();
   if (saved) {
@@ -618,6 +790,15 @@ export async function assignConversationToUser(tenantId: number, conversationId:
       tenantId,
       conversationId,
       changedFields: ["assignedUserId"],
+    });
+    await persistConversationDomainEvent({
+      tenantId,
+      branchId: saved.branchId,
+      channelId: saved.channelId,
+      conversationId,
+      customerId: saved.customerId,
+      eventType: "whatsapp.conversation.assigned",
+      payload: { assignedUserId: saved.assignedUserId },
     });
   }
   return saved || null;
@@ -723,6 +904,17 @@ export async function sendConversationWhatsAppMessage(input: {
     conversationId: conversation.id,
     changedFields: ["lastOutboundAt", "lastMessageAt"],
   });
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: conversation.branchId,
+    channelId: conversation.channelId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    customerId: conversation.customerId,
+    actorUserId: input.executedByUserId,
+    eventType: "whatsapp.message.outbound",
+    payload: { modeUsed: "text_freeform", text: input.text },
+  });
 
   return { conversation, message, result, normalizedTo: target.to, modeUsed: "text_freeform", windowOpen: true, targetSource: target.source };
 }
@@ -806,6 +998,17 @@ export async function sendConversationTemplateMessage(input: {
     conversationId: conversation.id,
     changedFields: ["lastOutboundAt", "lastMessageAt"],
   });
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: conversation.branchId,
+    channelId: conversation.channelId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    customerId: conversation.customerId,
+    actorUserId: input.executedByUserId,
+    eventType: "whatsapp.message.outbound",
+    payload: { modeUsed: "template_manual", templateCode: input.templateCode },
+  });
 
   return { conversation, message, result, normalizedTo: target.to, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt), targetSource: target.source };
 }
@@ -834,23 +1037,21 @@ export function computeChannelProductStatus(channel: TenantWhatsappChannel | nul
   return environmentMode === "sandbox" ? "sandbox_ready" : "production_ready";
 }
 
-export async function getSuggestedTemplatesForConversation(tenantId: number, conversationId: number) {
+export async function getSuggestedTemplatesForConversation(tenantId: number, conversationId: number, usageType?: string) {
   const conversation = await getConversationByIdScoped(tenantId, conversationId, null);
   if (!conversation) return [];
   const windowOpen = isWithin24hWindow(conversation.lastInboundAt);
   const rows = await db.select().from(messageTemplates).where(eq(messageTemplates.tenantId, tenantId)).orderBy(desc(messageTemplates.updatedAt));
+  const normalizedUsage = usageType ? normalizeTemplateUsageType(usageType) : null;
   const inferred = rows.map((t) => {
-    const key = String(t.key || "").toLowerCase();
-    let usageType = "general";
-    if (key.includes("saludo") || key.includes("greeting")) usageType = "greeting";
-    else if (key.includes("reengagement") || key.includes("reenganche")) usageType = "reengagement";
-    else if (key.includes("fallback") || key.includes("error")) usageType = "fallback";
-    else if (key.includes("humano") || key.includes("derivacion")) usageType = "handoff_human";
-    else if (key.includes("confirm")) usageType = "confirmation";
-    else if (key.includes("pedido") || key.includes("seguimiento")) usageType = "order_followup";
-    return { ...t, usageType };
+    const mapped = normalizeTemplateUsageType((t as any).usageType || inferTemplateUsageType(t.key, t.body));
+    return { ...t, usageType: mapped };
   });
-  return inferred.filter((t) => windowOpen ? t.usageType !== "reengagement" : t.usageType === "reengagement");
+  const windowFiltered = inferred.filter((tpl) => {
+    if (windowOpen) return tpl.usageType !== "reengagement";
+    return tpl.usageType === "reengagement" || tpl.usageType === "handoff_human";
+  });
+  return normalizedUsage ? windowFiltered.filter((tpl) => tpl.usageType === normalizedUsage) : windowFiltered;
 }
 
 export async function getLastManualSendEvent(tenantId: number) {
@@ -1131,4 +1332,146 @@ export function channelToSafeResponse(channel: TenantWhatsappChannel | null) {
 
 export function isWebhookSignatureValidationEnabled() {
   return String(process.env.WHATSAPP_VALIDATE_SIGNATURE || "").toLowerCase() === "true";
+}
+
+
+export async function updateConversationOperationalState(input: {
+  tenantId: number;
+  conversationId: number;
+  actorUserId: number;
+  branchId?: number | null;
+  ownerMode?: ConversationOwnerMode;
+  handoffStatus?: ConversationHandoffStatus;
+  automationEnabled?: boolean;
+  automationPausedReason?: string | null;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
+  if (!conversation) return null;
+  const patch: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.ownerMode) patch.ownerMode = input.ownerMode;
+  if (input.handoffStatus) patch.handoffStatus = input.handoffStatus;
+  if (typeof input.automationEnabled === "boolean") patch.automationEnabled = input.automationEnabled;
+  if (input.automationPausedReason !== undefined) patch.automationPausedReason = input.automationPausedReason;
+
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set(patch)
+    .where(and(eq(whatsappConversations.tenantId, input.tenantId), eq(whatsappConversations.id, input.conversationId)))
+    .returning();
+  if (!saved) return null;
+
+  await emitRealtimeInboxEvent({
+    eventType: "conversation.updated",
+    tenantId: input.tenantId,
+    conversationId: input.conversationId,
+    changedFields: ["ownerMode", "handoffStatus", "automationEnabled", "automationPausedReason"],
+  });
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: saved.branchId,
+    channelId: saved.channelId,
+    conversationId: saved.id,
+    customerId: saved.customerId,
+    actorUserId: input.actorUserId,
+    eventType: "whatsapp.conversation.automation_updated",
+    payload: {
+      ownerMode: saved.ownerMode,
+      handoffStatus: saved.handoffStatus,
+      automationEnabled: saved.automationEnabled,
+      automationPausedReason: saved.automationPausedReason,
+    },
+  });
+  return saved;
+}
+
+export async function linkConversationToCustomer(input: {
+  tenantId: number;
+  conversationId: number;
+  customerId: number;
+  actorUserId: number;
+  branchId?: number | null;
+  manual?: boolean;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
+  if (!conversation) throw new Error("Conversación no encontrada");
+  const [customer] = await db.select().from(customers).where(and(eq(customers.tenantId, input.tenantId), eq(customers.id, input.customerId))).limit(1);
+  if (!customer) throw new Error("Cliente no encontrado");
+
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({
+      customerId: customer.id,
+      customerName: conversation.customerName || customer.name,
+      customerMatchConfidence: input.manual === false ? 100 : 90,
+      linkedManuallyByUserId: input.manual === false ? null : input.actorUserId,
+      linkedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(whatsappConversations.tenantId, input.tenantId), eq(whatsappConversations.id, input.conversationId)))
+    .returning();
+
+  if (!saved) return null;
+
+  await emitRealtimeInboxEvent({
+    eventType: "conversation.updated",
+    tenantId: input.tenantId,
+    conversationId: saved.id,
+    changedFields: ["customerId", "customerName", "customerMatchConfidence", "linkedAt"],
+  });
+
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: saved.branchId,
+    channelId: saved.channelId,
+    conversationId: saved.id,
+    customerId: saved.customerId,
+    actorUserId: input.actorUserId,
+    eventType: "whatsapp.customer.linked",
+    payload: { customerId: customer.id, phone: customer.phone, manual: input.manual !== false },
+  });
+
+  return saved;
+}
+
+export async function findCustomerMatchesByPhone(tenantId: number, phone: string) {
+  const normalized = normalizeWhatsAppRecipientForMeta(phone);
+  if (!normalized) return [];
+  const rows = await db.select().from(customers).where(eq(customers.tenantId, tenantId)).orderBy(desc(customers.updatedAt));
+  return rows
+    .filter((c) => normalizeWhatsAppRecipientForMeta(c.phone || "") === normalized)
+    .slice(0, 8);
+}
+
+export async function createCustomerFromConversation(input: {
+  tenantId: number;
+  conversationId: number;
+  actorUserId: number;
+  name?: string | null;
+  email?: string | null;
+  branchId?: number | null;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
+  if (!conversation) throw new Error("Conversación no encontrada");
+
+  const [created] = await db
+    .insert(customers)
+    .values({
+      tenantId: input.tenantId,
+      name: (input.name || conversation.customerName || `Cliente ${conversation.customerPhone}`).trim(),
+      phone: conversation.customerPhone,
+      email: input.email || null,
+    })
+    .returning();
+
+  if (!created) throw new Error("No se pudo crear el cliente");
+  const linked = await linkConversationToCustomer({
+    tenantId: input.tenantId,
+    conversationId: input.conversationId,
+    customerId: created.id,
+    actorUserId: input.actorUserId,
+    branchId: input.branchId,
+    manual: true,
+  });
+
+  return { customer: created, conversation: linked };
 }

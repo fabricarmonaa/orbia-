@@ -13,7 +13,7 @@ const createTemplateSchema = z.object({
   body: z.string().trim().min(2).max(4000),
   isActive: z.boolean().optional().default(true),
   key: z.string().trim().max(60).optional(),
-  usageType: z.enum(["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
+  usageType: z.enum(["greeting","follow_up","reengagement","confirmation","reminder","quote_or_budget","handoff_human","error_fallback","closing","custom","GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
 });
 
 const updateTemplateSchema = z.object({
@@ -21,7 +21,7 @@ const updateTemplateSchema = z.object({
   body: z.string().trim().min(2).max(4000).optional(),
   isActive: z.boolean().optional(),
   key: z.string().trim().max(60).optional(),
-  usageType: z.enum(["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
+  usageType: z.enum(["greeting","follow_up","reengagement","confirmation","reminder","quote_or_budget","handoff_human","error_fallback","closing","custom","GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
 });
 
 const renderSchema = z.object({
@@ -33,16 +33,31 @@ const countrySchema = z.object({
   defaultCountry: z.string().trim().min(2).max(4),
 });
 
+function normalizeUsageType(raw?: string | null) {
+  const value = String(raw || "").trim().toLowerCase();
+  const mapping: Record<string, string> = {
+    general: "custom",
+    greeting: "greeting",
+    reengagement: "reengagement",
+    fallback: "error_fallback",
+    human_handoff: "handoff_human",
+    confirmation: "confirmation",
+    order_followup: "follow_up",
+  };
+  return mapping[value] || (value || "custom");
+}
+
+
 
 function inferUsageType(key?: string | null, body?: string | null) {
   const source = `${key || ""} ${body || ""}`.toLowerCase();
-  if (source.includes("reengagement") || source.includes("reenganche")) return "REENGAGEMENT";
-  if (source.includes("saludo") || source.includes("greeting")) return "GREETING";
-  if (source.includes("fallback") || source.includes("error")) return "FALLBACK";
-  if (source.includes("humano") || source.includes("derivacion")) return "HUMAN_HANDOFF";
-  if (source.includes("confirm")) return "CONFIRMATION";
-  if (source.includes("pedido") || source.includes("seguimiento")) return "ORDER_FOLLOWUP";
-  return "GENERAL";
+  if (source.includes("reengagement") || source.includes("reenganche")) return "reengagement";
+  if (source.includes("saludo") || source.includes("greeting")) return "greeting";
+  if (source.includes("fallback") || source.includes("error")) return "error_fallback";
+  if (source.includes("humano") || source.includes("derivacion")) return "handoff_human";
+  if (source.includes("confirm")) return "confirmation";
+  if (source.includes("pedido") || source.includes("seguimiento")) return "follow_up";
+  return "custom";
 }
 
 function buildKeyWithUsage(key: string | null | undefined, usageType: string | undefined, name: string) {
@@ -90,7 +105,7 @@ export function registerMessageTemplateRoutes(app: Express) {
         ? and(eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt))
         : and(eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt), eq(messageTemplates.isActive, true));
       const dataRaw = await db.select().from(messageTemplates).where(where).orderBy(desc(messageTemplates.updatedAt));
-      const data = dataRaw.map((t) => ({ ...t, usageType: inferUsageType(t.key, t.body) }));
+      const data = dataRaw.map((tpl) => ({ ...tpl, usageType: normalizeUsageType((tpl as any).usageType || inferUsageType(tpl.key, tpl.body)) }));
       const config = await storage.getConfig(tenantId);
       const channel = await getTenantChannel(tenantId);
       const defaultCountry = String((config?.configJson as any)?.defaultCountry || "AR");
@@ -121,7 +136,7 @@ export function registerMessageTemplateRoutes(app: Express) {
           name: payload.name,
           body: payload.body,
           isActive: payload.isActive,
-          key: buildKeyWithUsage(payload.key || null, payload.usageType, payload.name),
+          key: buildKeyWithUsage(payload.key || null, normalizeUsageType(payload.usageType), payload.name),
           channel: "whatsapp_link",
           updatedAt: new Date(),
         })
@@ -145,7 +160,7 @@ export function registerMessageTemplateRoutes(app: Express) {
       if (payload.usageType && !payload.key) {
         const [current] = await db.select().from(messageTemplates).where(and(eq(messageTemplates.id, id), eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt))).limit(1);
         if (current) {
-          patch.key = buildKeyWithUsage(current.key || null, payload.usageType, payload.name || current.name);
+          patch.key = buildKeyWithUsage(current.key || null, normalizeUsageType(payload.usageType), payload.name || current.name);
         }
       }
       delete (patch as any).usageType;

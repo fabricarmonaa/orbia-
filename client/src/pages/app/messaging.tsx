@@ -31,7 +31,7 @@ const variableChips = [
   "negocio_nombre",
 ];
 
-const usageOptions = ["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"] as const;
+const usageOptions = ["greeting","follow_up","reengagement","confirmation","reminder","quote_or_budget","handoff_human","error_fallback","closing","custom"] as const;
 
 const sampleContext: Record<string, string> = {
   cliente_nombre: "Leonel Messi",
@@ -58,7 +58,7 @@ export default function MessagingSettingsPage() {
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [isActive, setIsActive] = useState(true);
-  const [usageType, setUsageType] = useState<string>("GENERAL");
+  const [usageType, setUsageType] = useState<string>("custom");
   const [saving, setSaving] = useState(false);
 
   async function fetchTemplates() {
@@ -191,8 +191,8 @@ export default function MessagingSettingsPage() {
                     <div className="flex gap-2 mt-1"><Badge variant={tpl.isActive ? "outline" : "secondary"}>{tpl.isActive ? "Activa" : "Inactiva"}</Badge><Badge variant="secondary">{tpl.usageType || "GENERAL"}</Badge></div>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(tpl.id); setName(tpl.name); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "GENERAL"); }}>Editar</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setName(`${tpl.name} (copia)`); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "GENERAL"); }}>Duplicar</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditingId(tpl.id); setName(tpl.name); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "custom"); }}>Editar</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setName(`${tpl.name} (copia)`); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "custom"); }}>Duplicar</Button>
                     <Button size="sm" variant="destructive" onClick={() => removeTemplate(tpl.id)}>Eliminar</Button>
                   </div>
                 </div>

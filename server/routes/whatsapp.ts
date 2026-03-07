@@ -22,6 +22,13 @@ import {
   getSuggestedTemplatesForConversation,
   sendConversationTemplateMessage,
   getChannelRuntimeInfo,
+  createCustomerFromConversation,
+  linkConversationToCustomer,
+  listConversationTimeline,
+  updateConversationOperationalState,
+  findCustomerMatchesByPhone,
+  CONVERSATION_OWNER_MODES,
+  CONVERSATION_HANDOFF_STATUSES,
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
@@ -338,7 +345,7 @@ export function registerWhatsappRoutes(app: Express) {
       const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
       const conversation = await getConversationByIdScoped(tenantId, id, branchId);
       if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
-      const data = await getSuggestedTemplatesForConversation(tenantId, id);
+      const data = await getSuggestedTemplatesForConversation(tenantId, id, String(req.query.usageType || ""));
       return res.json({ data });
     },
   );
@@ -449,7 +456,7 @@ export function registerWhatsappRoutes(app: Express) {
     requireAddon("whatsapp_inbox"),
     enforceBranchScope,
     validateParams(conversationIdSchema),
-    validateBody(z.object({ status: z.enum(["OPEN", "HUMAN", "BOT", "CLOSED"]) })),
+    validateBody(z.object({ status: z.enum(["OPEN", "PENDING_CUSTOMER", "PENDING_BUSINESS", "WAITING_INTERNAL", "RESOLVED", "CLOSED"]) })),
     async (req, res) => {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
@@ -487,4 +494,117 @@ export function registerWhatsappRoutes(app: Express) {
       res.json({ data });
     },
   );
+
+  app.get(
+    "/api/whatsapp/conversations/:id/timeline",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+      const data = await listConversationTimeline(tenantId, id, branchId);
+      return res.json({ data });
+    },
+  );
+
+  app.get(
+    "/api/whatsapp/conversations/:id/customer-matches",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+      const data = await findCustomerMatchesByPhone(tenantId, conversation.customerPhone);
+      return res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/link-customer",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    requireTenantAdmin,
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(z.object({ customerId: z.coerce.number().int().positive() })),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const data = await linkConversationToCustomer({
+        tenantId,
+        conversationId: id,
+        customerId: req.body.customerId,
+        actorUserId: req.auth!.userId,
+        branchId,
+      });
+      return res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/create-customer",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    requireTenantAdmin,
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(z.object({ name: z.string().trim().max(200).optional(), email: z.string().email().optional() })),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const data = await createCustomerFromConversation({
+        tenantId,
+        conversationId: id,
+        actorUserId: req.auth!.userId,
+        name: req.body.name || null,
+        email: req.body.email || null,
+        branchId,
+      });
+      return res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/operational-state",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    requireTenantAdmin,
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(z.object({
+      ownerMode: z.enum(CONVERSATION_OWNER_MODES).optional(),
+      handoffStatus: z.enum(CONVERSATION_HANDOFF_STATUSES).optional(),
+      automationEnabled: z.boolean().optional(),
+      automationPausedReason: z.string().trim().max(300).nullable().optional(),
+    })),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const data = await updateConversationOperationalState({
+        tenantId,
+        conversationId: id,
+        actorUserId: req.auth!.userId,
+        branchId,
+        ownerMode: req.body.ownerMode,
+        handoffStatus: req.body.handoffStatus,
+        automationEnabled: req.body.automationEnabled,
+        automationPausedReason: req.body.automationPausedReason,
+      });
+      return res.json({ data });
+    },
+  );
+
 }
