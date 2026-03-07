@@ -19,6 +19,9 @@ import {
   getLastManualSendEvent,
   isWithin24hWindow,
   WhatsAppWindowClosedError,
+  computeChannelProductStatus,
+  getSuggestedTemplatesForConversation,
+  sendConversationTemplateMessage,
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
@@ -43,6 +46,7 @@ const sendSchema = z.object({
 });
 
 const conversationIdSchema = z.object({ id: z.coerce.number().int().positive() });
+const sendTemplateSchema = z.object({ templateCode: z.string().trim().min(1).max(120) });
 
 export function registerWhatsappRoutes(app: Express) {
   app.get("/api/whatsapp/health", tenantAuth, requireAddon("messaging_whatsapp"), async (req, res) => {
@@ -50,11 +54,13 @@ export function registerWhatsappRoutes(app: Express) {
     const lastTest = await getLastManualSendEvent(req.auth!.tenantId!);
     const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
     const environmentMode = testMode === "template_hello_world_test" ? "sandbox" : "production";
+    const channelProductStatus = computeChannelProductStatus(channel, environmentMode);
     res.json({
       ok: true,
       signatureValidation: isWebhookSignatureValidationEnabled(),
       hasChannel: Boolean(channel),
       channelStatus: channel?.status || null,
+      channelProductStatus,
       environmentMode,
       testMode,
       connectedPhone: channel?.phoneNumber || null,
@@ -97,20 +103,56 @@ export function registerWhatsappRoutes(app: Express) {
     const channel = await getTenantChannel(req.auth!.tenantId!);
     const healthMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
     const environmentMode = healthMode === "template_hello_world_test" ? "sandbox" : "production";
+    const channelProductStatus = computeChannelProductStatus(channel, environmentMode);
     const data = channel
       ? {
         status: channel.status,
         isActive: channel.isActive,
         connectedPhone: channel.phoneNumber,
         environmentMode,
+        channelProductStatus,
       }
       : {
         status: "DRAFT",
         isActive: false,
         connectedPhone: null,
         environmentMode,
+        channelProductStatus,
       };
     return res.json({ data });
+  });
+
+
+  app.get("/api/whatsapp/onboarding", tenantAuth, async (req, res) => {
+    const tenantId = req.auth!.tenantId!;
+    const [addonsRes, channelRes] = await Promise.all([
+      storage.getTenantAddons(tenantId),
+      getTenantChannel(tenantId),
+    ]);
+    const addonsMap: Record<string, boolean> = {};
+    for (const a of addonsRes || []) addonsMap[a.addonKey] = Boolean(a.enabled);
+    const messagingEnabled = Boolean(addonsMap.messaging_whatsapp);
+    const inboxEnabled = Boolean(addonsMap.whatsapp_inbox);
+    const testMode = (process.env.WHATSAPP_SEND_TEST_MODE || "template_hello_world_test").toLowerCase();
+    const environmentMode = testMode === "template_hello_world_test" ? "sandbox" : "production";
+    const channelProductStatus = computeChannelProductStatus(channelRes, environmentMode);
+    const steps = [
+      { key: "activate_addons", title: "Activar addons", completed: messagingEnabled && inboxEnabled },
+      { key: "connect_channel", title: "Conectar canal", completed: Boolean(channelRes?.isActive) },
+      { key: "validate_test", title: "Validar mensaje de prueba", completed: false },
+      { key: "use_inbox", title: "Usar inbox", completed: inboxEnabled },
+    ];
+    return res.json({
+      data: {
+        messagingEnabled,
+        inboxEnabled,
+        environmentMode,
+        channelProductStatus,
+        channelConnectedPhone: channelRes?.phoneNumber || null,
+        canEditTechnicalConfig: req.auth?.role === "admin",
+        steps,
+      },
+    });
   });
 
   app.put(
@@ -180,6 +222,62 @@ export function registerWhatsappRoutes(app: Express) {
       });
     }
   });
+
+
+  app.get(
+    "/api/whatsapp/conversations/:id/template-suggestions",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, id, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+      const data = await getSuggestedTemplatesForConversation(tenantId, id);
+      return res.json({ data });
+    },
+  );
+
+  app.post(
+    "/api/whatsapp/conversations/:id/messages/send-template",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    validateParams(conversationIdSchema),
+    validateBody(sendTemplateSchema),
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const conversationId = Number(req.params.id);
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const conversation = await getConversationByIdScoped(tenantId, conversationId, branchId);
+      if (!conversation) return res.status(404).json({ error: "Conversación no encontrada" });
+
+      try {
+        const result = await sendConversationTemplateMessage({
+          tenantId,
+          conversationId,
+          executedByUserId: req.auth!.userId,
+          templateCode: req.body.templateCode,
+          branchId,
+        });
+        return res.json({ data: result });
+      } catch (error: any) {
+        const providerError = error as WhatsAppProviderError;
+        const providerCode = providerError?.code || "unknown";
+        const providerDetails = providerError?.details || providerError?.message || "Error enviando plantilla";
+        return res.status(providerError?.status || 500).json({
+          error: `[META ${providerCode}] ${providerDetails}`,
+          code: "WHATSAPP_INBOX_SEND_TEMPLATE_FAILED",
+          providerCode,
+          providerDetails,
+          providerRaw: providerError?.raw || null,
+        });
+      }
+    },
+  );
 
   app.post(
     "/api/whatsapp/conversations/:id/messages/send",

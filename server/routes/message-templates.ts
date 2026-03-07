@@ -13,6 +13,7 @@ const createTemplateSchema = z.object({
   body: z.string().trim().min(2).max(4000),
   isActive: z.boolean().optional().default(true),
   key: z.string().trim().max(60).optional(),
+  usageType: z.enum(["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
 });
 
 const updateTemplateSchema = z.object({
@@ -20,6 +21,7 @@ const updateTemplateSchema = z.object({
   body: z.string().trim().min(2).max(4000).optional(),
   isActive: z.boolean().optional(),
   key: z.string().trim().max(60).optional(),
+  usageType: z.enum(["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"]).optional(),
 });
 
 const renderSchema = z.object({
@@ -30,6 +32,24 @@ const renderSchema = z.object({
 const countrySchema = z.object({
   defaultCountry: z.string().trim().min(2).max(4),
 });
+
+
+function inferUsageType(key?: string | null, body?: string | null) {
+  const source = `${key || ""} ${body || ""}`.toLowerCase();
+  if (source.includes("reengagement") || source.includes("reenganche")) return "REENGAGEMENT";
+  if (source.includes("saludo") || source.includes("greeting")) return "GREETING";
+  if (source.includes("fallback") || source.includes("error")) return "FALLBACK";
+  if (source.includes("humano") || source.includes("derivacion")) return "HUMAN_HANDOFF";
+  if (source.includes("confirm")) return "CONFIRMATION";
+  if (source.includes("pedido") || source.includes("seguimiento")) return "ORDER_FOLLOWUP";
+  return "GENERAL";
+}
+
+function buildKeyWithUsage(key: string | null | undefined, usageType: string | undefined, name: string) {
+  if (key) return key;
+  const slug = name.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+  return usageType ? `${usageType.toLowerCase()}__${slug}` : null;
+}
 
 async function buildContext(tenantId: number, orderId?: number) {
   const config = await storage.getConfig(tenantId);
@@ -69,7 +89,8 @@ export function registerMessageTemplateRoutes(app: Express) {
       const where = includeInactive
         ? and(eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt))
         : and(eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt), eq(messageTemplates.isActive, true));
-      const data = await db.select().from(messageTemplates).where(where).orderBy(desc(messageTemplates.updatedAt));
+      const dataRaw = await db.select().from(messageTemplates).where(where).orderBy(desc(messageTemplates.updatedAt));
+      const data = dataRaw.map((t) => ({ ...t, usageType: inferUsageType(t.key, t.body) }));
       const config = await storage.getConfig(tenantId);
       const channel = await getTenantChannel(tenantId);
       const defaultCountry = String((config?.configJson as any)?.defaultCountry || "AR");
@@ -100,7 +121,7 @@ export function registerMessageTemplateRoutes(app: Express) {
           name: payload.name,
           body: payload.body,
           isActive: payload.isActive,
-          key: payload.key || null,
+          key: buildKeyWithUsage(payload.key || null, payload.usageType, payload.name),
           channel: "whatsapp_link",
           updatedAt: new Date(),
         })
@@ -120,9 +141,17 @@ export function registerMessageTemplateRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const id = parseInt(String(req.params.id), 10);
       const payload = updateTemplateSchema.parse(req.body || {});
+      const patch: Record<string, unknown> = { ...payload, updatedAt: new Date() };
+      if (payload.usageType && !payload.key) {
+        const [current] = await db.select().from(messageTemplates).where(and(eq(messageTemplates.id, id), eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt))).limit(1);
+        if (current) {
+          patch.key = buildKeyWithUsage(current.key || null, payload.usageType, payload.name || current.name);
+        }
+      }
+      delete (patch as any).usageType;
       const [updated] = await db
         .update(messageTemplates)
-        .set({ ...payload, updatedAt: new Date() })
+        .set(patch as any)
         .where(and(eq(messageTemplates.id, id), eq(messageTemplates.tenantId, tenantId), isNull(messageTemplates.deletedAt)))
         .returning();
       if (!updated) return res.status(404).json({ error: "Plantilla no encontrada" });

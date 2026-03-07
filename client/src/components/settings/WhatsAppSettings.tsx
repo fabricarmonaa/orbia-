@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest } from "@/lib/auth";
+import { apiRequest, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -39,6 +39,9 @@ function normalizeRecipient(value: string) {
 
 export function WhatsAppSettings() {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canEditTechnicalConfig = user?.role === "admin";
+
   const [form, setForm] = useState<WhatsappChannelForm>(emptyForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -48,10 +51,21 @@ export function WhatsAppSettings() {
   const [testText, setTestText] = useState("Mensaje de prueba Orbia WhatsApp");
   const [webhookStatus, setWebhookStatus] = useState<string>("Sin verificar");
   const [health, setHealth] = useState<any>(null);
+  const [onboarding, setOnboarding] = useState<any>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [sendResult, setSendResult] = useState<{ messageId?: string | null; modeUsed?: string; normalizedTo?: string } | null>(null);
 
   const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
 
+  async function loadOnboarding() {
+    try {
+      const res = await apiRequest("GET", "/api/whatsapp/onboarding");
+      const data = await res.json();
+      setOnboarding(data?.data || null);
+    } catch {
+      setOnboarding(null);
+    }
+  }
 
   async function loadHealth() {
     try {
@@ -65,6 +79,18 @@ export function WhatsAppSettings() {
 
   async function loadChannel() {
     try {
+      if (!canEditTechnicalConfig) {
+        const summaryRes = await apiRequest("GET", "/api/whatsapp/channels/summary");
+        const summary = await summaryRes.json();
+        setForm((prev) => ({
+          ...prev,
+          status: summary?.data?.status || "DRAFT",
+          phoneNumber: summary?.data?.connectedPhone || "",
+          isActive: Boolean(summary?.data?.isActive),
+        }));
+        return;
+      }
+
       const res = await apiRequest("GET", "/api/whatsapp/channels/current");
       const data = await res.json();
       if (data?.data) {
@@ -92,9 +118,15 @@ export function WhatsAppSettings() {
   useEffect(() => {
     loadChannel();
     loadHealth();
+    loadOnboarding();
   }, []);
 
+  async function refreshState() {
+    await Promise.all([loadChannel(), loadHealth(), loadOnboarding()]);
+  }
+
   async function saveChannel() {
+    if (!canEditTechnicalConfig) return;
     setSaving(true);
     try {
       await apiRequest("PUT", "/api/whatsapp/channels/current", {
@@ -110,8 +142,7 @@ export function WhatsAppSettings() {
         isActive: form.isActive,
       });
       toast({ title: "Canal guardado" });
-      await loadChannel();
-      await loadHealth();
+      await refreshState();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
@@ -126,7 +157,7 @@ export function WhatsAppSettings() {
       const data = await res.json();
       setWebhookStatus(data.ok ? "Canal listo" : "Canal incompleto");
       toast({ title: data.ok ? "Conexión OK" : "Conexión incompleta" });
-      await loadHealth();
+      await refreshState();
     } catch (err: any) {
       toast({ title: "Error probando conexión", description: err.message, variant: "destructive" });
     } finally {
@@ -150,6 +181,7 @@ export function WhatsAppSettings() {
         title: "Mensaje de prueba enviado",
         description: `mode=${payload?.modeUsed || "template_hello_world_test"} · to=${payload?.normalizedTo || normalizedRecipientPreview}`,
       });
+      await refreshState();
     } catch (err: any) {
       toast({ title: "Error enviando test", description: err.message || "Error no especificado", variant: "destructive" });
     } finally {
@@ -163,38 +195,61 @@ export function WhatsAppSettings() {
     <Card>
       <CardHeader>
         <h3 className="font-semibold">WhatsApp Cloud API</h3>
-        <p className="text-sm text-muted-foreground">Configuración base multi-tenant del canal oficial de WhatsApp.</p>
+        <p className="text-sm text-muted-foreground">Onboarding simple para conectar tu canal y operar el inbox premium.</p>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="rounded-md border p-3 bg-muted/30 text-sm space-y-1">
-          <p><strong>Estado del canal:</strong> {health?.channelStatus || "DRAFT"} {health?.hasChannel ? "(configurado)" : "(sin configurar)"}</p>
+          <p><strong>Estado del canal:</strong> {health?.channelProductStatus || "incomplete"}</p>
           <p><strong>Modo actual:</strong> {health?.environmentMode === "production" ? "Producción" : "Sandbox / Test"}</p>
           <p><strong>Número conectado:</strong> {health?.connectedPhone || "-"}</p>
           <p><strong>Último test:</strong> {health?.lastTestAt ? new Date(health.lastTestAt).toLocaleString() : "Sin test exitoso"}</p>
-          <p><strong>Quién puede editar:</strong> admins del tenant / superadmin.</p>
+          <p><strong>Inbox habilitado:</strong> {onboarding?.inboxEnabled ? "Sí" : "No"}</p>
+          <p><strong>Quién puede editar configuración técnica:</strong> admins del tenant / superadmin.</p>
         </div>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="space-y-1"><Label>Provider</Label><Input value={form.provider} onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))} /></div>
-          <div className="space-y-1"><Label>Estado del canal</Label><Input value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))} /></div>
-          <div className="space-y-1"><Label>Phone number</Label><Input value={form.phoneNumber} onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))} /></div>
-          <div className="space-y-1"><Label>Phone number ID</Label><Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} /></div>
-          <div className="space-y-1"><Label>Business account ID</Label><Input value={form.businessAccountId || ""} onChange={(e) => setForm((p) => ({ ...p, businessAccountId: e.target.value }))} /></div>
-          <div className="space-y-1"><Label>Display name</Label><Input value={form.displayName || ""} onChange={(e) => setForm((p) => ({ ...p, displayName: e.target.value }))} /></div>
-          <div className="space-y-1"><Label>Access token</Label><Input value={form.accessToken || ""} onChange={(e) => setForm((p) => ({ ...p, accessToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
-          <div className="space-y-1"><Label>App secret</Label><Input value={form.appSecret || ""} onChange={(e) => setForm((p) => ({ ...p, appSecret: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
-          <div className="space-y-1 md:col-span-2"><Label>Webhook verify token</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
+
+        <div className="rounded-md border p-3 text-sm">
+          <p className="font-medium mb-2">Pasos de onboarding</p>
+          <div className="space-y-1">
+            {(onboarding?.steps || []).map((step: any) => (
+              <p key={step.key} className="text-xs">{step.completed ? "✅" : "⬜"} {step.title}</p>
+            ))}
+          </div>
         </div>
+
+        {!canEditTechnicalConfig ? (
+          <p className="text-xs text-muted-foreground">Vista operativa: la configuración técnica avanzada está restringida para tu rol.</p>
+        ) : (
+          <div className="flex justify-end">
+            <Button variant="outline" onClick={() => setShowAdvanced((v) => !v)}>
+              {showAdvanced ? "Ocultar configuración avanzada" : "Mostrar configuración avanzada"}
+            </Button>
+          </div>
+        )}
+
+        {canEditTechnicalConfig && showAdvanced ? (
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1"><Label>Provider</Label><Input value={form.provider} onChange={(e) => setForm((p) => ({ ...p, provider: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Estado del canal</Label><Input value={form.status} onChange={(e) => setForm((p) => ({ ...p, status: e.target.value as any }))} /></div>
+            <div className="space-y-1"><Label>Phone number</Label><Input value={form.phoneNumber} onChange={(e) => setForm((p) => ({ ...p, phoneNumber: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Phone number ID</Label><Input value={form.phoneNumberId} onChange={(e) => setForm((p) => ({ ...p, phoneNumberId: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Business account ID</Label><Input value={form.businessAccountId || ""} onChange={(e) => setForm((p) => ({ ...p, businessAccountId: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Display name</Label><Input value={form.displayName || ""} onChange={(e) => setForm((p) => ({ ...p, displayName: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Access token</Label><Input value={form.accessToken || ""} onChange={(e) => setForm((p) => ({ ...p, accessToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
+            <div className="space-y-1"><Label>App secret</Label><Input value={form.appSecret || ""} onChange={(e) => setForm((p) => ({ ...p, appSecret: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
+            <div className="space-y-1 md:col-span-2"><Label>Webhook verify token</Label><Input value={form.webhookVerifyToken || ""} onChange={(e) => setForm((p) => ({ ...p, webhookVerifyToken: e.target.value }))} placeholder="Se mostrará masked al volver a cargar" /></div>
+          </div>
+        ) : null}
 
         <div className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(checked) => setForm((p) => ({ ...p, isActive: checked }))} /><Label>Canal activo</Label></div>
 
         <div className="flex flex-wrap gap-2">
-          <Button onClick={saveChannel} disabled={saving}>{saving ? "Guardando..." : "Guardar configuración"}</Button>
-          <Button variant="outline" onClick={testConnection} disabled={testing}>{testing ? "Probando..." : "Probar conexión"}</Button>
+          <Button onClick={saveChannel} disabled={saving || !canEditTechnicalConfig}>{saving ? "Guardando..." : "Guardar configuración"}</Button>
+          <Button variant="outline" onClick={testConnection} disabled={testing || !canEditTechnicalConfig}>{testing ? "Probando..." : "Validar conexión"}</Button>
         </div>
 
         <div className="border rounded-md p-3 space-y-2">
-          <p className="text-sm font-medium">Enviar mensaje de prueba</p>
-          <p className="text-xs text-muted-foreground">Sandbox/test usa por defecto template <code>hello_world</code> (<code>en_US</code>) para respetar la ventana de 24h.</p>
+          <p className="text-sm font-medium">Modo prueba / sandbox</p>
+          <p className="text-xs text-muted-foreground">Usa template <code>hello_world</code> para validar conexión. Esto no reemplaza templates de producción.</p>
           <div className="grid md:grid-cols-2 gap-2">
             <Input value={testPhone} onChange={(e) => setTestPhone(e.target.value)} placeholder="+549..." />
             <Input value={testText} onChange={(e) => setTestText(e.target.value)} placeholder="Solo se usa en modo text_freeform" />

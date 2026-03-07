@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
@@ -16,6 +17,7 @@ interface TemplateItem {
   name: string;
   body: string;
   isActive: boolean;
+  usageType?: string;
 }
 
 const variableChips = [
@@ -28,6 +30,8 @@ const variableChips = [
   "direccion_entrega",
   "negocio_nombre",
 ];
+
+const usageOptions = ["GENERAL","GREETING","REENGAGEMENT","FALLBACK","HUMAN_HANDOFF","CONFIRMATION","ORDER_FOLLOWUP"] as const;
 
 const sampleContext: Record<string, string> = {
   cliente_nombre: "Leonel Messi",
@@ -54,6 +58,7 @@ export default function MessagingSettingsPage() {
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
   const [isActive, setIsActive] = useState(true);
+  const [usageType, setUsageType] = useState<string>("GENERAL");
   const [saving, setSaving] = useState(false);
 
   async function fetchTemplates() {
@@ -84,6 +89,7 @@ export default function MessagingSettingsPage() {
     setName("");
     setBody("");
     setIsActive(true);
+    setUsageType("GENERAL");
   }
 
   async function saveTemplate() {
@@ -93,7 +99,7 @@ export default function MessagingSettingsPage() {
     }
     setSaving(true);
     try {
-      const payload = { name: name.trim(), body: body.trim(), isActive };
+      const payload = { name: name.trim(), body: body.trim(), isActive, usageType };
       if (editingId) {
         await apiRequest("PUT", `/api/message-templates/${editingId}`, payload);
       } else {
@@ -146,6 +152,15 @@ export default function MessagingSettingsPage() {
               </Button>
             ))}
           </div>
+          <div className="space-y-1">
+            <Label>Uso de plantilla</Label>
+            <Select value={usageType} onValueChange={setUsageType}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {usageOptions.map((u) => <SelectItem key={u} value={u}>{u}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
           <div className="flex items-center gap-2">
             <Switch checked={isActive} onCheckedChange={setIsActive} />
             <Label>Activa</Label>
@@ -173,11 +188,11 @@ export default function MessagingSettingsPage() {
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="font-medium">{tpl.name}</p>
-                    <Badge variant={tpl.isActive ? "outline" : "secondary"}>{tpl.isActive ? "Activa" : "Inactiva"}</Badge>
+                    <div className="flex gap-2 mt-1"><Badge variant={tpl.isActive ? "outline" : "secondary"}>{tpl.isActive ? "Activa" : "Inactiva"}</Badge><Badge variant="secondary">{tpl.usageType || "GENERAL"}</Badge></div>
                   </div>
                   <div className="flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(tpl.id); setName(tpl.name); setBody(tpl.body); setIsActive(tpl.isActive); }}>Editar</Button>
-                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setName(`${tpl.name} (copia)`); setBody(tpl.body); setIsActive(tpl.isActive); }}>Duplicar</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditingId(tpl.id); setName(tpl.name); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "GENERAL"); }}>Editar</Button>
+                    <Button size="sm" variant="outline" onClick={() => { setEditingId(null); setName(`${tpl.name} (copia)`); setBody(tpl.body); setIsActive(tpl.isActive); setUsageType(tpl.usageType || "GENERAL"); }}>Duplicar</Button>
                     <Button size="sm" variant="destructive" onClick={() => removeTemplate(tpl.id)}>Eliminar</Button>
                   </div>
                 </div>

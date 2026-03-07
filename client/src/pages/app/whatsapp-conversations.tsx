@@ -20,6 +20,8 @@ export default function WhatsappConversationsPage() {
   const [reply, setReply] = useState("");
   const [users, setUsers] = useState<any[]>([]);
   const [busyAction, setBusyAction] = useState<string | null>(null);
+  const [templateSuggestions, setTemplateSuggestions] = useState<any[]>([]);
+  const [selectedTemplateCode, setSelectedTemplateCode] = useState("hello_world");
 
   const sortedConversations = useMemo(
     () => [...conversations].sort((a, b) => new Date(b.lastMessageAt || b.createdAt).getTime() - new Date(a.lastMessageAt || a.createdAt).getTime()),
@@ -39,6 +41,16 @@ export default function WhatsappConversationsPage() {
       setUsers(data.data || []);
     } catch {
       setUsers([]);
+    }
+  }
+
+  async function loadTemplateSuggestions(conversationId: number) {
+    try {
+      const res = await apiRequest("GET", `/api/whatsapp/conversations/${conversationId}/template-suggestions`);
+      const data = await res.json();
+      setTemplateSuggestions(data.data || []);
+    } catch {
+      setTemplateSuggestions([]);
     }
   }
 
@@ -83,7 +95,23 @@ export default function WhatsappConversationsPage() {
       await loadConversations();
     } catch (err: any) {
       const msg = String(err?.message || "Error enviando mensaje");
-      toast({ title: "Error enviando", description: msg, variant: "destructive" });
+      const friendly = msg.includes("24h") ? `${msg} (Sugerencia: enviar plantilla desde esta misma pantalla)` : msg;
+      toast({ title: "Error enviando", description: friendly, variant: "destructive" });
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function sendTemplateReply() {
+    if (!selected || !selectedTemplateCode) return;
+    setBusyAction("send-template");
+    try {
+      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode });
+      toast({ title: "Plantilla enviada" });
+      await loadMessages(selected.id);
+      await loadConversations();
+    } catch (err: any) {
+      toast({ title: "Error enviando plantilla", description: String(err?.message || "Error"), variant: "destructive" });
     } finally {
       setBusyAction(null);
     }
@@ -177,6 +205,7 @@ export default function WhatsappConversationsPage() {
                 onClick={() => {
                   setSelected(c);
                   loadMessages(c.id);
+                  loadTemplateSuggestions(c.id);
                 }}
                 className={`w-full text-left border rounded-md p-2 hover:bg-muted/50 ${selected?.id === c.id ? "border-primary" : ""}`}
               >
@@ -223,6 +252,25 @@ export default function WhatsappConversationsPage() {
                 </div>
                 <div className="flex items-end">
                   <Button variant="secondary" onClick={markRead} disabled={busyAction === "mark-read"}>Marcar leído</Button>
+                </div>
+              </div>
+            ) : null}
+
+            {selected && !selected.windowOpen ? (
+              <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-2">
+                <p className="text-sm font-medium">Ventana de 24h cerrada</p>
+                <p className="text-xs text-muted-foreground">Para responder, usá una plantilla de reenganche. Esto prepara el flujo de producción sin romper la operación.</p>
+                <div className="flex gap-2 items-center">
+                  <Select value={selectedTemplateCode} onValueChange={setSelectedTemplateCode}>
+                    <SelectTrigger className="w-[260px]"><SelectValue placeholder="Template code" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="hello_world">hello_world</SelectItem>
+                      {templateSuggestions.map((t) => (
+                        <SelectItem key={t.id} value={String(t.key || `template_${t.id}`)}>{t.name} · {t.usageType || "GENERAL"}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Button variant="secondary" onClick={sendTemplateReply} disabled={busyAction === "send-template"}>Enviar plantilla</Button>
                 </div>
               </div>
             ) : null}

@@ -4,6 +4,7 @@ import {
   whatsappConversations,
   whatsappMessages,
   whatsappWebhookEvents,
+  messageTemplates,
   type TenantWhatsappChannel,
 } from "@shared/schema";
 import { db } from "../db";
@@ -475,6 +476,64 @@ export async function sendConversationWhatsAppMessage(input: {
   return { conversation, message, result, normalizedTo, modeUsed: "text_freeform", windowOpen: true };
 }
 
+
+export async function sendConversationTemplateMessage(input: {
+  tenantId: number;
+  conversationId: number;
+  executedByUserId: number;
+  templateCode: string;
+  branchId?: number | null;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
+  if (!conversation) throw new Error("Conversación no encontrada");
+
+  const channel = await getTenantChannel(input.tenantId);
+  if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo para el tenant");
+
+  const provider = resolveWhatsappProvider(channel.provider);
+  const normalizedTo = normalizeWhatsAppRecipientForMeta(conversation.customerPhone);
+
+  waLog("reply_manual_start", {
+    conversationId: conversation.id,
+    originalRecipient: conversation.customerPhone,
+    normalizedRecipient: normalizedTo,
+    windowOpen: isWithin24hWindow(conversation.lastInboundAt),
+    modeUsed: "template_manual",
+    templateCode: input.templateCode,
+  });
+
+  const result = await provider.sendTemplateMessage(channel, normalizedTo, input.templateCode, [], "en_US");
+
+  const message = await createOutboundMessage({
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    channelId: channel.id,
+    senderUserId: input.executedByUserId,
+    providerMessageId: result.providerMessageId || null,
+    contentText: `[template:${input.templateCode}]`,
+    status: result.mocked ? "QUEUED" : "SENT",
+    rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo, providerRaw: result.raw },
+  });
+
+  await persistWebhookEvent({
+    tenantId: input.tenantId,
+    channelId: channel.id,
+    eventType: "manual_inbox_send_template",
+    payload: {
+      conversationId: conversation.id,
+      originalRecipient: conversation.customerPhone,
+      normalizedRecipient: normalizedTo,
+      templateCode: input.templateCode,
+      modeUsed: "template_manual",
+      executedByUserId: input.executedByUserId,
+      result,
+    },
+    processingStatus: "PROCESSED",
+  });
+
+  return { conversation, message, result, normalizedTo, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt) };
+}
+
 export async function listConversationsByTenant(tenantId: number, branchId?: number | null) {
   const conditions = [eq(whatsappConversations.tenantId, tenantId)];
   if (branchId) conditions.push(eq(whatsappConversations.branchId, branchId));
@@ -489,6 +548,34 @@ export async function listMessagesByConversation(tenantId: number, conversationI
     .orderBy(asc(whatsappMessages.createdAt));
 }
 
+
+
+export function computeChannelProductStatus(channel: TenantWhatsappChannel | null, environmentMode: "sandbox" | "production") {
+  if (!channel) return "incomplete" as const;
+  if (!channel.isActive) return "incomplete" as const;
+  if (channel.status === "ERROR") return "error" as const;
+  if (!channel.phoneNumberId || !channel.phoneNumber) return "incomplete" as const;
+  return environmentMode === "sandbox" ? "sandbox" as const : "production" as const;
+}
+
+export async function getSuggestedTemplatesForConversation(tenantId: number, conversationId: number) {
+  const conversation = await getConversationByIdScoped(tenantId, conversationId, null);
+  if (!conversation) return [];
+  const windowOpen = isWithin24hWindow(conversation.lastInboundAt);
+  const rows = await db.select().from(messageTemplates).where(eq(messageTemplates.tenantId, tenantId)).orderBy(desc(messageTemplates.updatedAt));
+  const inferred = rows.map((t) => {
+    const key = String(t.key || "").toLowerCase();
+    let usageType = "general";
+    if (key.includes("saludo") || key.includes("greeting")) usageType = "greeting";
+    else if (key.includes("reengagement") || key.includes("reenganche")) usageType = "reengagement";
+    else if (key.includes("fallback") || key.includes("error")) usageType = "fallback";
+    else if (key.includes("humano") || key.includes("derivacion")) usageType = "handoff_human";
+    else if (key.includes("confirm")) usageType = "confirmation";
+    else if (key.includes("pedido") || key.includes("seguimiento")) usageType = "order_followup";
+    return { ...t, usageType };
+  });
+  return inferred.filter((t) => windowOpen ? t.usageType !== "reengagement" : t.usageType === "reengagement");
+}
 
 export async function getLastManualSendEvent(tenantId: number) {
   const [event] = await db
