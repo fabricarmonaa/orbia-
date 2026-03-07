@@ -35,7 +35,7 @@ export function GlobalVoiceFab() {
   }, [seconds, status]);
 
   const buttonLabel = useMemo(() => {
-    if (!enabled) return "Voz disponible en plan Escala";
+    if (!enabled) return "Voz disponible en plan PyMe";
     if (status === "recording") return `Escuchando... ${seconds}s`;
     if (status === "processing") return "Procesando...";
     return "Comando por voz";

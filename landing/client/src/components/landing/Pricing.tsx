@@ -1,14 +1,52 @@
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Check } from "lucide-react";
 import { motion } from "framer-motion";
+import { getAppOrigin } from "@/lib/app-origin";
+
+type PublicPlan = {
+  code: string;
+  displayName: string;
+  price: string | number | null;
+  currency?: string | null;
+};
+
+function formatPrice(plan: PublicPlan | undefined) {
+  if (!plan || plan.price === null || plan.price === undefined || plan.price === "") return "Consultar";
+  const amount = Number(plan.price);
+  if (Number.isNaN(amount)) return `${plan.currency || "ARS"} ${plan.price}`;
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency: (plan.currency || "ARS").toUpperCase(),
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
 
 export function Pricing() {
-  const plans = [
+  const [publicPlans, setPublicPlans] = useState<Record<string, PublicPlan>>({});
+
+  useEffect(() => {
+    const controller = new AbortController();
+    const appOrigin = getAppOrigin();
+    fetch(`${appOrigin}/api/public/plans`, { signal: controller.signal })
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error("PLANS_FETCH_ERROR"))))
+      .then((json) => {
+        const plans = Array.isArray(json?.data) ? (json.data as PublicPlan[]) : [];
+        const mapped: Record<string, PublicPlan> = {};
+        for (const plan of plans) mapped[String(plan.code || "").toUpperCase()] = plan;
+        setPublicPlans(mapped);
+      })
+      .catch(() => setPublicPlans({}));
+
+    return () => controller.abort();
+  }, []);
+
+  const plans = useMemo(() => ([
     {
-      name: "Económico",
+      code: "ECONOMICO",
+      name: publicPlans.ECONOMICO?.displayName || "Económico",
       slogan: "Para arrancar ordenado",
       description: "Ideal para empezar prolijo, sin sumar complejidad.",
-      price: "MDQ",
+      price: formatPrice(publicPlans.ECONOMICO),
       highlighted: false,
       features: [
         "Sistema de caja básico",
@@ -20,10 +58,11 @@ export function Pricing() {
       whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     },
     {
-      name: "Profesional",
+      code: "PROFESIONAL",
+      name: publicPlans.PROFESIONAL?.displayName || "Profesional",
       slogan: "Para negocios que ya funcionan",
       description: "Más control operativo para vender mejor cada día.",
-      price: "Pro",
+      price: formatPrice(publicPlans.PROFESIONAL),
       highlighted: true,
       features: [
         "Todo lo de Económico, más:",
@@ -40,10 +79,11 @@ export function Pricing() {
       whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     },
     {
-      name: "Escala",
+      code: "ESCALA",
+      name: publicPlans.ESCALA?.displayName || "PyMe",
       slogan: "Para locales con varias sedes",
       description: "Pensado para equipos con operación en crecimiento.",
-      price: "Multi",
+      price: formatPrice(publicPlans.ESCALA),
       highlighted: false,
       features: [
         "Todo lo de Profesional, más:",
@@ -54,7 +94,7 @@ export function Pricing() {
       ],
       whatsappLink: "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia"
     }
-  ];
+  ]), [publicPlans]);
 
   return (
     <section id="pricing" className="py-24 bg-slate-50 relative">
@@ -67,7 +107,7 @@ export function Pricing() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-6xl mx-auto items-stretch">
           {plans.map((plan, index) => (
             <motion.div
-              key={index}
+              key={plan.code}
               initial={{ opacity: 0, y: 30 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
@@ -92,6 +132,9 @@ export function Pricing() {
                 <h3 className={`text-3xl font-black mb-2 font-display ${plan.highlighted ? 'text-white' : 'text-foreground'}`}>
                   {plan.name}
                 </h3>
+                <p className={`text-3xl font-black mb-2 ${plan.highlighted ? 'text-white' : 'text-primary'}`}>
+                  {plan.price}
+                </p>
                 <p className={`text-base font-medium ${plan.highlighted ? 'text-primary-foreground/90' : 'text-muted-foreground'}`}>
                   {plan.description}
                 </p>

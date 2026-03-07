@@ -81,7 +81,7 @@ export default function CashiersPage() {
     return (
       <Card>
         <CardHeader><CardTitle>Cajeros</CardTitle></CardHeader>
-        <CardContent>Disponible en planes Profesional y Escala.</CardContent>
+        <CardContent>Disponible en planes Profesional y PyMe.</CardContent>
       </Card>
     );
   }

@@ -14,6 +14,7 @@ import { getPasswordWeakFlag, setPasswordWeakFlag } from "../services/password-w
 import { pool } from "../db";
 import { getStatuses } from "../services/statuses";
 import { getTenantAddons as getTenantAddonsFlags } from "../services/tenant-addons";
+import { getPlanDisplayName } from "@shared/plan-display";
 
 
 const changePasswordSchema = z.object({
@@ -171,7 +172,7 @@ export function registerTenantRoutes(app: Express) {
       const tenant = await storage.getTenantById(req.auth!.tenantId!);
       const plans = await storage.getPlans();
       const dbPlan = plans.find((p) => p.id === tenant?.planId);
-      res.json({ data: plan ? { ...plan, description: (dbPlan as any)?.description || null, priceMonthly: (dbPlan as any)?.priceMonthly || null, currency: (dbPlan as any)?.currency || "ARS" } : null });
+      res.json({ data: plan ? { ...plan, name: getPlanDisplayName(plan.planCode, plan.name), description: (dbPlan as any)?.description || null, priceMonthly: (dbPlan as any)?.priceMonthly || null, currency: (dbPlan as any)?.currency || "ARS" } : null });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

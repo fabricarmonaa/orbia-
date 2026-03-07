@@ -14,6 +14,7 @@ import PublicTracking from "@/pages/public-tracking";
 import DeliveryLogin from "@/pages/delivery-login";
 import DeliveryPanel from "@/pages/delivery-panel";
 import PublicTosPage from "@/pages/public-tos";
+import LegalPage from "@/pages/legal-page";
 import { SessionLifecycleManager } from "@/components/session-lifecycle-manager";
 import { PwaRuntime } from "@/components/pwa-runtime";
 import { AuthGuard } from "@/components/auth-guard";
@@ -34,6 +35,10 @@ function Router() {
       <Route path="/delivery/panel" component={DeliveryPanel} />
       <Route path="/tracking/:id" component={PublicTracking} />
       <Route path="/t/:slug/tos" component={PublicTosPage} />
+      <Route path="/legal/terms" component={LegalPage} />
+      <Route path="/legal/privacy" component={LegalPage} />
+      <Route path="/legal/:slug/terms" component={LegalPage} />
+      <Route path="/legal/:slug/privacy" component={LegalPage} />
       <Route component={NotFound} />
     </Switch>
   );

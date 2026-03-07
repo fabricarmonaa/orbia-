@@ -4,6 +4,7 @@ import { Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import logoOrbia from "@assets/WhatsApp_Image_2026-02-25_at_15.35.49-removebg-preview_1772154794159.png";
+import { getAppOrigin } from "@/lib/app-origin";
 
 export function Navbar() {
   const [isScrolled, setIsScrolled] = useState(false);
@@ -24,12 +25,8 @@ export function Navbar() {
     { name: "FAQ", href: "#faq" },
   ];
 
-  const whatsappLink = (import.meta.env.VITE_WHATSAPP_LINK as string | undefined) || "https://wa.me/5492236979026?text=Quiero%20contratar%20un%20plan%20de%20Orbia";
-  let appUrl = (import.meta.env.VITE_APP_BASE_URL as string | undefined) || (import.meta.env.MODE === 'production' ? 'https://app.orbiapanel.com' : 'http://localhost:5000');
-  if (!appUrl.startsWith('http://') && !appUrl.startsWith('https://')) {
-    appUrl = `https://${appUrl}`;
-  }
-  const loginUrl = `${appUrl}/login`;
+  const appOrigin = getAppOrigin();
+  const loginUrl = `${appOrigin}/login`;
 
   return (
     <header
@@ -66,9 +63,7 @@ export function Navbar() {
               </a>
             </Button>
             <Button asChild className="rounded-full px-6 shadow-md shadow-primary/20 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-300">
-              <a href={whatsappLink} target="_blank" rel="noopener noreferrer">
-                Contratar un plan
-              </a>
+              <a href="#signup">Iniciá tu prueba gratis</a>
             </Button>
           </div>
 
@@ -111,9 +106,7 @@ export function Navbar() {
                   </a>
                 </Button>
                 <Button asChild className="w-full rounded-full">
-                  <a href={whatsappLink} target="_blank" rel="noopener noreferrer" onClick={() => setMobileMenuOpen(false)}>
-                    Contratar un plan
-                  </a>
+                  <a href="#signup" onClick={() => setMobileMenuOpen(false)}>Iniciá tu prueba gratis</a>
                 </Button>
               </div>
             </div>

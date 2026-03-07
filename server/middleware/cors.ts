@@ -22,12 +22,13 @@ const landingOrigins = [
 export function corsGuard(req: Request, res: Response, next: NextFunction) {
   const origin = req.headers.origin;
   const isPublicTracking = req.path.startsWith("/api/public/tracking");
-  const isPublicSignup = req.path === "/api/public/signup";
+  const isPublicSignup = req.path === "/api/public/signup" || req.path === "/api/public/onboard";
+  const isPublicPlans = req.path === "/api/public/plans";
 
   if (origin) {
     const isAllowed = allowedOrigins.has(origin);
-    const isAllowedPublicSignupOrigin = isPublicSignup && landingOrigins.includes(origin);
-    if (isAllowed || isPublicTracking || isAllowedPublicSignupOrigin) {
+    const isAllowedLandingPublicOrigin = (isPublicSignup || isPublicPlans) && landingOrigins.includes(origin);
+    if (isAllowed || isPublicTracking || isAllowedLandingPublicOrigin) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");

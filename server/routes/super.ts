@@ -7,7 +7,7 @@ import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
 import crypto from "crypto";
 import { db } from "../db";
-import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs } from "@shared/schema";
+import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs, tenants } from "@shared/schema";
 import { orderTypeDefinitions, orderTypePresets } from "@shared/schema/order-presets";
 import { eq, and, isNull, ilike } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
@@ -121,6 +121,17 @@ const transferInfoSchema = z.object({
   alias: z.string().trim().max(120),
   whatsapp_contact: z.string().trim().max(50),
 });
+
+const legalConfigSchema = z.object({
+  slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/, "Slug inválido"),
+  termsText: z.string().trim().min(1).max(200000),
+  privacyText: z.string().trim().min(1).max(200000),
+});
+
+const ORBIA_LEGAL_SLUG_KEY = "orbia_legal_slug";
+const ORBIA_LEGAL_TERMS_KEY = "orbia_legal_terms";
+const ORBIA_LEGAL_PRIVACY_KEY = "orbia_legal_privacy";
+const ORBIA_DEFAULT_SLUG = "orbia";
 
 
 async function buildTenantSummary(tenant: any) {
@@ -723,6 +734,62 @@ export function registerSuperRoutes(app: Express) {
       });
     } catch {
       return res.status(500).json({ error: "No se pudo cargar seguridad", code: "SUPER_SECURITY_READ_ERROR" });
+    }
+  });
+
+  app.get("/api/super/legal", superAuth, async (_req, res) => {
+    try {
+      const [slugRow, termsRow, privacyRow, appBranding] = await Promise.all([
+        storage.getSystemSetting(ORBIA_LEGAL_SLUG_KEY),
+        storage.getSystemSetting(ORBIA_LEGAL_TERMS_KEY),
+        storage.getSystemSetting(ORBIA_LEGAL_PRIVACY_KEY),
+        storage.getAppBranding(),
+      ]);
+
+      const updatedAt = [slugRow?.updatedAt, termsRow?.updatedAt, privacyRow?.updatedAt]
+        .filter(Boolean)
+        .map((d) => new Date(d as any).getTime())
+        .sort((a, b) => b - a)[0] || null;
+
+      return res.json({
+        data: {
+          slug: (slugRow?.value || ORBIA_DEFAULT_SLUG).trim().toLowerCase(),
+          termsText: termsRow?.value || "",
+          privacyText: privacyRow?.value || "",
+          logoUrl: appBranding?.orbiaLogoUrl || null,
+          updatedAt: updatedAt ? new Date(updatedAt).toISOString() : null,
+        },
+      });
+    } catch {
+      return res.status(500).json({ error: "No se pudo cargar legales", code: "SUPER_LEGAL_READ_ERROR" });
+    }
+  });
+
+  app.put("/api/super/legal", superAuth, async (req, res) => {
+    try {
+      const payload = legalConfigSchema.parse(req.body || {});
+      const slug = payload.slug.trim().toLowerCase();
+      const [tenantWithSlug] = await db
+        .select({ id: tenants.id })
+        .from(tenants)
+        .where(eq(tenants.slug, slug))
+        .limit(1);
+      if (tenantWithSlug) {
+        return res.status(409).json({ error: "El slug ya está en uso", code: "LEGAL_SLUG_TAKEN" });
+      }
+
+      await Promise.all([
+        storage.upsertSystemSetting(ORBIA_LEGAL_SLUG_KEY, slug),
+        storage.upsertSystemSetting(ORBIA_LEGAL_TERMS_KEY, payload.termsText),
+        storage.upsertSystemSetting(ORBIA_LEGAL_PRIVACY_KEY, payload.privacyText),
+      ]);
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "SUPER_LEGAL_INVALID", details: err.errors });
+      }
+      return res.status(500).json({ error: "No se pudo guardar legales", code: "SUPER_LEGAL_SAVE_ERROR" });
     }
   });
 

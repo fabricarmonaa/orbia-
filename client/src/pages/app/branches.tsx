@@ -44,7 +44,7 @@ export default function BranchesPage() {
       return;
     }
     if (!canAccess) {
-      toast({ title: "Plan requerido", description: "Esta función está disponible solo en el plan Escala.", variant: "destructive" });
+      toast({ title: "Plan requerido", description: "Esta función está disponible solo en el plan PyMe.", variant: "destructive" });
       setLocation("/app/settings");
       return;
     }

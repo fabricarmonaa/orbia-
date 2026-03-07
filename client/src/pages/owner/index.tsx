@@ -60,6 +60,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBranding } from "@/context/BrandingContext";
 import { parseApiError } from "@/lib/api-errors";
+import { getPlanDisplayName } from "@/lib/plan-display";
 import type { Tenant, Plan } from "@shared/schema";
 
 function getSubscriptionStatus(tenant: Tenant): {
@@ -166,7 +167,7 @@ export default function OwnerDashboard() {
     adminPassword: "",
     adminName: "",
   });
-  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "emails" | "security">("tenants");
+  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "emails" | "security" | "legal">("tenants");
 
   const [securityEmail, setSecurityEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -179,6 +180,12 @@ export default function OwnerDashboard() {
   const [twoFactorOtpAuthUrl, setTwoFactorOtpAuthUrl] = useState<string | null>(null);
   const [twoFactorManualSecret, setTwoFactorManualSecret] = useState<string | null>(null);
   const [twoFactorToken, setTwoFactorToken] = useState("");
+
+  const [legalSlug, setLegalSlug] = useState("orbia");
+  const [legalTermsText, setLegalTermsText] = useState("");
+  const [legalPrivacyText, setLegalPrivacyText] = useState("");
+  const [legalUpdatedAt, setLegalUpdatedAt] = useState<string | null>(null);
+  const [savingLegal, setSavingLegal] = useState(false);
 
   const [emailMode, setEmailMode] = useState<"one" | "many" | "all">("one");
   const [emailSubject, setEmailSubject] = useState("");
@@ -217,6 +224,10 @@ export default function OwnerDashboard() {
       document.title = "ORBIA - CORREOS";
       return;
     }
+    if (ownerTab === "legal") {
+      document.title = "ORBIA - TÉRMINOS & POLÍTICAS";
+      return;
+    }
     document.title = "ORBIA - ADMINISTRACIÓN";
   }, [ownerTab]);
 
@@ -232,7 +243,31 @@ export default function OwnerDashboard() {
       setSecurityEmail(secData.data?.email || "");
       setNewSecurityEmail(secData.data?.email || "");
       setTwoFactorEnabled(!!secData.data?.twoFactorEnabled);
+
+      const legalRes = await apiRequest("GET", "/api/super/legal");
+      const legalData = await legalRes.json();
+      setLegalSlug(String(legalData?.data?.slug || "orbia"));
+      setLegalTermsText(String(legalData?.data?.termsText || ""));
+      setLegalPrivacyText(String(legalData?.data?.privacyText || ""));
+      setLegalUpdatedAt(legalData?.data?.updatedAt || null);
     } catch {
+    }
+  }
+
+  async function saveLegalConfig() {
+    setSavingLegal(true);
+    try {
+      await apiRequest("PUT", "/api/super/legal", {
+        slug: legalSlug,
+        termsText: legalTermsText,
+        privacyText: legalPrivacyText,
+      });
+      toast({ title: "Términos y políticas actualizados" });
+      setLegalUpdatedAt(new Date().toISOString());
+    } catch (err: any) {
+      toast({ title: "No se pudo guardar", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setSavingLegal(false);
     }
   }
 
@@ -1124,12 +1159,13 @@ export default function OwnerDashboard() {
           </DialogContent>
         </Dialog>
 
-        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "emails" | "security")} data-testid="tabs-owner">
+        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "emails" | "security" | "legal")} data-testid="tabs-owner">
           <TabsList>
             <TabsTrigger value="tenants" data-testid="tab-tenants">Negocios</TabsTrigger>
             <TabsTrigger value="subscriptions" data-testid="tab-subscriptions">Suscripciones</TabsTrigger>
             <TabsTrigger value="emails" data-testid="tab-emails">Correos</TabsTrigger>
             <TabsTrigger value="security" data-testid="tab-security">Seguridad</TabsTrigger>
+            <TabsTrigger value="legal" data-testid="tab-legal">Terminos & politicas</TabsTrigger>
           </TabsList>
 
           <TabsContent value="tenants" className="space-y-4">
@@ -1411,7 +1447,7 @@ export default function OwnerDashboard() {
                         <CardContent className="py-4 space-y-3">
                           <div className="flex items-start justify-between gap-2">
                             <div>
-                              <p className="font-semibold leading-none">{plan.name}</p>
+                              <p className="font-semibold leading-none">{getPlanDisplayName(plan.planCode, plan.name)}</p>
                               <p className="text-xs text-muted-foreground mt-1">{plan.planCode}</p>
                             </div>
                             <Badge variant="outline">{String((plan as any).currency || "ARS")}</Badge>
@@ -1726,6 +1762,36 @@ export default function OwnerDashboard() {
                 ) : (
                   <Button variant="destructive" onClick={disableTwoFactor}>Desactivar 2FA</Button>
                 )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="legal" className="space-y-4">
+            <h2 className="text-xl font-semibold">Términos & políticas ORBIA</h2>
+            <Card>
+              <CardHeader>
+                <h3 className="font-semibold">Contenido legal público ORBIA</h3>
+                <p className="text-sm text-muted-foreground">Configurá el slug único y editá los textos que se publican en los links legales.</p>
+              </CardHeader>
+              <CardContent className="space-y-3 max-w-3xl">
+                <div className="space-y-1">
+                  <Label>Slug legal ORBIA (único)</Label>
+                  <Input value={legalSlug} onChange={(e) => setLegalSlug(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"))} placeholder="orbia" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Términos y condiciones</Label>
+                  <Textarea value={legalTermsText} onChange={(e) => setLegalTermsText(e.target.value)} className="min-h-[180px]" />
+                </div>
+                <div className="space-y-1">
+                  <Label>Política de privacidad</Label>
+                  <Textarea value={legalPrivacyText} onChange={(e) => setLegalPrivacyText(e.target.value)} className="min-h-[180px]" />
+                </div>
+                <div className="text-sm text-muted-foreground">Última actualización: {legalUpdatedAt ? new Date(legalUpdatedAt).toLocaleString("es-AR") : "Sin cambios"}</div>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={saveLegalConfig} disabled={savingLegal}>{savingLegal ? "Guardando..." : "Guardar legales"}</Button>
+                  <Button asChild variant="outline"><a href={`/legal/${legalSlug}/terms`} target="_blank" rel="noopener noreferrer">Ver términos</a></Button>
+                  <Button asChild variant="outline"><a href={`/legal/${legalSlug}/privacy`} target="_blank" rel="noopener noreferrer">Ver privacidad</a></Button>
+                </div>
               </CardContent>
             </Card>
           </TabsContent>

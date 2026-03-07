@@ -1,7 +1,9 @@
 import logoOrbia from "@assets/WhatsApp_Image_2026-02-25_at_15.35.49-removebg-preview_1772154794159.png";
+import { getAppOrigin } from "@/lib/app-origin";
 
 export function Footer() {
   const whatsappLink = "https://wa.me/5492236979026";
+  const appOrigin = getAppOrigin();
   
   return (
     <footer className="bg-foreground text-muted py-20 border-t border-white/10">
@@ -50,8 +52,8 @@ export function Footer() {
         <div className="pt-10 border-t border-white/10 flex flex-col md:flex-row justify-between items-center gap-6 text-sm text-muted-foreground font-bold uppercase tracking-widest">
           <p>© {new Date().getFullYear()} Orbia Software. Local & Profesional.</p>
           <div className="flex gap-8">
-            <a href="#" className="hover:text-white transition-colors">Términos</a>
-            <a href="#" className="hover:text-white transition-colors">Privacidad</a>
+            <a href={`${appOrigin}/legal/terms`} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Términos</a>
+            <a href={`${appOrigin}/legal/privacy`} target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Privacidad</a>
           </div>
         </div>
       </div>

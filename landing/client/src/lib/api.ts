@@ -1,14 +1,15 @@
-const API_BASE = (import.meta.env.VITE_APP_API_URL as string | undefined)?.replace(/\/$/, "") || "https://app.orbiapanel.com";
+import { getAppOrigin } from "@/lib/app-origin";
 
-export async function postPublicSignup(payload: {
+const API_BASE = getAppOrigin();
+
+export async function postPublicOnboard(payload: {
   companyName: string;
   ownerName: string;
   email: string;
-  phone?: string;
   password: string;
-  industry?: string;
+  industry: string;
 }) {
-  const res = await fetch(`${API_BASE}/api/public/signup`, {
+  const res = await fetch(`${API_BASE}/api/public/onboard`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -18,5 +19,5 @@ export async function postPublicSignup(payload: {
   if (!res.ok) {
     throw new Error(json?.error || "No se pudo crear la cuenta");
   }
-  return json as { ok: true; tenantCode: string; email: string; nextUrl: string };
+  return json as { ok: true; tenantCode: string; tenantSlug?: string; loginUrl: string };
 }

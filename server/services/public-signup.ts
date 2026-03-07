@@ -1,16 +1,24 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { db } from "../db";
 import { hashPassword } from "../auth";
-import { plans, tenantAddons, tenantSubscriptions, tenants, users } from "@shared/schema";
+import { branches, orderTypeDefinitions, orderTypePresets, plans, statusDefinitions, tenantAddons, tenantConfig, tenantSubscriptions, tenants, users } from "@shared/schema";
 
 export type PublicSignupInput = {
-  companyName: string;
-  ownerName: string;
+  tenantName: string;
+  adminName: string;
+  industry?: string | null;
+  dni?: string | null;
   email: string;
   phone?: string | null;
   password: string;
-  industry?: string | null;
+  appOrigin?: string | null;
 };
+
+function resolveAppOrigin(raw?: string | null) {
+  const env = (raw || process.env.PUBLIC_APP_URL || process.env.APP_ORIGIN || "").trim();
+  if (env) return env.replace(/\/$/, "");
+  return process.env.NODE_ENV === "production" ? "https://app.orbiapanel.com" : "http://localhost:5000";
+}
 
 function slugify(input: string) {
   return input
@@ -59,8 +67,9 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
     throw err;
   }
 
-  const tenantCode = await buildUniqueTenantCode(input.companyName);
+  const tenantCode = await buildUniqueTenantCode(input.tenantName);
   const slug = tenantCode.toLowerCase();
+  const appOrigin = resolveAppOrigin(input.appOrigin);
   const now = new Date();
   const trialEnd = new Date(now.getTime() + 3 * 24 * 60 * 60 * 1000);
   const passwordHash = await hashPassword(input.password);
@@ -71,7 +80,7 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       .values({
         code: tenantCode,
         slug,
-        name: input.companyName,
+        name: input.tenantName,
         planId: plan.id,
         subscriptionStartDate: now,
         subscriptionEndDate: trialEnd,
@@ -80,12 +89,21 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       })
       .returning({ id: tenants.id });
 
+    const [branch] = await tx
+      .insert(branches)
+      .values({
+        tenantId: tenant.id,
+        name: "Casa Central",
+        isActive: true,
+      })
+      .returning({ id: branches.id });
+
     await tx.insert(users).values({
       tenantId: tenant.id,
-      branchId: null,
+      branchId: branch.id,
       email: input.email.trim().toLowerCase(),
       password: passwordHash,
-      fullName: input.ownerName,
+      fullName: input.adminName,
       role: "admin",
       scope: "TENANT",
       isActive: true,
@@ -118,11 +136,72 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
           updatedAt: now,
         },
       });
+
+    await tx.insert(tenantConfig).values({
+      tenantId: tenant.id,
+      businessName: input.tenantName,
+      businessType: input.industry || null,
+      currency: "ARS",
+      trackingExpirationHours: 24,
+      language: "es",
+      configJson: {
+        onboarding: {
+          dni: input.dni || null,
+          phone: input.phone || null,
+        },
+      },
+    });
+
+    const defaultStatuses = [
+      { entityType: "ORDER", code: "PENDING", label: "Pendiente", color: "#F59E0B", sortOrder: 0, isDefault: true, isFinal: false },
+      { entityType: "ORDER", code: "IN_PROGRESS", label: "En proceso", color: "#3B82F6", sortOrder: 1, isDefault: false, isFinal: false },
+      { entityType: "ORDER", code: "READY", label: "Listo", color: "#8B5CF6", sortOrder: 2, isDefault: false, isFinal: false },
+      { entityType: "ORDER", code: "DELIVERED", label: "Entregado", color: "#10B981", sortOrder: 3, isDefault: false, isFinal: true },
+      { entityType: "PRODUCT", code: "ACTIVE", label: "Activo", color: "#10B981", sortOrder: 0, isDefault: true, isFinal: false },
+      { entityType: "DELIVERY", code: "PENDING", label: "Pendiente", color: "#F59E0B", sortOrder: 0, isDefault: true, isFinal: false },
+    ] as const;
+
+    await tx.insert(statusDefinitions).values(defaultStatuses.map((status) => ({
+      tenantId: tenant.id,
+      ...status,
+      isActive: true,
+      isLocked: false,
+    })));
+
+    const defaultOrderTypes = [
+      { code: "PEDIDO", label: "Pedido" },
+      { code: "ENCARGO", label: "Encargo" },
+      { code: "TURNO", label: "Turno" },
+      { code: "SERVICIO", label: "Servicio" },
+    ];
+
+    for (const ot of defaultOrderTypes) {
+      const [typeRow] = await tx.insert(orderTypeDefinitions).values({
+        tenantId: tenant.id,
+        code: ot.code,
+        label: ot.label,
+        isActive: true,
+      }).returning({ id: orderTypeDefinitions.id });
+
+      await tx.insert(orderTypePresets).values({
+        tenantId: tenant.id,
+        orderTypeId: typeRow.id,
+        code: "default",
+        label: "Default",
+        isActive: true,
+        sortOrder: 0,
+      });
+    }
   });
+
+  const loginUrl = `${appOrigin}/login?tenant=${encodeURIComponent(tenantCode)}`;
 
   return {
     tenantCode,
+    tenantSlug: slug,
+    appOrigin,
+    loginUrl,
     email: input.email.trim().toLowerCase(),
-    nextUrl: `https://app.orbiapanel.com/login?tenantCode=${encodeURIComponent(tenantCode)}`,
+    nextUrl: loginUrl,
   };
 }
