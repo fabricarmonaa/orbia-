@@ -167,12 +167,18 @@ function normalizeAllowedRecipients(input: unknown): string[] {
   return Array.from(new Set(arr.map((v) => normalizeWhatsAppRecipientForMeta(String(v || ""))).filter(Boolean)));
 }
 
-function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, target: { to: string; candidates?: string[]; allowed?: string[] }) {
+function getConversationCanonicalRecipient(conversation: { recipientPhoneCanonical?: string | null; customerPhone?: string | null }) {
+  const canonical = normalizeWhatsAppRecipientForMeta(conversation.recipientPhoneCanonical || "");
+  if (canonical) return canonical;
+  return normalizeWhatsAppRecipientForMeta(conversation.customerPhone || "");
+}
+
+function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, targetTo: string) {
   const runtime = getChannelRuntimeInfo(channel);
   if (runtime.environmentMode !== "sandbox") return;
-  const allowed = target.allowed || runtime.sandboxAllowedRecipients || [];
+  const allowed = runtime.sandboxAllowedRecipients || [];
   if (!allowed.length) return;
-  const normalized = normalizeWhatsAppRecipientForMeta(target.to);
+  const normalized = normalizeWhatsAppRecipientForMeta(targetTo);
   if (allowed.includes(normalized)) return;
   throw new WhatsAppProviderError(
     `Sandbox recipient not allowed (${normalized})`,
@@ -182,53 +188,58 @@ function assertSandboxRecipientAllowed(channel: TenantWhatsappChannel, target: {
         code: 131030,
         message: "Número de teléfono del destinatario no incluido en la lista de autorizados.",
         error_data: {
-          details: `Añadí ${normalized} a la lista de destinatarios permitidos para sandbox y volvé a intentarlo.`,
+          details: `Este chat está ligado a ${normalized}. Agregalo en destinatarios permitidos de sandbox para este canal.`,
         },
       },
       resolvedRecipient: normalized,
-      candidateRecipients: target.candidates || [],
       sandboxAllowedRecipients: allowed,
+      sandboxRecipientOverride: false,
     },
   );
 }
 
-
-
 type ReplyTargetContext = {
   conversationId: number;
   conversationCustomerPhone: string;
+  conversationCanonicalPhone?: string | null;
+  conversationWaId?: string | null;
   mode: "manual_text" | "manual_template" | "send_test";
   overrideTo?: string | null;
 };
 
 export function resolveWhatsAppReplyTarget(channel: TenantWhatsappChannel, ctx: ReplyTargetContext) {
   const runtime = getChannelRuntimeInfo(channel);
-  const baseConversation = normalizeWhatsAppRecipientForMeta(ctx.conversationCustomerPhone);
+  const canonicalConversation = normalizeWhatsAppRecipientForMeta(ctx.conversationCanonicalPhone || ctx.conversationCustomerPhone);
   const override = normalizeWhatsAppRecipientForMeta(ctx.overrideTo || "");
-  const sandboxRecipient = normalizeWhatsAppRecipientForMeta(runtime.sandboxRecipientPhone || "");
-
-  const candidates = runtime.environmentMode === "sandbox"
-    ? [override, sandboxRecipient, baseConversation].filter(Boolean)
-    : [override, baseConversation].filter(Boolean);
-
-  const allowed = runtime.sandboxAllowedRecipients || [];
-  let chosen = candidates[0] || baseConversation;
-  let source = candidates[0] === override ? "override" : candidates[0] === sandboxRecipient ? "sandbox_recipient" : "conversation_customer_phone";
-
-  if (runtime.environmentMode === "sandbox" && allowed.length) {
-    const allowedCandidate = candidates.find((c) => allowed.includes(c));
-    if (allowedCandidate) {
-      chosen = allowedCandidate;
-      source = allowedCandidate === override ? "override_allowed" : allowedCandidate === sandboxRecipient ? "sandbox_recipient_allowed" : "conversation_phone_allowed";
-    }
+  if (ctx.mode === "send_test" && override) {
+    return {
+      environmentMode: runtime.environmentMode,
+      to: override,
+      source: "send_test_override",
+      sandboxOverrideApplied: false,
+      allowed: runtime.sandboxAllowedRecipients || [],
+    };
   }
-
+  if (!canonicalConversation) {
+    throw new WhatsAppProviderError(
+      "Conversation recipient is missing or invalid",
+      400,
+      {
+        error: {
+          code: 422001,
+          message: "No se pudo resolver el destinatario canónico de la conversación.",
+          error_data: { details: "Abrí un chat con inbound válido o re-vinculá el destinatario antes de enviar." },
+        },
+        conversationId: ctx.conversationId,
+      },
+    );
+  }
   return {
     environmentMode: runtime.environmentMode,
-    to: chosen,
-    source,
-    candidates,
-    allowed,
+    to: canonicalConversation,
+    source: "conversation_recipient_canonical",
+    sandboxOverrideApplied: false,
+    allowed: runtime.sandboxAllowedRecipients || [],
   };
 }
 
@@ -396,8 +407,11 @@ export async function findOrCreateConversation(input: {
   channelId: number;
   customerPhone: string;
   customerName?: string | null;
+  recipientPhoneCanonical?: string | null;
+  recipientWaId?: string | null;
 }) {
   const customerPhone = normalizePhone(input.customerPhone);
+  const recipientPhoneCanonical = normalizeWhatsAppRecipientForMeta(input.recipientPhoneCanonical || customerPhone);
   const [found] = await db
     .select()
     .from(whatsappConversations)
@@ -405,12 +419,27 @@ export async function findOrCreateConversation(input: {
       and(
         eq(whatsappConversations.tenantId, input.tenantId),
         eq(whatsappConversations.channelId, input.channelId),
-        eq(whatsappConversations.customerPhone, customerPhone),
+        eq(whatsappConversations.recipientPhoneCanonical, recipientPhoneCanonical),
       ),
     )
     .limit(1);
 
-  if (found) return { conversation: found, created: false as const };
+  if (found) {
+    if ((!found.recipientWaId && input.recipientWaId) || found.recipientPhoneCanonical !== recipientPhoneCanonical) {
+      const [updated] = await db
+        .update(whatsappConversations)
+        .set({
+          recipientPhoneCanonical,
+          recipientWaId: input.recipientWaId || found.recipientWaId,
+          updatedAt: new Date(),
+        })
+        .where(eq(whatsappConversations.id, found.id))
+        .returning();
+      return { conversation: updated || found, created: false as const };
+    }
+    return { conversation: found, created: false as const };
+  }
+
 
   const customerRows = await db
     .select()
@@ -429,6 +458,9 @@ export async function findOrCreateConversation(input: {
       customerMatchConfidence: matchedCustomer ? 100 : null,
       linkedAt: matchedCustomer ? new Date() : null,
       customerPhone,
+      recipientPhoneCanonical,
+      recipientWaId: input.recipientWaId || null,
+      sandboxRecipientOverride: false,
       customerName: input.customerName || matchedCustomer?.name || null,
       status: "OPEN",
       ownerMode: "human",
@@ -563,6 +595,8 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
           channelId: channel.id,
           customerPhone: from,
           customerName: name,
+          recipientPhoneCanonical: from,
+          recipientWaId: event.contact?.wa_id || null,
         });
 
         if (conversationCreated) {
@@ -821,16 +855,42 @@ export async function sendConversationWhatsAppMessage(input: {
   const target = resolveWhatsAppReplyTarget(channel, {
     conversationId: conversation.id,
     conversationCustomerPhone: conversation.customerPhone,
+    conversationCanonicalPhone: conversation.recipientPhoneCanonical,
+    conversationWaId: conversation.recipientWaId,
     mode: "manual_text",
   });
 
+
+  const canonicalFromConversation = getConversationCanonicalRecipient(conversation);
+  if (!canonicalFromConversation || canonicalFromConversation !== target.to) {
+    waLog("reply_manual_target_mismatch", {
+      conversationId: conversation.id,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      resolvedTarget: target.to,
+      expectedCanonicalTarget: canonicalFromConversation,
+    });
+    throw new WhatsAppProviderError(
+      "Conversation recipient mismatch",
+      400,
+      {
+        error: {
+          code: 422002,
+          message: "El destinatario del chat es inconsistente.",
+          error_data: { details: "No se envió el mensaje para evitar envío cruzado entre conversaciones." },
+        },
+      },
+    );
+  }
   waLog("reply_manual_start", {
     conversationId: conversation.id,
     channelId: conversation.channelId,
-    originalRecipient: conversation.customerPhone,
-    normalizedRecipient: target.to,
+    storedConversationPhone: conversation.customerPhone,
+    storedCanonicalPhone: conversation.recipientPhoneCanonical,
+    storedWaId: conversation.recipientWaId,
+    resolvedTarget: target.to,
     targetSource: target.source,
-    targetCandidates: target.candidates,
+    sandboxOverrideApplied: target.sandboxOverrideApplied,
     environmentMode: target.environmentMode,
     windowOpen,
     modeUsed: windowOpen ? "text_freeform" : "blocked_window_closed",
@@ -844,7 +904,7 @@ export async function sendConversationWhatsAppMessage(input: {
       payload: {
         conversationId: conversation.id,
         originalRecipient: conversation.customerPhone,
-        normalizedRecipient: target.to,
+        resolvedTarget: target.to,
         reason: "window_closed",
       },
       processingStatus: "FAILED",
@@ -853,14 +913,14 @@ export async function sendConversationWhatsAppMessage(input: {
     throw new WhatsAppWindowClosedError();
   }
 
-  assertSandboxRecipientAllowed(channel, target);
+  assertSandboxRecipientAllowed(channel, target.to);
   const provider = resolveWhatsappProvider(channel.provider);
   const result = await provider.sendTextMessage(channel, target.to, input.text);
 
   waLog("reply_manual_meta_response", {
     conversationId: conversation.id,
     modeUsed: "text_freeform",
-    normalizedRecipient: target.to,
+    resolvedTarget: target.to,
     raw: result.raw,
   });
 
@@ -881,8 +941,9 @@ export async function sendConversationWhatsAppMessage(input: {
     eventType: "manual_inbox_send",
     payload: {
       conversationId: conversation.id,
-      originalRecipient: conversation.customerPhone,
-      normalizedRecipient: target.to,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      resolvedTarget: target.to,
       text: input.text,
       modeUsed: "text_freeform",
       executedByUserId: input.executedByUserId,
@@ -937,17 +998,43 @@ export async function sendConversationTemplateMessage(input: {
   const target = resolveWhatsAppReplyTarget(channel, {
     conversationId: conversation.id,
     conversationCustomerPhone: conversation.customerPhone,
+    conversationCanonicalPhone: conversation.recipientPhoneCanonical,
+    conversationWaId: conversation.recipientWaId,
     mode: "manual_template",
   });
-  assertSandboxRecipientAllowed(channel, target);
+  assertSandboxRecipientAllowed(channel, target.to);
 
+
+  const canonicalFromConversation = getConversationCanonicalRecipient(conversation);
+  if (!canonicalFromConversation || canonicalFromConversation !== target.to) {
+    waLog("reply_manual_target_mismatch", {
+      conversationId: conversation.id,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      resolvedTarget: target.to,
+      expectedCanonicalTarget: canonicalFromConversation,
+    });
+    throw new WhatsAppProviderError(
+      "Conversation recipient mismatch",
+      400,
+      {
+        error: {
+          code: 422002,
+          message: "El destinatario del chat es inconsistente.",
+          error_data: { details: "No se envió el mensaje para evitar envío cruzado entre conversaciones." },
+        },
+      },
+    );
+  }
   waLog("reply_manual_start", {
     conversationId: conversation.id,
     channelId: conversation.channelId,
-    originalRecipient: conversation.customerPhone,
-    normalizedRecipient: target.to,
+    storedConversationPhone: conversation.customerPhone,
+    storedCanonicalPhone: conversation.recipientPhoneCanonical,
+    storedWaId: conversation.recipientWaId,
+    resolvedTarget: target.to,
     targetSource: target.source,
-    targetCandidates: target.candidates,
+    sandboxOverrideApplied: target.sandboxOverrideApplied,
     environmentMode: target.environmentMode,
     windowOpen: isWithin24hWindow(conversation.lastInboundAt),
     modeUsed: "template_manual",
@@ -973,11 +1060,11 @@ export async function sendConversationTemplateMessage(input: {
     eventType: "manual_inbox_send_template",
     payload: {
       conversationId: conversation.id,
-      originalRecipient: conversation.customerPhone,
-      normalizedRecipient: target.to,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      resolvedTarget: target.to,
       targetSource: target.source,
-      targetCandidates: target.candidates,
-      templateCode: input.templateCode,
+            templateCode: input.templateCode,
       modeUsed: "template_manual",
       executedByUserId: input.executedByUserId,
       result,
@@ -1186,6 +1273,7 @@ export async function sendTestWhatsAppMessage(input: {
   const target = resolveWhatsAppReplyTarget(channel, {
     conversationId: 0,
     conversationCustomerPhone: input.to,
+    conversationCanonicalPhone: input.to,
     mode: "send_test",
     overrideTo: input.to,
   });
@@ -1195,14 +1283,15 @@ export async function sendTestWhatsAppMessage(input: {
     branchId: channel.branchId,
     channelId: channel.id,
     customerPhone: normalizedTo,
+    recipientPhoneCanonical: normalizedTo,
   });
 
   const provider = resolveWhatsappProvider(channel.provider);
-  assertSandboxRecipientAllowed(channel, target);
+  assertSandboxRecipientAllowed(channel, target.to);
 
   waLog("send_test_start", {
     originalRecipientInput: input.to,
-    normalizedRecipient: target.to,
+    resolvedTarget: target.to,
     phoneNumberId: channel.phoneNumberId,
     businessAccountId: channel.businessAccountId,
     accessTokenSource: channel.accessTokenEncrypted ? "db_encrypted" : "missing",

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { getWhatsappConversationStatusLabel } from "@/lib/whatsapp-conversation-status";
 
 const STATUS_OPTIONS = ["OPEN", "PENDING_CUSTOMER", "PENDING_BUSINESS", "WAITING_INTERNAL", "RESOLVED", "CLOSED"] as const;
 const USAGE_FILTER_OPTIONS = ["all", "greeting", "follow_up", "reengagement", "confirmation", "reminder", "quote_or_budget", "handoff_human", "error_fallback", "closing", "custom"] as const;
@@ -35,6 +36,7 @@ export default function WhatsappConversationsPage() {
   const [automationEnabled, setAutomationEnabled] = useState(false);
   const [automationPausedReason, setAutomationPausedReason] = useState("");
   const [templateUsageFilter, setTemplateUsageFilter] = useState("all");
+  const [searchTerm, setSearchTerm] = useState("");
 
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -45,10 +47,13 @@ export default function WhatsappConversationsPage() {
     currentSelectedIdRef.current = selected?.id ?? null;
   }, [selected?.id]);
 
-  const sortedConversations = useMemo(
-    () => [...conversations].sort((a, b) => new Date(b.lastMessageAt || b.createdAt).getTime() - new Date(a.lastMessageAt || a.createdAt).getTime()),
-    [conversations],
-  );
+  const sortedConversations = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const filtered = q
+      ? conversations.filter((c) => String(c.customerName || "").toLowerCase().includes(q) || String(c.customerPhone || "").includes(q))
+      : conversations;
+    return [...filtered].sort((a, b) => new Date(b.lastMessageAt || b.createdAt).getTime() - new Date(a.lastMessageAt || a.createdAt).getTime());
+  }, [conversations, searchTerm]);
 
   function upsertConversation(conversation: any) {
     setConversations((prev: any[]) => {
@@ -95,7 +100,7 @@ export default function WhatsappConversationsPage() {
 
   async function loadUsers() {
     try {
-      const res = await apiRequest("GET", "/api/branch-users");
+      const res = await apiRequest("GET", "/api/whatsapp/assignable-users");
       const data = await res.json();
       setUsers(data.data || []);
     } catch {
@@ -359,7 +364,10 @@ export default function WhatsappConversationsPage() {
   return (
     <div className="p-6 space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">WhatsApp Inbox</h1>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold">WhatsApp Inbox</h1>
+          <Input value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Buscar por nombre o teléfono..." className="w-[280px]" />
+        </div>
         <div className="flex items-center gap-2">
           <Badge variant={streamStatus === "live" ? "secondary" : "outline"}>{streamStatus}</Badge>
           <span className="text-xs text-muted-foreground">{lastRealtimeAt ? new Date(lastRealtimeAt).toLocaleTimeString() : "Sin eventos"}</span>
@@ -375,10 +383,11 @@ export default function WhatsappConversationsPage() {
               <button key={c.id} onClick={() => { setSelected(c); loadMessages(c.id); loadTemplateSuggestions(c.id); loadTimeline(c.id); loadCustomerMatches(c.id); }} className={`w-full text-left border rounded-md p-2 hover:bg-muted/50 ${selected?.id === c.id ? "border-primary" : ""}`}>
                 <div className="flex items-center justify-between">
                   <p className="font-medium">{c.customerName || c.customerPhone}</p>
-                  <div className="flex gap-1"><Badge>{c.status}</Badge><Badge variant={c.windowOpen ? "secondary" : "destructive"}>{c.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge></div>
+                  <div className="flex gap-1"><Badge>{getWhatsappConversationStatusLabel(c.status)}</Badge><Badge variant={c.windowOpen ? "secondary" : "destructive"}>{c.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge>{c.sandboxRecipientOverride ? <Badge variant="outline">sandbox recipient override</Badge> : null}</div>
                 </div>
                 <p className="text-xs text-muted-foreground">{c.customerPhone}</p>
-                <p className="text-xs text-muted-foreground">No leídos: {c.unreadCount} · Asignado: {c.assignedUserId || "-"}</p>
+                <p className="text-xs text-muted-foreground">{getWhatsappConversationStatusLabel(c.status)} · No leídos: {c.unreadCount}</p>
+                <p className="text-xs text-muted-foreground">{c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : "Sin actividad"} · Asignado: {c.assignedUserId || "Sin asignar"}</p>
                 <p className="text-xs text-muted-foreground">Cliente: {c.customerId ? `#${c.customerId}` : "sin vincular"} · owner: {c.ownerMode || "human"}</p>
               </button>
             ))}
@@ -407,8 +416,8 @@ export default function WhatsappConversationsPage() {
                 </div>
 
                 <div className="grid md:grid-cols-3 gap-2 border rounded-md p-2">
-                  <div><Label>Estado</Label><Select value={selected.status} onValueChange={changeStatus}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
-                  <div><Label>Asignación</Label><Select value={selected.assignedUserId ? String(selected.assignedUserId) : "none"} onValueChange={assignConversation}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sin asignar</SelectItem>{users.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.fullName}</SelectItem>)}</SelectContent></Select></div>
+                  <div><Label>Estado</Label><Select value={selected.status} onValueChange={changeStatus}><SelectTrigger><SelectValue placeholder={getWhatsappConversationStatusLabel(selected.status)} /></SelectTrigger><SelectContent>{STATUS_OPTIONS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent></Select></div>
+                  <div><Label>Asignación</Label><Select value={selected.assignedUserId ? String(selected.assignedUserId) : "none"} onValueChange={assignConversation}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sin asignar</SelectItem>{users.length ? users.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.fullName}</SelectItem>) : <SelectItem value="none" disabled>No hay usuarios disponibles para asignar en esta sucursal.</SelectItem>}</SelectContent></Select></div>
                   <div className="flex items-end"><Button variant="secondary" onClick={markRead} disabled={busyAction === "mark-read"}>Marcar leído</Button></div>
                 </div>
 
@@ -446,13 +455,17 @@ export default function WhatsappConversationsPage() {
 
             <div className="space-y-2 max-h-[45vh] overflow-auto">
               {messages.map((m) => (
-                <div key={m.id} className="border rounded-md p-2">
-                  <div className="flex gap-2 items-center">
-                    <Badge variant={m.direction === "INBOUND" ? "secondary" : "outline"}>{m.direction}</Badge>
-                    <Badge variant="outline">{m.status}</Badge>
-                    <span className="text-xs text-muted-foreground">{new Date(m.createdAt).toLocaleString()}</span>
+                <div key={m.id} className={`flex ${m.direction === "OUTBOUND" ? "justify-end" : "justify-start"}`}>
+                  <div className={`max-w-[78%] rounded-2xl p-3 border ${m.direction === "OUTBOUND" ? "bg-emerald-50 border-emerald-200" : "bg-white border-gray-200"}`}>
+                    <div className="flex gap-2 items-center text-[11px] text-muted-foreground">
+                      <span>{m.direction === "OUTBOUND" ? "Vos" : "Cliente"}</span>
+                      <span>·</span>
+                      <span>{new Date(m.createdAt).toLocaleTimeString()}</span>
+                      <span>·</span>
+                      <span>{m.status === "READ" ? "✓✓ leído" : m.status === "DELIVERED" ? "✓✓ entregado" : m.status === "SENT" ? "✓ enviado" : m.status}</span>
+                    </div>
+                    <p className="text-sm mt-1 whitespace-pre-wrap">{m.contentText || "(sin texto)"}</p>
                   </div>
-                  <p className="text-sm mt-1 whitespace-pre-wrap">{m.contentText || "(sin texto)"}</p>
                 </div>
               ))}
             </div>
@@ -467,7 +480,7 @@ export default function WhatsappConversationsPage() {
               </div>
             ) : null}
 
-            {selected ? <div className="flex gap-2 pt-2 border-t"><Input value={reply} onChange={(e) => setReply(e.target.value)} placeholder="Responder manualmente..." /><Button onClick={sendReply} disabled={busyAction === "send" || !reply.trim()}>Enviar</Button></div> : null}
+            {selected ? <div className="flex gap-2 pt-2 border-t"><Input value={reply} onChange={(e) => setReply(e.target.value)} placeholder={selected?.windowOpen ? "Responder manualmente..." : "Ventana cerrada: usá plantilla"} /><Button onClick={sendReply} disabled={busyAction === "send" || !reply.trim() || !selected?.windowOpen}>Enviar</Button></div> : null}
           </CardContent>
         </Card>
       </div>

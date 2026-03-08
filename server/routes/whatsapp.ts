@@ -32,6 +32,9 @@ import {
 } from "../services/whatsapp-service";
 import { WhatsAppProviderError } from "../services/whatsapp-provider";
 import { storage } from "../storage";
+import { and, eq, isNull } from "drizzle-orm";
+import { users } from "@shared/schema";
+import { db } from "../db";
 import { whatsappRealtimeBus } from "../services/whatsapp-realtime";
 
 const channelSchema = z.object({
@@ -281,6 +284,29 @@ export function registerWhatsappRoutes(app: Express) {
         clearInterval(heartbeat);
         unsubscribe();
       });
+    },
+  );
+
+
+
+  app.get(
+    "/api/whatsapp/assignable-users",
+    tenantAuth,
+    requireAddon("whatsapp_inbox"),
+    enforceBranchScope,
+    async (req, res) => {
+      const tenantId = req.auth!.tenantId!;
+      const branchId = req.auth!.scope === "BRANCH" ? req.auth!.branchId : null;
+      const rows = await db
+        .select({ id: users.id, fullName: users.fullName, role: users.role, scope: users.scope, branchId: users.branchId })
+        .from(users)
+        .where(and(eq(users.tenantId, tenantId), eq(users.isActive, true), isNull(users.deletedAt)));
+      const data = rows.filter((u) => {
+        if (!branchId) return true;
+        if (u.scope === "TENANT") return true;
+        return u.branchId === branchId;
+      });
+      return res.json({ data });
     },
   );
 
