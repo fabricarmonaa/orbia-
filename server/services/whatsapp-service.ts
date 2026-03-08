@@ -256,6 +256,24 @@ export function resolveWhatsAppReplyTarget(channel: TenantWhatsappChannel, ctx: 
   };
 }
 
+
+function applySandboxMetaRecipientTransform(channel: TenantWhatsappChannel, target: string) {
+  const runtime = getChannelRuntimeInfo(channel);
+  const normalized = normalizeWhatsAppRecipientForMeta(target);
+  if (runtime.environmentMode !== "sandbox") {
+    return { target: normalized, transformed: false, reason: null as string | null };
+  }
+  if (normalized.startsWith("549") && normalized.length >= 12) {
+    const compact = `54${normalized.slice(3)}`;
+    return {
+      target: compact,
+      transformed: compact !== normalized,
+      reason: compact !== normalized ? "sandbox_ar_mobile_strip9" : null,
+    };
+  }
+  return { target: normalized, transformed: false, reason: null as string | null };
+}
+
 function extractMetaEvents(payload: any) {
   const out: Array<{ type: string; value: any; metadata?: any; contact?: any }> = [];
   for (const entry of payload?.entry || []) {
@@ -895,6 +913,8 @@ export async function sendConversationWhatsAppMessage(input: {
       },
     );
   }
+  const delivery = applySandboxMetaRecipientTransform(channel, target.to);
+
   waLog("reply_manual_start", {
     conversationId: conversation.id,
     channelId: conversation.channelId,
@@ -902,8 +922,10 @@ export async function sendConversationWhatsAppMessage(input: {
     storedCanonicalPhone: conversation.recipientPhoneCanonical,
     storedWaId: conversation.recipientWaId,
     resolvedTarget: target.to,
+    deliveryTarget: delivery.target,
+    deliveryTransformReason: delivery.reason,
     targetSource: target.source,
-    sandboxOverrideApplied: target.sandboxOverrideApplied,
+    sandboxOverrideApplied: target.sandboxOverrideApplied || delivery.transformed,
     environmentMode: target.environmentMode,
     windowOpen,
     modeUsed: windowOpen ? "text_freeform" : "blocked_window_closed",
@@ -930,7 +952,7 @@ export async function sendConversationWhatsAppMessage(input: {
   const provider = resolveWhatsappProvider(channel.provider);
   let result: any;
   try {
-    result = await provider.sendTextMessage(channel, target.to, input.text);
+    result = await provider.sendTextMessage(channel, delivery.target, input.text);
   } catch (error: any) {
     const meta = buildMetaErrorDiagnostic(error);
     waLog("reply_manual_meta_error", {
@@ -940,13 +962,15 @@ export async function sendConversationWhatsAppMessage(input: {
       storedCanonicalPhone: conversation.recipientPhoneCanonical,
       storedWaId: conversation.recipientWaId,
       resolvedTarget: target.to,
+      deliveryTarget: delivery.target,
+      deliveryTransformReason: delivery.reason,
       environmentMode: target.environmentMode,
       ...meta,
       raw: error?.raw,
     });
     (error as any).conversationId = conversation.id;
     (error as any).channelId = conversation.channelId;
-    (error as any).resolvedTarget = target.to;
+    (error as any).resolvedTarget = delivery.target;
     (error as any).environmentMode = target.environmentMode;
     throw error;
   }
@@ -966,7 +990,7 @@ export async function sendConversationWhatsAppMessage(input: {
     providerMessageId: result.providerMessageId || null,
     contentText: input.text,
     status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: { modeUsed: "text_freeform", normalizedTo: target.to, targetSource: target.source, providerRaw: result.raw },
+    rawPayload: { modeUsed: "text_freeform", normalizedTo: delivery.target, canonicalTarget: target.to, targetSource: target.source, providerRaw: result.raw },
   });
 
   await persistWebhookEvent({
@@ -977,7 +1001,7 @@ export async function sendConversationWhatsAppMessage(input: {
       conversationId: conversation.id,
       storedConversationPhone: conversation.customerPhone,
       storedCanonicalPhone: conversation.recipientPhoneCanonical,
-      resolvedTarget: target.to,
+      resolvedTarget: delivery.target,
       text: input.text,
       modeUsed: "text_freeform",
       executedByUserId: input.executedByUserId,
@@ -1011,7 +1035,7 @@ export async function sendConversationWhatsAppMessage(input: {
     payload: { modeUsed: "text_freeform", text: input.text },
   });
 
-  return { conversation, message, result, normalizedTo: target.to, modeUsed: "text_freeform", windowOpen: true, targetSource: target.source };
+  return { conversation, message, result, normalizedTo: delivery.target, canonicalTo: target.to, modeUsed: "text_freeform", windowOpen: true, targetSource: target.source, deliveryTransformReason: delivery.reason };
 }
 
 
@@ -1038,6 +1062,7 @@ export async function sendConversationTemplateMessage(input: {
   });
   assertSandboxRecipientAllowed(channel, target.to);
 
+  const delivery = applySandboxMetaRecipientTransform(channel, target.to);
 
   const canonicalFromConversation = getConversationCanonicalRecipient(conversation);
   if (!canonicalFromConversation || canonicalFromConversation !== target.to) {
@@ -1067,8 +1092,10 @@ export async function sendConversationTemplateMessage(input: {
     storedCanonicalPhone: conversation.recipientPhoneCanonical,
     storedWaId: conversation.recipientWaId,
     resolvedTarget: target.to,
+    deliveryTarget: delivery.target,
+    deliveryTransformReason: delivery.reason,
     targetSource: target.source,
-    sandboxOverrideApplied: target.sandboxOverrideApplied,
+    sandboxOverrideApplied: target.sandboxOverrideApplied || delivery.transformed,
     environmentMode: target.environmentMode,
     windowOpen: isWithin24hWindow(conversation.lastInboundAt),
     modeUsed: "template_manual",
@@ -1077,7 +1104,7 @@ export async function sendConversationTemplateMessage(input: {
 
   let result: any;
   try {
-    result = await provider.sendTemplateMessage(channel, target.to, input.templateCode, [], "en_US");
+    result = await provider.sendTemplateMessage(channel, delivery.target, input.templateCode, [], "en_US");
   } catch (error: any) {
     const meta = buildMetaErrorDiagnostic(error);
     waLog("reply_manual_meta_error", {
@@ -1087,6 +1114,8 @@ export async function sendConversationTemplateMessage(input: {
       storedCanonicalPhone: conversation.recipientPhoneCanonical,
       storedWaId: conversation.recipientWaId,
       resolvedTarget: target.to,
+      deliveryTarget: delivery.target,
+      deliveryTransformReason: delivery.reason,
       environmentMode: target.environmentMode,
       modeUsed: "template_manual",
       templateCode: input.templateCode,
@@ -1095,7 +1124,7 @@ export async function sendConversationTemplateMessage(input: {
     });
     (error as any).conversationId = conversation.id;
     (error as any).channelId = conversation.channelId;
-    (error as any).resolvedTarget = target.to;
+    (error as any).resolvedTarget = delivery.target;
     (error as any).environmentMode = target.environmentMode;
     throw error;
   }
@@ -1108,7 +1137,7 @@ export async function sendConversationTemplateMessage(input: {
     providerMessageId: result.providerMessageId || null,
     contentText: `[template:${input.templateCode}]`,
     status: result.mocked ? "QUEUED" : "SENT",
-    rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo: target.to, targetSource: target.source, providerRaw: result.raw },
+    rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo: delivery.target, canonicalTarget: target.to, targetSource: target.source, providerRaw: result.raw },
   });
 
   await persistWebhookEvent({
@@ -1119,7 +1148,8 @@ export async function sendConversationTemplateMessage(input: {
       conversationId: conversation.id,
       storedConversationPhone: conversation.customerPhone,
       storedCanonicalPhone: conversation.recipientPhoneCanonical,
-      resolvedTarget: target.to,
+      resolvedTarget: delivery.target,
+      canonicalTarget: target.to,
       targetSource: target.source,
             templateCode: input.templateCode,
       modeUsed: "template_manual",
@@ -1154,7 +1184,7 @@ export async function sendConversationTemplateMessage(input: {
     payload: { modeUsed: "template_manual", templateCode: input.templateCode },
   });
 
-  return { conversation, message, result, normalizedTo: target.to, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt), targetSource: target.source };
+  return { conversation, message, result, normalizedTo: delivery.target, canonicalTo: target.to, modeUsed: "template_manual", windowOpen: isWithin24hWindow(conversation.lastInboundAt), targetSource: target.source, deliveryTransformReason: delivery.reason };
 }
 
 export async function listConversationsByTenant(tenantId: number, branchId?: number | null) {
