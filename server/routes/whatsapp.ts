@@ -84,12 +84,13 @@ const automationConfigSchema = z.object({
 });
 
 const automationReplySchema = z.object({
-  text: z.string().trim().min(1).max(4096),
+  text: z.string().trim().min(1).max(4096).optional(),
+  message: z.string().trim().min(1).max(4096).optional(),
   externalThreadId: z.string().trim().max(200).optional().nullable(),
   automationSessionId: z.string().trim().max(200).optional().nullable(),
   idempotencyKey: z.string().trim().min(4).max(180),
   handoff: z.boolean().optional(),
-});
+}).refine((v) => Boolean(v.text || v.message), { message: "text o message es requerido" });
 
 
 function buildMetaErrorResponse(error: any, fallbackCode: string, fallbackMessage: string) {
@@ -130,6 +131,11 @@ function buildMetaErrorResponse(error: any, fallbackCode: string, fallbackMessag
 function verifyAutomationSignature(secret: string, eventName: string, rawBody: string, signature: string) {
   const expected = createHmac("sha256", secret).update(`${eventName}.${rawBody}`).digest("hex");
   return expected === signature;
+}
+
+function automationLog(event: string, payload: Record<string, unknown>) {
+  if (String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() !== "true") return;
+  console.log("[WA]", event, payload);
 }
 
 export function registerWhatsappRoutes(app: Express) {
@@ -336,31 +342,54 @@ export function registerWhatsappRoutes(app: Express) {
   });
 
   const requireAutomationSignature = async (req: any, res: any, next: any) => {
-    const tenantId = req.auth!.tenantId!;
-    const cfg = await getTenantWhatsappAutomationConfig(tenantId);
-    const secret = decryptSecret(cfg?.signingSecretEncrypted || null);
-    const signature = String(req.headers["x-orbia-signature"] || "");
-    const eventName = String(req.headers["x-orbia-event"] || "whatsapp.automation.command");
-    const tenantHeader = String(req.headers["x-orbia-tenant"] || "");
-    const rawBody = JSON.stringify(req.body || {});
-    if (!cfg?.enabled || !secret || tenantHeader !== String(tenantId) || !verifyAutomationSignature(secret, eventName, rawBody, signature)) {
-      return res.status(401).json({ error: "Firma de automatización inválida" });
+    const tenantHeader = String(req.headers["x-orbia-tenant"] || "").trim();
+    const signature = String(req.headers["x-orbia-signature"] || "").trim();
+    const eventName = String(req.headers["x-orbia-event"] || "whatsapp.automation.command").trim();
+    if (!tenantHeader) {
+      automationLog("automation_auth_tenant_missing", { path: req.path });
+      return res.status(401).json({ error: "Tenant requerido para automatización", code: "AUTOMATION_TENANT_REQUIRED" });
     }
+    if (!signature) {
+      automationLog("automation_auth_signature_invalid", { path: req.path, tenantHeader, reason: "missing_signature" });
+      return res.status(401).json({ error: "Firma de automatización requerida", code: "AUTOMATION_SIGNATURE_REQUIRED" });
+    }
+    const tenantId = Number(tenantHeader);
+    if (!Number.isFinite(tenantId) || tenantId <= 0) {
+      return res.status(401).json({ error: "Tenant inválido", code: "AUTOMATION_TENANT_REQUIRED" });
+    }
+    const cfg = await getTenantWhatsappAutomationConfig(tenantId);
+    const addon = await storage.getTenantAddon(tenantId, "whatsapp_inbox");
+    const secret = decryptSecret(cfg?.signingSecretEncrypted || null);
+    if (!cfg?.enabled || !secret || !addon?.enabled) {
+      automationLog("automation_auth_start", { tenantId, path: req.path, enabled: Boolean(cfg?.enabled), hasSecret: Boolean(secret), addonEnabled: Boolean(addon?.enabled) });
+      return res.status(403).json({ error: "Configuración de automatización no disponible", code: "AUTOMATION_CONFIG_MISSING" });
+    }
+    const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString("utf8") : JSON.stringify(req.body || {});
+    automationLog("automation_auth_start", { tenantId, path: req.path, eventName });
+    const valid = verifyAutomationSignature(secret, eventName, rawBody, signature);
+    if (!valid) {
+      automationLog("automation_auth_signature_invalid", { tenantId, path: req.path, eventName });
+      return res.status(401).json({ error: "Firma de automatización inválida", code: "AUTOMATION_SIGNATURE_INVALID" });
+    }
+    automationLog("automation_auth_signature_valid", { tenantId, path: req.path, eventName });
+    req.automationAuth = { tenantId, eventName };
     return next();
   };
 
-  app.post("/api/whatsapp/automation/conversations/:id/reply", tenantAuth, requireAddon("whatsapp_inbox"), blockBranchScope, validateParams(conversationIdSchema), validateBody(automationReplySchema), requireAutomationSignature, async (req, res) => {
+  app.post("/api/whatsapp/automation/conversations/:id/reply", validateParams(conversationIdSchema), validateBody(automationReplySchema), requireAutomationSignature, async (req, res) => {
     try {
+      const automationAuth = (req as any).automationAuth;
+      automationLog("automation_reply_received", { tenantId: automationAuth.tenantId, conversationId: Number(req.params.id) });
       const data = await automationReplyToConversation({
-        tenantId: req.auth!.tenantId!,
+        tenantId: automationAuth.tenantId,
         conversationId: Number(req.params.id),
-        text: req.body.text,
+        text: req.body.text || req.body.message,
         externalThreadId: req.body.externalThreadId,
         automationSessionId: req.body.automationSessionId,
         idempotencyKey: req.body.idempotencyKey,
       });
       if (req.body.handoff) {
-        await automationRequestHandoff({ tenantId: req.auth!.tenantId!, conversationId: Number(req.params.id), reason: "requested_by_automation_reply" });
+        await automationRequestHandoff({ tenantId: automationAuth.tenantId, conversationId: Number(req.params.id), reason: "requested_by_automation_reply" });
       }
       return res.json({ data });
     } catch (error: any) {
@@ -368,18 +397,21 @@ export function registerWhatsappRoutes(app: Express) {
     }
   });
 
-  app.post("/api/whatsapp/automation/conversations/:id/handoff", tenantAuth, requireAddon("whatsapp_inbox"), blockBranchScope, validateParams(conversationIdSchema), validateBody(z.object({ reason: z.string().trim().max(200).optional(), note: z.string().trim().max(500).optional() })), requireAutomationSignature, async (req, res) => {
-    const data = await automationRequestHandoff({ tenantId: req.auth!.tenantId!, conversationId: Number(req.params.id), reason: req.body.reason, note: req.body.note });
+  app.post("/api/whatsapp/automation/conversations/:id/handoff", validateParams(conversationIdSchema), validateBody(z.object({ reason: z.string().trim().max(200).optional(), note: z.string().trim().max(500).optional() })), requireAutomationSignature, async (req, res) => {
+    const automationAuth = (req as any).automationAuth;
+    const data = await automationRequestHandoff({ tenantId: automationAuth.tenantId, conversationId: Number(req.params.id), reason: req.body.reason, note: req.body.note });
     return res.json({ data });
   });
 
-  app.post("/api/whatsapp/automation/conversations/:id/resume", tenantAuth, requireAddon("whatsapp_inbox"), blockBranchScope, validateParams(conversationIdSchema), validateBody(z.object({ reason: z.string().trim().max(200).optional() })), requireAutomationSignature, async (req, res) => {
-    const data = await automationResumeConversation({ tenantId: req.auth!.tenantId!, conversationId: Number(req.params.id), reason: req.body.reason });
+  app.post("/api/whatsapp/automation/conversations/:id/resume", validateParams(conversationIdSchema), validateBody(z.object({ reason: z.string().trim().max(200).optional() })), requireAutomationSignature, async (req, res) => {
+    const automationAuth = (req as any).automationAuth;
+    const data = await automationResumeConversation({ tenantId: automationAuth.tenantId, conversationId: Number(req.params.id), reason: req.body.reason });
     return res.json({ data });
   });
 
-  app.post("/api/whatsapp/automation/conversations/:id/pause", tenantAuth, requireAddon("whatsapp_inbox"), blockBranchScope, validateParams(conversationIdSchema), validateBody(z.object({ until: z.string().datetime().optional(), reason: z.string().trim().max(200).optional() })), requireAutomationSignature, async (req, res) => {
-    const data = await automationPauseConversation({ tenantId: req.auth!.tenantId!, conversationId: Number(req.params.id), until: req.body.until, reason: req.body.reason });
+  app.post("/api/whatsapp/automation/conversations/:id/pause", validateParams(conversationIdSchema), validateBody(z.object({ until: z.string().datetime().optional(), reason: z.string().trim().max(200).optional() })), requireAutomationSignature, async (req, res) => {
+    const automationAuth = (req as any).automationAuth;
+    const data = await automationPauseConversation({ tenantId: automationAuth.tenantId, conversationId: Number(req.params.id), until: req.body.until, reason: req.body.reason });
     return res.json({ data });
   });
 
