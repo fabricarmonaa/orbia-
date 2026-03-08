@@ -123,6 +123,12 @@ const aiConfigSchema = z.object({
 });
 
 
+const aiDecideSchema = z.object({
+  trigger: z.string().trim().min(1).max(80).optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  requestedAt: z.string().datetime().optional(),
+});
+
 function buildMetaErrorResponse(error: any, fallbackCode: string, fallbackMessage: string) {
   const semanticCode = error?.semanticCode || "WHATSAPP_META_UNKNOWN_ERROR";
   const semanticMessage = error?.semanticMessage || fallbackMessage;
@@ -513,11 +519,46 @@ export function registerWhatsappRoutes(app: Express) {
     return res.json({ data });
   });
 
-  app.post("/api/whatsapp/automation/conversations/:id/ai/decide", validateParams(conversationIdSchema), requireAutomationSignature, async (req, res) => {
+  app.post("/api/whatsapp/automation/conversations/:id/ai/decide", validateParams(conversationIdSchema), validateBody(aiDecideSchema), requireAutomationSignature, async (req, res) => {
     const automationAuth = (req as any).automationAuth;
     const conversationId = Number(req.params.id);
-    const result = await decideAutomationWithAi({ tenantId: automationAuth.tenantId, conversationId });
-    return res.json({ data: result.decision });
+
+    try {
+      const result = await decideAutomationWithAi({
+        tenantId: automationAuth.tenantId,
+        conversationId,
+        trigger: req.body?.trigger,
+        source: req.body?.source,
+        requestedAt: req.body?.requestedAt,
+      });
+
+      return res.json({
+        ok: true,
+        data: {
+          action: result.decision.action,
+          reason: result.decision.reason,
+          replyText: result.decision.replyText,
+          confidence: result.decision.confidence,
+          provider: result.decision.provider || result.meta?.provider || "openai",
+          model: result.decision.model || result.meta?.model || null,
+        },
+      });
+    } catch (error: any) {
+      automationLog("automation_ai_decide_error", {
+        tenantId: automationAuth.tenantId,
+        conversationId,
+        message: error?.message || "unknown_error",
+      });
+      return res.json({
+        ok: true,
+        data: {
+          action: "no_action",
+          reason: "ai_decide_internal_error",
+          provider: "openai",
+          model: null,
+        },
+      });
+    }
   });
 
 

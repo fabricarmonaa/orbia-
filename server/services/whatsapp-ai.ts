@@ -25,8 +25,11 @@ export type WhatsAppAiDecision = {
   replyText?: string;
   confidence?: number;
   model?: string;
+  provider?: WhatsAppAiProvider;
   usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
 };
+
+type AiErrorFallbackAction = "fallback_reply" | "no_action" | "handoff";
 
 function aiLog(event: string, payload: Record<string, unknown>) {
   if (String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() !== "true") return;
@@ -349,97 +352,199 @@ async function callAiProviderGenerate(input: { cfg: any; context: any }) {
   return callOpenAiGenerate(input);
 }
 
-export async function decideAutomationWithAi(input: { tenantId: number; conversationId: number }) {
+async function appendConversationEvent(input: { tenantId: number; context: any; eventType: string; payloadJson?: Record<string, unknown> }) {
+  await db.insert(whatsappConversationEvents).values({
+    tenantId: input.tenantId,
+    branchId: input.context.conversation.branchId || null,
+    channelId: input.context.conversation.channelId || null,
+    conversationId: input.context.conversation.id,
+    customerId: input.context.conversation.customerId || null,
+    eventType: input.eventType,
+    payloadJson: input.payloadJson || {},
+  });
+}
+
+function classifyAiError(error: any) {
+  const message = String(error?.message || "unknown_error");
+  if (message.includes("API_KEY_MISSING")) return { code: "config_missing_api_key", message };
+  if (message.includes("Conversación no encontrada")) return { code: "conversation_not_found", message };
+  if (message.includes("OPENROUTER_HTTP_")) return { code: "provider_http_error", message };
+  if (message.includes("OPENAI")) return { code: "provider_openai_error", message };
+  if (message.includes("OPENROUTER")) return { code: "provider_openrouter_error", message };
+  if (message.toLowerCase().includes("abort")) return { code: "provider_timeout", message };
+  return { code: "unknown_error", message };
+}
+
+function getAiErrorFallbackPolicy(cfg: any): { action: AiErrorFallbackAction; replyText: string } {
+  const raw = String(cfg?.escalationRules?.providerErrorPolicy || cfg?.escalationRules?.onProviderErrorAction || "").trim().toLowerCase();
+  const action: AiErrorFallbackAction = raw === "handoff" || raw === "fallback_reply" || raw === "no_action" ? raw : "no_action";
+  const replyText = String(cfg?.escalationRules?.providerErrorFallbackReply || "Estamos procesando tu consulta. En breve te respondemos.").trim();
+  return { action, replyText };
+}
+
+export async function decideAutomationWithAi(input: { tenantId: number; conversationId: number; trigger?: string; source?: string; requestedAt?: string }) {
   const cfg = await getTenantWhatsappAiConfig(input.tenantId);
   if (!cfg?.enabled) {
-    return { decision: { action: "no_action", reason: "ai_disabled" } as WhatsAppAiDecision, context: null };
+    return { decision: { action: "no_action", reason: "ai_disabled" } as WhatsAppAiDecision, context: null, meta: { provider: "openai", model: DEFAULT_OPENAI_MODEL } };
   }
 
   const provider = getEffectiveProvider(cfg);
   const model = cfg.model || getDefaultModelForProvider(provider);
 
+  aiLog("automation_ai_request_start", { tenantId: input.tenantId, conversationId: input.conversationId, provider, model, trigger: input.trigger || "unknown", source: input.source || "unknown" });
+
   const context = await buildAiContext(input.tenantId, input.conversationId, cfg);
+  aiLog("automation_ai_context_built", {
+    tenantId: input.tenantId,
+    conversationId: input.conversationId,
+    provider,
+    model,
+    messagesCount: context.messages.length,
+    hasSummary: Boolean(context.memConversation?.summary),
+    hasFlags: Boolean(context.memConversation?.flagsJson && Object.keys(context.memConversation.flagsJson || {}).length),
+  });
+
   const skip = shouldSkipAi(context.conversation);
   if (skip.skip) {
-    await db.insert(whatsappConversationEvents).values({
+    await appendConversationEvent({
       tenantId: input.tenantId,
-      branchId: context.conversation.branchId || null,
-      channelId: context.conversation.channelId || null,
-      conversationId: context.conversation.id,
-      customerId: context.conversation.customerId || null,
+      context,
       eventType: "whatsapp.automation.ai_skipped",
       payloadJson: { reason: skip.reason, provider, model },
     });
-    return { decision: { action: "no_action", reason: skip.reason } as WhatsAppAiDecision, context };
+    return { decision: { action: "no_action", reason: skip.reason, provider, model } as WhatsAppAiDecision, context, meta: { provider, model } };
   }
 
   const latestInbound = [...context.messages].reverse().find((m: any) => m.role === "user")?.text || "";
   const escalationByKeyword = buildEscalationFromText(latestInbound);
   if (escalationByKeyword) {
-    const decision: WhatsAppAiDecision = { action: "handoff", reason: escalationByKeyword };
-    await db.insert(whatsappConversationEvents).values({
+    const decision: WhatsAppAiDecision = { action: "handoff", reason: escalationByKeyword, provider, model };
+    await appendConversationEvent({
       tenantId: input.tenantId,
-      branchId: context.conversation.branchId || null,
-      channelId: context.conversation.channelId || null,
-      conversationId: context.conversation.id,
-      customerId: context.conversation.customerId || null,
+      context,
       eventType: "whatsapp.automation.ai_handoff_requested",
       payloadJson: { reason: escalationByKeyword, provider, model },
     });
-    return { decision, context };
+    return { decision, context, meta: { provider, model } };
   }
 
-  await db.insert(whatsappConversationEvents).values({
+  await appendConversationEvent({
     tenantId: input.tenantId,
-    branchId: context.conversation.branchId || null,
-    channelId: context.conversation.channelId || null,
-    conversationId: context.conversation.id,
-    customerId: context.conversation.customerId || null,
+    context,
     eventType: "whatsapp.automation.ai_requested",
-    payloadJson: { provider, model },
+    payloadJson: { provider, model, trigger: input.trigger || null, source: input.source || null, requestedAt: input.requestedAt || null },
   });
 
   try {
+    await appendConversationEvent({
+      tenantId: input.tenantId,
+      context,
+      eventType: "whatsapp.automation.ai_provider_called",
+      payloadJson: { provider, model },
+    });
+
     const ai = await callAiProviderGenerate({ cfg: { ...cfg, model, provider }, context });
+
+    aiLog("automation_ai_provider_result", {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      provider,
+      model,
+      rawPreview: String(ai.rawText || "").slice(0, 180),
+      action: ai.decision.action,
+      reason: ai.decision.reason,
+    });
+
+    const normalizedDecision: WhatsAppAiDecision = {
+      ...ai.decision,
+      provider,
+      model,
+      action: ai.decision.action,
+      reason: ai.decision.reason || "ai_decision",
+    };
+
+    await appendConversationEvent({
+      tenantId: input.tenantId,
+      context,
+      eventType: "whatsapp.automation.ai_response_parsed",
+      payloadJson: {
+        provider,
+        model,
+        action: normalizedDecision.action,
+        reason: normalizedDecision.reason,
+        hasReplyText: Boolean(normalizedDecision.replyText),
+      },
+    });
+
     const summaryEnabled = cfg.summaryEnabled !== false;
     if (summaryEnabled) {
       const maxChars = Math.max(300, Math.min(4000, Number(cfg.summaryMaxChars || 1200)));
-      const mergedSummary = [context.memConversation?.summary || "", `Última decisión: ${ai.decision.action}/${ai.decision.reason}`].filter(Boolean).join("\n").slice(0, maxChars);
+      const mergedSummary = [context.memConversation?.summary || "", `Última decisión: ${normalizedDecision.action}/${normalizedDecision.reason}`].filter(Boolean).join("\n").slice(0, maxChars);
       await db
         .update(whatsappConversationAiMemory)
         .set({ summary: mergedSummary, lastMessagesJson: context.messages.slice(-10), updatedAt: new Date() })
         .where(and(eq(whatsappConversationAiMemory.tenantId, input.tenantId), eq(whatsappConversationAiMemory.conversationId, input.conversationId)));
     }
 
-    await db.insert(whatsappConversationEvents).values({
+    await appendConversationEvent({
       tenantId: input.tenantId,
-      branchId: context.conversation.branchId || null,
-      channelId: context.conversation.channelId || null,
-      conversationId: context.conversation.id,
-      customerId: context.conversation.customerId || null,
-      eventType: ai.decision.action === "handoff" ? "whatsapp.automation.ai_handoff_requested" : "whatsapp.automation.ai_replied",
+      context,
+      eventType: normalizedDecision.action === "handoff" ? "whatsapp.automation.ai_handoff_requested" : "whatsapp.automation.ai_replied",
       payloadJson: {
-        action: ai.decision.action,
-        reason: ai.decision.reason,
-        model: ai.decision.model,
+        action: normalizedDecision.action,
+        reason: normalizedDecision.reason,
+        model,
         provider,
-        usage: ai.decision.usage,
+        usage: normalizedDecision.usage,
       },
     });
 
-    aiLog("ai_decision", { tenantId: input.tenantId, conversationId: input.conversationId, action: ai.decision.action, reason: ai.decision.reason, model: ai.decision.model });
-    return { decision: ai.decision, context };
+    aiLog("automation_ai_decision_normalized", { tenantId: input.tenantId, conversationId: input.conversationId, provider, model, action: normalizedDecision.action, reason: normalizedDecision.reason });
+    return { decision: normalizedDecision, context, meta: { provider, model } };
   } catch (error: any) {
-    await db.insert(whatsappConversationEvents).values({
+    const classification = classifyAiError(error);
+    const fallback = getAiErrorFallbackPolicy(cfg);
+
+    aiLog("automation_ai_error_classified", {
       tenantId: input.tenantId,
-      branchId: context.conversation.branchId || null,
-      channelId: context.conversation.channelId || null,
-      conversationId: context.conversation.id,
-      customerId: context.conversation.customerId || null,
-      eventType: "whatsapp.automation.ai_error",
-      payloadJson: { message: error?.message || "unknown_error", provider, model },
+      conversationId: input.conversationId,
+      provider,
+      model,
+      code: classification.code,
+      message: classification.message,
+      fallbackAction: fallback.action,
     });
-    return { decision: { action: "handoff", reason: "ai_error" } as WhatsAppAiDecision, context };
+
+    await appendConversationEvent({
+      tenantId: input.tenantId,
+      context,
+      eventType: "whatsapp.automation.ai_error",
+      payloadJson: { message: classification.message, code: classification.code, provider, model },
+    });
+
+    let decision: WhatsAppAiDecision;
+    if (fallback.action === "handoff") {
+      decision = { action: "handoff", reason: "ai_error_fallback_handoff", provider, model };
+    } else if (fallback.action === "fallback_reply") {
+      decision = { action: "reply", reason: "ai_error_fallback_reply", replyText: fallback.replyText, provider, model };
+    } else {
+      decision = { action: "no_action", reason: "ai_error_fallback_no_action", provider, model };
+    }
+
+    await appendConversationEvent({
+      tenantId: input.tenantId,
+      context,
+      eventType: "whatsapp.automation.ai_fallback_used",
+      payloadJson: {
+        fallbackAction: fallback.action,
+        decisionAction: decision.action,
+        reason: decision.reason,
+        provider,
+        model,
+      },
+    });
+
+    return { decision, context, meta: { provider, model, fallbackAction: fallback.action, errorCode: classification.code } };
   }
 }
 
