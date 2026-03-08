@@ -410,7 +410,7 @@ export default function WhatsappConversationsPage() {
                 <p className="text-xs text-muted-foreground">{c.customerPhone}</p>
                 <p className="text-xs text-muted-foreground">{getWhatsappConversationStatusLabel(c.status)} · No leídos: {c.unreadCount}</p>
                 <p className="text-xs text-muted-foreground">{c.lastMessageAt ? new Date(c.lastMessageAt).toLocaleString() : "Sin actividad"} · Asignado: {c.assignedUserId || "Sin asignar"}</p>
-                <p className="text-xs text-muted-foreground">Cliente: {c.customerId ? `#${c.customerId}` : "sin vincular"} · owner: {c.ownerMode || "human"}</p>
+                <p className="text-xs text-muted-foreground">Cliente: {c.customerId ? `#${c.customerId}` : "sin vincular"} · owner: {c.ownerMode === "automation" ? "Automatizado" : "Humano"}</p>
               </button>
             ))}
           </CardContent>
@@ -444,10 +444,16 @@ export default function WhatsappConversationsPage() {
                 </div>
 
                 <div className="grid md:grid-cols-4 gap-2 border rounded-md p-2">
-                  <div><Label>Owner mode</Label><Select value={ownerMode} onValueChange={(v) => { setOwnerMode(v); void updateOperationalState({ ownerMode: v }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="human">human</SelectItem><SelectItem value="assisted">assisted</SelectItem><SelectItem value="auto">auto</SelectItem></SelectContent></Select></div>
-                  <div><Label>Handoff</Label><Select value={handoffStatus} onValueChange={(v) => { setHandoffStatus(v); void updateOperationalState({ handoffStatus: v }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">none</SelectItem><SelectItem value="requested">requested</SelectItem><SelectItem value="active">active</SelectItem><SelectItem value="completed">completed</SelectItem></SelectContent></Select></div>
-                  <div className="flex items-end"><Button size="sm" variant={automationEnabled ? "secondary" : "outline"} onClick={() => { const next = !automationEnabled; setAutomationEnabled(next); void updateOperationalState({ automationEnabled: next, automationPausedReason: next ? null : (automationPausedReason || "manual") }); }}>{automationEnabled ? "Automation ON" : "Automation OFF"}</Button></div>
-                  <div><Label>Pausa</Label><Input value={automationPausedReason} onChange={(e) => setAutomationPausedReason(e.target.value)} onBlur={() => void updateOperationalState({ automationPausedReason })} /></div>
+                  <div><Label>Owner mode</Label><Select value={ownerMode} onValueChange={(v) => { setOwnerMode(v); void updateOperationalState({ ownerMode: v }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="human">Humano</SelectItem><SelectItem value="automation">Automatizado</SelectItem></SelectContent></Select></div>
+                  <div><Label>Handoff</Label><Select value={handoffStatus} onValueChange={(v) => { setHandoffStatus(v); void updateOperationalState({ handoffStatus: v }); }}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Sin handoff</SelectItem><SelectItem value="requested">Handoff solicitado</SelectItem><SelectItem value="active">En atención humana</SelectItem><SelectItem value="resolved">Handoff resuelto</SelectItem></SelectContent></Select></div>
+                  <div className="flex items-end"><Button size="sm" variant={automationEnabled ? "secondary" : "outline"} onClick={() => { const next = !automationEnabled; setAutomationEnabled(next); void updateOperationalState({ automationEnabled: next, ownerMode: next ? "automation" : "human", automationPausedReason: next ? null : (automationPausedReason || "manual") }); }}>{automationEnabled ? "Desactivar automatización" : "Activar automatización"}</Button></div>
+                  <div><Label>Pausa</Label><Input value={automationPausedReason} onChange={(e) => setAutomationPausedReason(e.target.value)} onBlur={() => void updateOperationalState({ automationPausedReason })} placeholder="Motivo de pausa" /></div>
+                </div>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <p>Última acción humana: {selected.lastHumanAt ? new Date(selected.lastHumanAt).toLocaleString() : "-"}</p>
+                  <p>Última acción automática: {selected.lastAutomationAt ? new Date(selected.lastAutomationAt).toLocaleString() : "-"}</p>
+                  <p>External thread: {selected.externalThreadId || "-"}</p>
+                  <p>Automation session: {selected.automationSessionId || "-"}</p>
                 </div>
 
                 <div className="border rounded-md p-2 space-y-2">

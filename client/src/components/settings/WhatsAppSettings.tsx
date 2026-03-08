@@ -28,6 +28,15 @@ interface WhatsappChannelForm {
   sandboxAllowedRecipients: string;
 }
 
+interface WhatsappAutomationConfigForm {
+  enabled: boolean;
+  webhookUrl: string;
+  signingSecret: string;
+  timeoutMs: number;
+  retryEnabled: boolean;
+  retryMaxAttempts: number;
+}
+
 const emptyForm: WhatsappChannelForm = {
   provider: "meta",
   phoneNumber: "",
@@ -89,6 +98,16 @@ export function WhatsAppSettings() {
   const [onboarding, setOnboarding] = useState<any>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sendResult, setSendResult] = useState<{ messageId?: string | null; modeUsed?: string; normalizedTo?: string } | null>(null);
+  const [automationConfig, setAutomationConfig] = useState<WhatsappAutomationConfigForm>({
+    enabled: false,
+    webhookUrl: "",
+    signingSecret: "",
+    timeoutMs: 8000,
+    retryEnabled: true,
+    retryMaxAttempts: 3,
+  });
+  const [savingAutomation, setSavingAutomation] = useState(false);
+  const [testingAutomation, setTestingAutomation] = useState(false);
 
   const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
 
@@ -167,14 +186,61 @@ export function WhatsAppSettings() {
     }
   }
 
+  async function loadAutomationConfig() {
+    try {
+      const res = await apiRequest("GET", "/api/whatsapp/automation/config");
+      const json = await res.json();
+      const data = json?.data;
+      if (!data) return;
+      setAutomationConfig({
+        enabled: Boolean(data.enabled),
+        webhookUrl: data.webhookUrl || "",
+        signingSecret: data.signingSecret || "",
+        timeoutMs: Number(data.timeoutMs || 8000),
+        retryEnabled: Boolean(data.retryEnabled),
+        retryMaxAttempts: Number(data.retryMaxAttempts || 3),
+      });
+    } catch {
+      // noop
+    }
+  }
+
   useEffect(() => {
     loadChannel();
     loadHealth();
     loadOnboarding();
+    loadAutomationConfig();
   }, []);
 
   async function refreshState() {
-    await Promise.all([loadChannel(), loadHealth(), loadOnboarding()]);
+    await Promise.all([loadChannel(), loadHealth(), loadOnboarding(), loadAutomationConfig()]);
+  }
+
+  async function saveAutomationConfig() {
+    setSavingAutomation(true);
+    try {
+      await apiRequest("PUT", "/api/whatsapp/automation/config", automationConfig);
+      toast({ title: "Automatización guardada" });
+      await refreshState();
+    } catch (err: any) {
+      toast({ title: "Error guardando automatización", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setSavingAutomation(false);
+    }
+  }
+
+  async function testAutomationWebhook() {
+    setTestingAutomation(true);
+    try {
+      const res = await apiRequest("POST", "/api/whatsapp/automation/config/test");
+      const json = await res.json();
+      toast({ title: json?.data?.ok ? "Webhook automation OK" : "Webhook automation con error", description: `status=${json?.data?.statusCode || "n/a"}` });
+      await refreshState();
+    } catch (err: any) {
+      toast({ title: "Error probando webhook", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setTestingAutomation(false);
+    }
   }
 
   async function saveChannel() {
@@ -400,6 +466,23 @@ export function WhatsAppSettings() {
             ) : null}
           </div>
         ) : null}
+
+        <div className="border rounded-md p-3 space-y-3">
+          <p className="text-sm font-medium">Automatización / n8n</p>
+          <p className="text-xs text-muted-foreground">La automatización solo actuará en conversaciones configuradas en modo automatizado.</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="flex items-center gap-2"><Switch checked={automationConfig.enabled} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, enabled: checked }))} /><Label>Integración habilitada</Label></div>
+            <div className="space-y-1"><Label>Webhook URL</Label><Input value={automationConfig.webhookUrl} onChange={(e) => setAutomationConfig((p) => ({ ...p, webhookUrl: e.target.value }))} placeholder="https://n8n..." /></div>
+            <div className="space-y-1"><Label>Signing secret</Label><Input value={automationConfig.signingSecret} onChange={(e) => setAutomationConfig((p) => ({ ...p, signingSecret: e.target.value }))} placeholder="clave compartida" /></div>
+            <div className="space-y-1"><Label>Timeout (ms)</Label><Input type="number" value={automationConfig.timeoutMs} onChange={(e) => setAutomationConfig((p) => ({ ...p, timeoutMs: Number(e.target.value) || 8000 }))} /></div>
+            <div className="flex items-center gap-2"><Switch checked={automationConfig.retryEnabled} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, retryEnabled: checked }))} /><Label>Retry habilitado</Label></div>
+            <div className="space-y-1"><Label>Reintentos máximos</Label><Input type="number" value={automationConfig.retryMaxAttempts} onChange={(e) => setAutomationConfig((p) => ({ ...p, retryMaxAttempts: Number(e.target.value) || 1 }))} /></div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={saveAutomationConfig} disabled={savingAutomation || !canEditTechnicalConfig}>{savingAutomation ? "Guardando..." : "Guardar automatización"}</Button>
+            <Button variant="outline" onClick={testAutomationWebhook} disabled={testingAutomation || !canEditTechnicalConfig}>{testingAutomation ? "Probando..." : "Probar webhook"}</Button>
+          </div>
+        </div>
 
         <div className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(checked) => setForm((p) => ({ ...p, isActive: checked }))} /><Label>Canal activo</Label></div>
 

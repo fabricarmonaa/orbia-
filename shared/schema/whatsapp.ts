@@ -47,7 +47,15 @@ export const whatsappConversations = pgTable("whatsapp_conversations", {
   ownerMode: varchar("owner_mode", { length: 20 }).notNull().default("human"),
   handoffStatus: varchar("handoff_status", { length: 20 }).notNull().default("none"),
   automationEnabled: boolean("automation_enabled").notNull().default(false),
+  automationPausedUntil: timestamp("automation_paused_until"),
   automationPausedReason: text("automation_paused_reason"),
+  lastAutomationAt: timestamp("last_automation_at"),
+  lastHumanAt: timestamp("last_human_at"),
+  externalThreadId: varchar("external_thread_id", { length: 200 }),
+  automationSessionId: varchar("automation_session_id", { length: 200 }),
+  automationContext: jsonb("automation_context"),
+  lastInboundMessageId: integer("last_inbound_message_id"),
+  lastOutboundMessageId: integer("last_outbound_message_id"),
   assignedAt: timestamp("assigned_at"),
   lastHumanInterventionAt: timestamp("last_human_intervention_at"),
   hasHumanIntervention: boolean("has_human_intervention").notNull().default(false),
@@ -124,11 +132,33 @@ export const whatsappConversationEvents = pgTable("whatsapp_conversation_events"
   index("idx_whatsapp_conversation_events_type").on(table.eventType),
 ]);
 
+export const tenantWhatsappAutomationConfigs = pgTable("tenant_whatsapp_automation_configs", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  providerType: varchar("provider_type", { length: 50 }).notNull().default("n8n_webhook"),
+  webhookUrl: text("webhook_url"),
+  signingSecretEncrypted: text("signing_secret_encrypted"),
+  timeoutMs: integer("timeout_ms").notNull().default(8000),
+  retryEnabled: boolean("retry_enabled").notNull().default(true),
+  retryMaxAttempts: integer("retry_max_attempts").notNull().default(3),
+  allowedBranchId: integer("allowed_branch_id").references(() => branches.id, { onDelete: "set null" }),
+  lastTestAt: timestamp("last_test_at"),
+  lastTestStatus: varchar("last_test_status", { length: 20 }),
+  lastTestMessage: text("last_test_message"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_tenant_whatsapp_automation_configs_tenant").on(table.tenantId),
+  index("idx_tenant_whatsapp_automation_configs_branch").on(table.allowedBranchId),
+]);
+
 export const insertTenantWhatsappChannelSchema = createInsertSchema(tenantWhatsappChannels).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappConversationSchema = createInsertSchema(whatsappConversations).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappMessageSchema = createInsertSchema(whatsappMessages).omit({ id: true, createdAt: true });
 export const insertWhatsappWebhookEventSchema = createInsertSchema(whatsappWebhookEvents).omit({ id: true, createdAt: true });
 export const insertWhatsappConversationEventSchema = createInsertSchema(whatsappConversationEvents).omit({ id: true, createdAt: true });
+export const insertTenantWhatsappAutomationConfigSchema = createInsertSchema(tenantWhatsappAutomationConfigs).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type TenantWhatsappChannel = typeof tenantWhatsappChannels.$inferSelect;
 export type InsertTenantWhatsappChannel = z.infer<typeof insertTenantWhatsappChannelSchema>;
@@ -140,3 +170,5 @@ export type WhatsappWebhookEvent = typeof whatsappWebhookEvents.$inferSelect;
 export type InsertWhatsappWebhookEvent = z.infer<typeof insertWhatsappWebhookEventSchema>;
 export type WhatsappConversationEvent = typeof whatsappConversationEvents.$inferSelect;
 export type InsertWhatsappConversationEvent = z.infer<typeof insertWhatsappConversationEventSchema>;
+export type TenantWhatsappAutomationConfig = typeof tenantWhatsappAutomationConfigs.$inferSelect;
+export type InsertTenantWhatsappAutomationConfig = z.infer<typeof insertTenantWhatsappAutomationConfigSchema>;

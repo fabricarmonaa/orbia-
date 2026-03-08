@@ -1,11 +1,12 @@
-import { randomBytes } from "node:crypto";
+import { createHmac, randomBytes } from "node:crypto";
 import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   tenantWhatsappChannels,
   whatsappConversations,
   whatsappMessages,
   whatsappWebhookEvents,
-  whatsappConversationEvents,
+    whatsappConversationEvents,
+    tenantWhatsappAutomationConfigs,
   messageTemplates,
   customers,
   type TenantWhatsappChannel,
@@ -14,6 +15,7 @@ import { db } from "../db";
 import { decryptSecret, encryptSecret, isMaskedSecretValue, maskSecret } from "./whatsapp-crypto";
 import { WhatsAppProviderError, resolveWhatsappProvider } from "./whatsapp-provider";
 import { whatsappRealtimeBus, type WhatsAppRealtimeEventType } from "./whatsapp-realtime";
+import { getTenantAddons } from "./tenant-addons";
 
 function isWhatsappDebugEnabled() {
   return String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() === "true";
@@ -22,6 +24,23 @@ function isWhatsappDebugEnabled() {
 function waLog(...args: unknown[]) {
   if (!isWhatsappDebugEnabled()) return;
   console.log("[WA]", ...args);
+}
+
+function hostFromUrl(raw?: string | null) {
+  try {
+    return raw ? new URL(raw).host : null;
+  } catch {
+    return null;
+  }
+}
+
+function signAutomationPayload(secret: string, event: string, payload: string) {
+  return createHmac("sha256", secret).update(`${event}.${payload}`).digest("hex");
+}
+
+function isAutomationPaused(conversation: any) {
+  if (!conversation?.automationPausedUntil) return false;
+  return new Date(conversation.automationPausedUntil).getTime() > Date.now();
 }
 
 
@@ -64,10 +83,10 @@ const CONVERSATION_STATUS_ALLOWED = [
 
 export type ConversationOperationalStatus = typeof CONVERSATION_STATUS_ALLOWED[number];
 
-export const CONVERSATION_OWNER_MODES = ["human", "assisted", "auto"] as const;
+export const CONVERSATION_OWNER_MODES = ["human", "automation"] as const;
 export type ConversationOwnerMode = typeof CONVERSATION_OWNER_MODES[number];
 
-export const CONVERSATION_HANDOFF_STATUSES = ["none", "requested", "active", "completed"] as const;
+export const CONVERSATION_HANDOFF_STATUSES = ["none", "requested", "active", "resolved"] as const;
 export type ConversationHandoffStatus = typeof CONVERSATION_HANDOFF_STATUSES[number];
 
 function normalizeTemplateUsageType(raw?: string | null): TemplateUsageType {
@@ -538,6 +557,7 @@ export async function createInboundMessage(input: {
       unreadCount: sql`${whatsappConversations.unreadCount} + 1`,
       lastInboundAt: now,
       lastMessageAt: now,
+      lastInboundMessageId: msg.id,
       updatedAt: now,
     })
     .where(eq(whatsappConversations.id, input.conversationId));
@@ -554,6 +574,7 @@ export async function createOutboundMessage(input: {
   contentText: string;
   status?: string;
   rawPayload?: unknown;
+  markAsHuman?: boolean;
 }) {
   const now = new Date();
   const [msg] = await db
@@ -574,9 +595,19 @@ export async function createOutboundMessage(input: {
     })
     .returning();
 
+  const markAsHuman = input.markAsHuman !== false;
   await db
     .update(whatsappConversations)
-    .set({ lastOutboundAt: now, lastMessageAt: now, hasHumanIntervention: true, lastHumanInterventionAt: now, updatedAt: now })
+    .set({
+      lastOutboundAt: now,
+      lastMessageAt: now,
+      lastOutboundMessageId: msg.id,
+      hasHumanIntervention: markAsHuman ? true : sql`${whatsappConversations.hasHumanIntervention}`,
+      lastHumanInterventionAt: markAsHuman ? now : sql`${whatsappConversations.lastHumanInterventionAt}`,
+      lastHumanAt: markAsHuman ? now : sql`${whatsappConversations.lastHumanAt}`,
+      lastAutomationAt: markAsHuman ? sql`${whatsappConversations.lastAutomationAt}` : now,
+      updatedAt: now,
+    })
     .where(eq(whatsappConversations.id, input.conversationId));
 
   return msg;
@@ -682,6 +713,14 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
             eventType: "whatsapp.message.inbound",
             payload: { providerMessageId: inboundMessage.providerMessageId, messageType: inboundMessage.messageType },
           });
+          await dispatchInboundToAutomation({
+            channel,
+            conversation: {
+              ...conversation,
+              lastInboundMessageId: inboundMessage.id,
+            },
+            inboundMessage,
+          });
         }
 
         await db
@@ -768,6 +807,146 @@ export async function processIncomingWhatsAppWebhook(payload: any) {
   }
 
   return { processed };
+}
+
+async function dispatchInboundToAutomation(input: {
+  channel: TenantWhatsappChannel;
+  conversation: any;
+  inboundMessage: any;
+}) {
+  const { channel, conversation, inboundMessage } = input;
+  const addons = await getTenantAddons(channel.tenantId);
+  const inboxAddonOn = Boolean((addons as any).whatsapp_inbox);
+  if (!inboxAddonOn || !conversation.automationEnabled || conversation.ownerMode !== "automation" || conversation.handoffStatus === "active" || isAutomationPaused(conversation)) {
+    await persistConversationDomainEvent({
+      tenantId: channel.tenantId,
+      branchId: conversation.branchId,
+      channelId: channel.id,
+      conversationId: conversation.id,
+      messageId: inboundMessage.id,
+      customerId: conversation.customerId,
+      eventType: "whatsapp.automation.rule_skipped",
+      payload: {
+        inboxAddonOn,
+        ownerMode: conversation.ownerMode,
+        handoffStatus: conversation.handoffStatus,
+        automationEnabled: conversation.automationEnabled,
+        paused: isAutomationPaused(conversation),
+      },
+    });
+    return;
+  }
+
+  const cfg = await getTenantWhatsappAutomationConfig(channel.tenantId);
+  const secret = decryptSecret(cfg?.signingSecretEncrypted || null);
+  if (!cfg?.enabled || !cfg?.webhookUrl || !secret || (cfg.allowedBranchId && cfg.allowedBranchId !== conversation.branchId)) {
+    await persistConversationDomainEvent({
+      tenantId: channel.tenantId,
+      branchId: conversation.branchId,
+      channelId: channel.id,
+      conversationId: conversation.id,
+      messageId: inboundMessage.id,
+      customerId: conversation.customerId,
+      eventType: "whatsapp.automation.rule_skipped",
+      payload: {
+        reason: "automation_config_incomplete",
+        configEnabled: Boolean(cfg?.enabled),
+        hasWebhook: Boolean(cfg?.webhookUrl),
+        hasSecret: Boolean(secret),
+      },
+    });
+    return;
+  }
+
+  const eventType = "whatsapp.inbound.received";
+  const eventId = randomBytes(12).toString("hex");
+  const payload = {
+    eventType,
+    tenantId: channel.tenantId,
+    branchId: conversation.branchId,
+    channelId: channel.id,
+    conversation: {
+      id: conversation.id,
+      customerPhone: conversation.customerPhone,
+      recipientPhoneCanonical: conversation.recipientPhoneCanonical,
+      customerName: conversation.customerName,
+      status: conversation.status,
+      ownerMode: conversation.ownerMode,
+      handoffStatus: conversation.handoffStatus,
+      automationEnabled: conversation.automationEnabled,
+      externalThreadId: conversation.externalThreadId,
+    },
+    message: {
+      id: inboundMessage.id,
+      direction: "inbound",
+      type: inboundMessage.messageType,
+      text: inboundMessage.contentText,
+      providerMessageId: inboundMessage.providerMessageId,
+      createdAt: inboundMessage.createdAt,
+    },
+    customer: {
+      id: conversation.customerId,
+      matched: Boolean(conversation.customerId),
+    },
+    meta: {
+      environmentMode: getChannelRuntimeInfo(channel).environmentMode,
+      timestamp: new Date().toISOString(),
+      eventId,
+    },
+  };
+
+  const body = JSON.stringify(payload);
+  const signature = signAutomationPayload(secret, eventType, body);
+  const attempts = cfg.retryEnabled ? Math.max(1, cfg.retryMaxAttempts || 1) : 1;
+  waLog("automation_dispatch_start", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, ownerMode: conversation.ownerMode, handoffStatus: conversation.handoffStatus, webhookHost: hostFromUrl(cfg.webhookUrl), attempts });
+
+  let lastError: string | null = null;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), cfg.timeoutMs || 8000);
+      const res = await fetch(cfg.webhookUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Orbia-Signature": signature,
+          "X-Orbia-Event": eventType,
+          "X-Orbia-Tenant": String(channel.tenantId),
+          "X-Orbia-Event-Id": eventId,
+        },
+        body,
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!res.ok) throw new Error(`http_${res.status}`);
+      await persistConversationDomainEvent({
+        tenantId: channel.tenantId,
+        branchId: conversation.branchId,
+        channelId: channel.id,
+        conversationId: conversation.id,
+        messageId: inboundMessage.id,
+        customerId: conversation.customerId,
+        eventType: "whatsapp.automation.webhook_dispatched",
+        payload: { eventId, statusCode: res.status, attempt, webhookHost: hostFromUrl(cfg.webhookUrl) },
+      });
+      waLog("automation_dispatch_ok", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, statusCode: res.status, webhookHost: hostFromUrl(cfg.webhookUrl) });
+      return;
+    } catch (err: any) {
+      lastError = err?.message || "dispatch_failed";
+      waLog("automation_dispatch_error", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, attempt, webhookHost: hostFromUrl(cfg.webhookUrl), error: lastError });
+    }
+  }
+
+  await persistConversationDomainEvent({
+    tenantId: channel.tenantId,
+    branchId: conversation.branchId,
+    channelId: channel.id,
+    conversationId: conversation.id,
+    messageId: inboundMessage.id,
+    customerId: conversation.customerId,
+    eventType: "whatsapp.automation.reply_rejected",
+    payload: { reason: "dispatch_failed", error: lastError, webhookHost: hostFromUrl(cfg.webhookUrl) },
+  });
 }
 
 
@@ -991,7 +1170,27 @@ export async function sendConversationWhatsAppMessage(input: {
     contentText: input.text,
     status: result.mocked ? "QUEUED" : "SENT",
     rawPayload: { modeUsed: "text_freeform", normalizedTo: delivery.target, canonicalTarget: target.to, targetSource: target.source, providerRaw: result.raw },
+    markAsHuman: true,
   });
+
+  if (conversation.ownerMode !== "human" || conversation.handoffStatus !== "active") {
+    await db
+      .update(whatsappConversations)
+      .set({ ownerMode: "human", handoffStatus: "active", updatedAt: new Date() })
+      .where(eq(whatsappConversations.id, conversation.id));
+    await persistConversationDomainEvent({
+      tenantId: input.tenantId,
+      branchId: conversation.branchId,
+      channelId: conversation.channelId,
+      conversationId: conversation.id,
+      messageId: message.id,
+      customerId: conversation.customerId,
+      actorUserId: input.executedByUserId,
+      eventType: "whatsapp.automation.handoff_activated",
+      payload: { reason: "automation_takeover_by_human" },
+    });
+    waLog("automation_takeover_by_human", { tenantId: input.tenantId, conversationId: conversation.id, channelId: conversation.channelId, ownerMode: conversation.ownerMode, handoffStatus: conversation.handoffStatus });
+  }
 
   await persistWebhookEvent({
     tenantId: input.tenantId,
@@ -1138,7 +1337,26 @@ export async function sendConversationTemplateMessage(input: {
     contentText: `[template:${input.templateCode}]`,
     status: result.mocked ? "QUEUED" : "SENT",
     rawPayload: { modeUsed: "template_manual", templateCode: input.templateCode, normalizedTo: delivery.target, canonicalTarget: target.to, targetSource: target.source, providerRaw: result.raw },
+    markAsHuman: true,
   });
+
+  if (conversation.ownerMode !== "human" || conversation.handoffStatus !== "active") {
+    await db
+      .update(whatsappConversations)
+      .set({ ownerMode: "human", handoffStatus: "active", updatedAt: new Date() })
+      .where(eq(whatsappConversations.id, conversation.id));
+    await persistConversationDomainEvent({
+      tenantId: input.tenantId,
+      branchId: conversation.branchId,
+      channelId: conversation.channelId,
+      conversationId: conversation.id,
+      messageId: message.id,
+      customerId: conversation.customerId,
+      actorUserId: input.executedByUserId,
+      eventType: "whatsapp.automation.handoff_activated",
+      payload: { reason: "automation_takeover_by_human" },
+    });
+  }
 
   await persistWebhookEvent({
     tenantId: input.tenantId,
@@ -1241,6 +1459,129 @@ export async function getLastManualSendEvent(tenantId: number) {
 export async function getTenantChannel(tenantId: number) {
   const [channel] = await db.select().from(tenantWhatsappChannels).where(eq(tenantWhatsappChannels.tenantId, tenantId)).orderBy(desc(tenantWhatsappChannels.updatedAt)).limit(1);
   return channel || null;
+}
+
+export async function getTenantWhatsappAutomationConfig(tenantId: number) {
+  const [cfg] = await db
+    .select()
+    .from(tenantWhatsappAutomationConfigs)
+    .where(eq(tenantWhatsappAutomationConfigs.tenantId, tenantId))
+    .limit(1);
+  return cfg || null;
+}
+
+export async function upsertTenantWhatsappAutomationConfig(input: {
+  tenantId: number;
+  enabled?: boolean;
+  providerType?: "n8n_webhook";
+  webhookUrl?: string | null;
+  signingSecret?: string | null;
+  timeoutMs?: number;
+  retryEnabled?: boolean;
+  retryMaxAttempts?: number;
+  allowedBranchId?: number | null;
+  actorUserId: number;
+}) {
+  const existing = await getTenantWhatsappAutomationConfig(input.tenantId);
+  const values: Record<string, unknown> = {
+    updatedAt: new Date(),
+  };
+  if (typeof input.enabled === "boolean") values.enabled = input.enabled;
+  if (input.providerType) values.providerType = input.providerType;
+  if (input.webhookUrl !== undefined) values.webhookUrl = input.webhookUrl || null;
+  if (typeof input.timeoutMs === "number") values.timeoutMs = Math.max(1000, Math.min(30000, input.timeoutMs));
+  if (typeof input.retryEnabled === "boolean") values.retryEnabled = input.retryEnabled;
+  if (typeof input.retryMaxAttempts === "number") values.retryMaxAttempts = Math.max(1, Math.min(8, input.retryMaxAttempts));
+  if (input.allowedBranchId !== undefined) values.allowedBranchId = input.allowedBranchId;
+  if (input.signingSecret !== undefined) {
+    values.signingSecretEncrypted = input.signingSecret ? encryptSecret(input.signingSecret) : null;
+  }
+
+  let saved: any;
+  if (existing) {
+    [saved] = await db
+      .update(tenantWhatsappAutomationConfigs)
+      .set(values)
+      .where(eq(tenantWhatsappAutomationConfigs.id, existing.id))
+      .returning();
+  } else {
+    [saved] = await db
+      .insert(tenantWhatsappAutomationConfigs)
+      .values({
+        tenantId: input.tenantId,
+        enabled: Boolean(input.enabled),
+        providerType: input.providerType || "n8n_webhook",
+        webhookUrl: input.webhookUrl || null,
+        signingSecretEncrypted: input.signingSecret ? encryptSecret(input.signingSecret) : null,
+        timeoutMs: Math.max(1000, Math.min(30000, input.timeoutMs || 8000)),
+        retryEnabled: input.retryEnabled !== false,
+        retryMaxAttempts: Math.max(1, Math.min(8, input.retryMaxAttempts || 3)),
+        allowedBranchId: input.allowedBranchId || null,
+      })
+      .returning();
+  }
+  await persistWebhookEvent({
+    tenantId: input.tenantId,
+    eventType: "automation_config_updated",
+    payload: {
+      enabled: saved.enabled,
+      providerType: saved.providerType,
+      webhookUrlHost: hostFromUrl(saved.webhookUrl),
+      timeoutMs: saved.timeoutMs,
+      retryEnabled: saved.retryEnabled,
+      retryMaxAttempts: saved.retryMaxAttempts,
+      actorUserId: input.actorUserId,
+    },
+    processingStatus: "PROCESSED",
+  });
+  return saved;
+}
+
+export function automationConfigToSafeResponse(config: any) {
+  if (!config) return null;
+  return {
+    ...config,
+    signingSecret: maskSecret(decryptSecret(config.signingSecretEncrypted) || null),
+  };
+}
+
+export async function testTenantWhatsappAutomationWebhook(tenantId: number) {
+  const config = await getTenantWhatsappAutomationConfig(tenantId);
+  const secret = decryptSecret(config?.signingSecretEncrypted || null);
+  if (!config?.webhookUrl || !secret) {
+    throw new Error("Configuración incompleta: falta webhook o signing secret");
+  }
+  const eventType = "whatsapp.automation.test";
+  const payload = {
+    eventType,
+    tenantId,
+    meta: { timestamp: new Date().toISOString(), source: "orbia_whatsapp_phase3" },
+  };
+  const body = JSON.stringify(payload);
+  const signature = signAutomationPayload(secret, eventType, body);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), config.timeoutMs || 8000);
+  try {
+    const res = await fetch(config.webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Orbia-Signature": signature,
+        "X-Orbia-Event": eventType,
+        "X-Orbia-Tenant": String(tenantId),
+      },
+      body,
+      signal: controller.signal,
+    });
+    const [saved] = await db
+      .update(tenantWhatsappAutomationConfigs)
+      .set({ lastTestAt: new Date(), lastTestStatus: res.ok ? "ok" : "error", lastTestMessage: `HTTP ${res.status}`, updatedAt: new Date() })
+      .where(eq(tenantWhatsappAutomationConfigs.tenantId, tenantId))
+      .returning();
+    return { ok: res.ok, statusCode: res.status, config: saved || config };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function upsertTenantChannel(tenantId: number, payload: {
@@ -1510,6 +1851,136 @@ export function isWebhookSignatureValidationEnabled() {
   return String(process.env.WHATSAPP_VALIDATE_SIGNATURE || "").toLowerCase() === "true";
 }
 
+async function isAutomationIdempotencyDuplicate(input: { tenantId: number; conversationId: number; idempotencyKey: string }) {
+  const [found] = await db
+    .select()
+    .from(whatsappConversationEvents)
+    .where(
+      and(
+        eq(whatsappConversationEvents.tenantId, input.tenantId),
+        eq(whatsappConversationEvents.conversationId, input.conversationId),
+        eq(whatsappConversationEvents.eventType, "whatsapp.automation.reply_received"),
+        sql`${whatsappConversationEvents.payloadJson}->>'idempotencyKey' = ${input.idempotencyKey}`,
+      ),
+    )
+    .limit(1);
+  return Boolean(found);
+}
+
+export async function automationReplyToConversation(input: {
+  tenantId: number;
+  conversationId: number;
+  text: string;
+  externalThreadId?: string | null;
+  automationSessionId?: string | null;
+  idempotencyKey: string;
+}) {
+  const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, null);
+  if (!conversation) throw new Error("Conversación no encontrada");
+  if (await isAutomationIdempotencyDuplicate({ tenantId: input.tenantId, conversationId: input.conversationId, idempotencyKey: input.idempotencyKey })) {
+    await persistConversationDomainEvent({
+      tenantId: input.tenantId,
+      branchId: conversation.branchId,
+      channelId: conversation.channelId,
+      conversationId: conversation.id,
+      customerId: conversation.customerId,
+      eventType: "whatsapp.automation.reply_rejected",
+      payload: { reason: "duplicate_idempotency", idempotencyKey: input.idempotencyKey },
+    });
+    return { duplicated: true };
+  }
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: conversation.branchId,
+    channelId: conversation.channelId,
+    conversationId: conversation.id,
+    customerId: conversation.customerId,
+    eventType: "whatsapp.automation.reply_received",
+    payload: { idempotencyKey: input.idempotencyKey },
+  });
+
+  const channel = await getTenantChannel(input.tenantId);
+  if (!channel || !channel.isActive) throw new Error("Canal WhatsApp no activo");
+  const provider = resolveWhatsappProvider(channel.provider);
+  const target = resolveWhatsAppReplyTarget(channel, {
+    conversationId: conversation.id,
+    conversationCustomerPhone: conversation.customerPhone,
+    conversationCanonicalPhone: conversation.recipientPhoneCanonical,
+    conversationWaId: conversation.recipientWaId,
+    mode: "manual_text",
+  });
+  const delivery = applySandboxMetaRecipientTransform(channel, target.to);
+  waLog("automation_reply_start", { tenantId: input.tenantId, conversationId: conversation.id, channelId: channel.id, ownerMode: conversation.ownerMode, handoffStatus: conversation.handoffStatus, environmentMode: getChannelRuntimeInfo(channel).environmentMode });
+  const result = await provider.sendTextMessage(channel, delivery.target, input.text);
+  const message = await createOutboundMessage({
+    tenantId: input.tenantId,
+    conversationId: conversation.id,
+    channelId: channel.id,
+    providerMessageId: result.providerMessageId || null,
+    contentText: input.text,
+    status: result.mocked ? "QUEUED" : "SENT",
+    rawPayload: { modeUsed: "automation_reply", idempotencyKey: input.idempotencyKey, normalizedTo: delivery.target, canonicalTarget: target.to, providerRaw: result.raw },
+    markAsHuman: false,
+  });
+  await db
+    .update(whatsappConversations)
+    .set({
+      ownerMode: "automation",
+      handoffStatus: "none",
+      externalThreadId: input.externalThreadId || conversation.externalThreadId,
+      automationSessionId: input.automationSessionId || conversation.automationSessionId,
+      lastAutomationAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(whatsappConversations.id, conversation.id));
+  await persistConversationDomainEvent({
+    tenantId: input.tenantId,
+    branchId: conversation.branchId,
+    channelId: conversation.channelId,
+    conversationId: conversation.id,
+    messageId: message.id,
+    customerId: conversation.customerId,
+    eventType: "whatsapp.automation.reply_sent",
+    payload: { idempotencyKey: input.idempotencyKey, externalThreadId: input.externalThreadId || null, automationSessionId: input.automationSessionId || null },
+  });
+  waLog("automation_reply_ok", { tenantId: input.tenantId, conversationId: conversation.id, channelId: channel.id });
+  return { duplicated: false, message, result };
+}
+
+export async function automationRequestHandoff(input: { tenantId: number; conversationId: number; reason?: string | null; note?: string | null }) {
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ ownerMode: "human", handoffStatus: "active", updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, input.tenantId), eq(whatsappConversations.id, input.conversationId)))
+    .returning();
+  if (!saved) throw new Error("Conversación no encontrada");
+  await persistConversationDomainEvent({ tenantId: input.tenantId, branchId: saved.branchId, channelId: saved.channelId, conversationId: saved.id, customerId: saved.customerId, eventType: "whatsapp.automation.handoff_requested", payload: { reason: input.reason || null, note: input.note || null } });
+  return saved;
+}
+
+export async function automationPauseConversation(input: { tenantId: number; conversationId: number; until?: string | null; reason?: string | null }) {
+  const until = input.until ? new Date(input.until) : null;
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ automationPausedUntil: until, automationPausedReason: input.reason || "temporary_pause", updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, input.tenantId), eq(whatsappConversations.id, input.conversationId)))
+    .returning();
+  if (!saved) throw new Error("Conversación no encontrada");
+  await persistConversationDomainEvent({ tenantId: input.tenantId, branchId: saved.branchId, channelId: saved.channelId, conversationId: saved.id, customerId: saved.customerId, eventType: "whatsapp.automation.paused", payload: { reason: input.reason || "temporary_pause", until: until?.toISOString() || null } });
+  return saved;
+}
+
+export async function automationResumeConversation(input: { tenantId: number; conversationId: number; reason?: string | null }) {
+  const [saved] = await db
+    .update(whatsappConversations)
+    .set({ ownerMode: "automation", handoffStatus: "resolved", automationPausedUntil: null, automationPausedReason: null, updatedAt: new Date() })
+    .where(and(eq(whatsappConversations.tenantId, input.tenantId), eq(whatsappConversations.id, input.conversationId)))
+    .returning();
+  if (!saved) throw new Error("Conversación no encontrada");
+  await persistConversationDomainEvent({ tenantId: input.tenantId, branchId: saved.branchId, channelId: saved.channelId, conversationId: saved.id, customerId: saved.customerId, eventType: "whatsapp.automation.resumed", payload: { reason: input.reason || null } });
+  return saved;
+}
+
 
 export async function updateConversationOperationalState(input: {
   tenantId: number;
@@ -1519,6 +1990,9 @@ export async function updateConversationOperationalState(input: {
   ownerMode?: ConversationOwnerMode;
   handoffStatus?: ConversationHandoffStatus;
   automationEnabled?: boolean;
+  automationPausedUntil?: string | null;
+  externalThreadId?: string | null;
+  automationSessionId?: string | null;
   automationPausedReason?: string | null;
 }) {
   const conversation = await getConversationByIdScoped(input.tenantId, input.conversationId, input.branchId ?? null);
@@ -1527,6 +2001,9 @@ export async function updateConversationOperationalState(input: {
   if (input.ownerMode) patch.ownerMode = input.ownerMode;
   if (input.handoffStatus) patch.handoffStatus = input.handoffStatus;
   if (typeof input.automationEnabled === "boolean") patch.automationEnabled = input.automationEnabled;
+  if (input.automationPausedUntil !== undefined) patch.automationPausedUntil = input.automationPausedUntil ? new Date(input.automationPausedUntil) : null;
+  if (input.externalThreadId !== undefined) patch.externalThreadId = input.externalThreadId;
+  if (input.automationSessionId !== undefined) patch.automationSessionId = input.automationSessionId;
   if (input.automationPausedReason !== undefined) patch.automationPausedReason = input.automationPausedReason;
 
   const [saved] = await db
@@ -1540,8 +2017,15 @@ export async function updateConversationOperationalState(input: {
     eventType: "conversation.updated",
     tenantId: input.tenantId,
     conversationId: input.conversationId,
-    changedFields: ["ownerMode", "handoffStatus", "automationEnabled", "automationPausedReason"],
+    changedFields: ["ownerMode", "handoffStatus", "automationEnabled", "automationPausedReason", "automationPausedUntil", "externalThreadId", "automationSessionId"],
   });
+  const eventType = input.automationEnabled === true
+    ? "whatsapp.automation.enabled"
+    : input.automationEnabled === false
+      ? "whatsapp.automation.disabled"
+      : input.ownerMode === "human" && input.handoffStatus === "active"
+        ? "whatsapp.automation.handoff_activated"
+        : "whatsapp.conversation.automation_updated";
   await persistConversationDomainEvent({
     tenantId: input.tenantId,
     branchId: saved.branchId,
@@ -1549,11 +2033,14 @@ export async function updateConversationOperationalState(input: {
     conversationId: saved.id,
     customerId: saved.customerId,
     actorUserId: input.actorUserId,
-    eventType: "whatsapp.conversation.automation_updated",
+    eventType,
     payload: {
       ownerMode: saved.ownerMode,
       handoffStatus: saved.handoffStatus,
       automationEnabled: saved.automationEnabled,
+      automationPausedUntil: saved.automationPausedUntil,
+      externalThreadId: saved.externalThreadId,
+      automationSessionId: saved.automationSessionId,
       automationPausedReason: saved.automationPausedReason,
     },
   });
