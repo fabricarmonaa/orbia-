@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { apiRequest, useAuth } from "@/lib/auth";
+import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -230,8 +230,21 @@ export function WhatsAppSettings() {
     setSending(true);
     setSendResult(null);
     try {
-      const res = await apiRequest("POST", "/api/whatsapp/messages/send-test", { to: testPhone, text: testText }, { skipAuthHandling: true });
-      const data = await res.json();
+      const token = getToken();
+      const res = await fetch("/api/whatsapp/messages/send-test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ to: testPhone, text: testText }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const semantic = data?.semanticCode || data?.code || "WHATSAPP_META_UNKNOWN_ERROR";
+        const detail = data?.error || data?.metaDetails || data?.metaMessage || "Error no especificado";
+        throw new Error(`${semantic}: ${detail}`);
+      }
       const payload = data?.data || {};
       setSendResult({
         messageId: payload?.messageId || payload?.result?.providerMessageId || null,
@@ -273,6 +286,8 @@ export function WhatsAppSettings() {
           <p><strong>Número conectado:</strong> {health?.connectedPhone || onboarding?.channelConnectedPhone || "-"}</p>
           <p><strong>Último test exitoso:</strong> {health?.lastTestAt ? new Date(health.lastTestAt).toLocaleString() : "Sin test"}</p>
           <p><strong>Última validación:</strong> {health?.lastConnectionValidatedAt ? new Date(health.lastConnectionValidatedAt).toLocaleString() : "Sin validación"}</p>
+          <p><strong>Token presente:</strong> {health?.accessTokenPresent ? "Sí" : "No"} · <strong>Recipients sandbox:</strong> {health?.sandboxRecipientsConfiguredCount ?? 0}</p>
+          <p><strong>Test template disponible:</strong> {health?.canSendTestTemplate ? "Sí" : "No"}</p>
           <p><strong>Quién puede editar:</strong> owner/admin autorizado o superadmin.</p>
         </div>
 
@@ -322,7 +337,8 @@ export function WhatsAppSettings() {
                   rows={4}
                   disabled={!canEditTechnicalConfig}
                 />
-                <p className="text-[11px] text-muted-foreground">Si Meta devuelve 131030, agregá acá el destinatario exacto permitido en sandbox.</p>
+                <p className="text-[11px] text-muted-foreground">Estos son números permitidos en Orbia (validación interna).</p>
+                <p className="text-[11px] text-muted-foreground">Agregar un número acá NO lo autoriza automáticamente en Meta sandbox. También debés agregarlo en Meta &gt; número de prueba &gt; destinatarios autorizados.</p>
               </div>
               <div className="space-y-1">
                 <Label>Access token (sandbox)</Label>

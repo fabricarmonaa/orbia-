@@ -92,6 +92,28 @@ export default function WhatsappConversationsPage() {
     setLastRealtimeAt(new Date().toISOString());
   }
 
+  async function postJsonWithDiagnostic(url: string, body: Record<string, unknown>) {
+    const token = getToken();
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const semantic = payload?.semanticCode || payload?.code || "WHATSAPP_META_UNKNOWN_ERROR";
+      const detail = payload?.error || payload?.metaDetails || payload?.metaMessage || "Error no especificado";
+      const hint = semantic === "WHATSAPP_META_RECIPIENT_NOT_ALLOWED"
+        ? "Revisá el panel de Meta > número de prueba > destinatarios autorizados."
+        : "";
+      throw new Error(`${semantic}: ${detail}${hint ? ` · ${hint}` : ""}`);
+    }
+    return payload;
+  }
+
   async function loadConversations() {
     const res = await apiRequest("GET", "/api/whatsapp/conversations");
     const data = await res.json();
@@ -179,7 +201,7 @@ export default function WhatsappConversationsPage() {
     if (!selected || !reply.trim()) return;
     setBusyAction("send");
     try {
-      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send`, { text: reply.trim() }, { skipAuthHandling: true });
+      await postJsonWithDiagnostic(`/api/whatsapp/conversations/${selected.id}/messages/send`, { text: reply.trim() });
       toast({ title: "Mensaje enviado" });
       setReply("");
     } catch (err: any) {
@@ -195,7 +217,7 @@ export default function WhatsappConversationsPage() {
     if (!selected || !selectedTemplateCode) return;
     setBusyAction("send-template");
     try {
-      await apiRequest("POST", `/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode }, { skipAuthHandling: true });
+      await postJsonWithDiagnostic(`/api/whatsapp/conversations/${selected.id}/messages/send-template`, { templateCode: selectedTemplateCode });
       toast({ title: "Plantilla enviada" });
     } catch (err: any) {
       toast({ title: "Error enviando plantilla", description: String(err?.message || "Error"), variant: "destructive" });

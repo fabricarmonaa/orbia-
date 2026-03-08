@@ -25,6 +25,19 @@ function waLog(...args: unknown[]) {
 }
 
 
+function buildMetaErrorDiagnostic(error: any) {
+  return {
+    semanticCode: error?.semanticCode || "WHATSAPP_META_UNKNOWN_ERROR",
+    semanticMessage: error?.semanticMessage || "Meta rechazó el envío.",
+    metaStatus: error?.metaStatus || error?.status || null,
+    metaCode: error?.metaCode || error?.code || null,
+    metaSubcode: error?.metaSubcode || null,
+    metaMessage: error?.metaMessage || error?.message || null,
+    metaDetails: error?.metaDetails || error?.details || null,
+  };
+}
+
+
 const TEMPLATE_USAGE_TYPES = [
   "greeting",
   "follow_up",
@@ -915,7 +928,28 @@ export async function sendConversationWhatsAppMessage(input: {
 
   assertSandboxRecipientAllowed(channel, target.to);
   const provider = resolveWhatsappProvider(channel.provider);
-  const result = await provider.sendTextMessage(channel, target.to, input.text);
+  let result: any;
+  try {
+    result = await provider.sendTextMessage(channel, target.to, input.text);
+  } catch (error: any) {
+    const meta = buildMetaErrorDiagnostic(error);
+    waLog("reply_manual_meta_error", {
+      conversationId: conversation.id,
+      channelId: conversation.channelId,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      storedWaId: conversation.recipientWaId,
+      resolvedTarget: target.to,
+      environmentMode: target.environmentMode,
+      ...meta,
+      raw: error?.raw,
+    });
+    (error as any).conversationId = conversation.id;
+    (error as any).channelId = conversation.channelId;
+    (error as any).resolvedTarget = target.to;
+    (error as any).environmentMode = target.environmentMode;
+    throw error;
+  }
 
   waLog("reply_manual_meta_response", {
     conversationId: conversation.id,
@@ -1041,7 +1075,30 @@ export async function sendConversationTemplateMessage(input: {
     templateCode: input.templateCode,
   });
 
-  const result = await provider.sendTemplateMessage(channel, target.to, input.templateCode, [], "en_US");
+  let result: any;
+  try {
+    result = await provider.sendTemplateMessage(channel, target.to, input.templateCode, [], "en_US");
+  } catch (error: any) {
+    const meta = buildMetaErrorDiagnostic(error);
+    waLog("reply_manual_meta_error", {
+      conversationId: conversation.id,
+      channelId: conversation.channelId,
+      storedConversationPhone: conversation.customerPhone,
+      storedCanonicalPhone: conversation.recipientPhoneCanonical,
+      storedWaId: conversation.recipientWaId,
+      resolvedTarget: target.to,
+      environmentMode: target.environmentMode,
+      modeUsed: "template_manual",
+      templateCode: input.templateCode,
+      ...meta,
+      raw: error?.raw,
+    });
+    (error as any).conversationId = conversation.id;
+    (error as any).channelId = conversation.channelId;
+    (error as any).resolvedTarget = target.to;
+    (error as any).environmentMode = target.environmentMode;
+    throw error;
+  }
 
   const message = await createOutboundMessage({
     tenantId: input.tenantId,

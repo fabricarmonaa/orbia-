@@ -63,6 +63,42 @@ const sendSchema = z.object({
 const conversationIdSchema = z.object({ id: z.coerce.number().int().positive() });
 const sendTemplateSchema = z.object({ templateCode: z.string().trim().min(1).max(120) });
 
+
+function buildMetaErrorResponse(error: any, fallbackCode: string, fallbackMessage: string) {
+  const semanticCode = error?.semanticCode || "WHATSAPP_META_UNKNOWN_ERROR";
+  const semanticMessage = error?.semanticMessage || fallbackMessage;
+  const metaStatus = error?.metaStatus || error?.status || null;
+  const metaCode = error?.metaCode || error?.code || null;
+  const metaSubcode = error?.metaSubcode || null;
+  const metaMessage = error?.metaMessage || null;
+  const metaDetails = error?.metaDetails || error?.details || null;
+  const providerRaw = error?.raw || null;
+  const status = Number(error?.status || 500);
+
+  return {
+    status,
+    body: {
+      error: semanticMessage,
+      code: fallbackCode,
+      semanticCode,
+      metaStatus,
+      metaCode,
+      metaSubcode,
+      metaMessage,
+      metaDetails,
+      resolvedTarget: error?.resolvedTarget || null,
+      environmentMode: error?.environmentMode || null,
+      channelId: error?.channelId || null,
+      conversationId: error?.conversationId || null,
+      providerRaw,
+      debug: {
+        metaMessage,
+        metaDetails,
+      },
+    },
+  };
+}
+
 export function registerWhatsappRoutes(app: Express) {
   const internalSandboxEnabled = String(process.env.WHATSAPP_INTERNAL_SANDBOX || "").toLowerCase() === "true";
   const canUseSandbox = (req: any) => Boolean(req?.auth?.isSuperAdmin || req?.auth?.role === "admin" || internalSandboxEnabled);
@@ -87,6 +123,10 @@ export function registerWhatsappRoutes(app: Express) {
       lastConnectionValidatedAt: runtime.lastConnectionValidatedAt || null,
       canEditTechnicalConfig: Boolean(req.auth?.role === "admin" || req.auth?.isSuperAdmin),
       sandboxAvailable: canUseSandbox(req),
+      accessTokenPresent: Boolean(channel?.accessTokenEncrypted),
+      accessTokenLikelyMasked: Boolean(channel?.accessTokenEncrypted),
+      sandboxRecipientsConfiguredCount: Array.isArray(runtime.sandboxAllowedRecipients) ? runtime.sandboxAllowedRecipients.length : 0,
+      canSendTestTemplate: Boolean(channel?.isActive && channel?.phoneNumberId && channel?.accessTokenEncrypted),
     });
   });
 
@@ -345,19 +385,26 @@ export function registerWhatsappRoutes(app: Express) {
       });
       return res.json({ data: result });
     } catch (error: any) {
-      const providerError = error as WhatsAppProviderError;
-      const providerCode = providerError?.code || "unknown";
-      const providerDetails = providerError?.details || providerError?.message || "Error enviando mensaje de prueba";
-      return res.status(providerError?.status || 500).json({
-        error: `[META ${providerCode}] ${providerDetails}`,
-        code: "WHATSAPP_SEND_TEST_FAILED",
-        providerCode,
-        providerDetails,
-        providerRaw: providerError?.raw || null,
-      });
+        const mapped = buildMetaErrorResponse(error as WhatsAppProviderError, "WHATSAPP_SEND_TEST_FAILED", "Error enviando mensaje de prueba");
+        return res.status(mapped.status).json(mapped.body);
     }
   });
 
+
+  app.post("/api/whatsapp/debug/send-probe", tenantAuth, requireAddon("messaging_whatsapp"), requireTenantAdmin, validateBody(sendSchema), async (req, res) => {
+    try {
+      const result = await sendTestWhatsAppMessage({
+        tenantId: req.auth!.tenantId!,
+        executedByUserId: req.auth!.userId,
+        to: req.body.to,
+        text: req.body.text,
+      });
+      return res.json({ ok: true, data: result, diagnostic: { note: "Probe ejecutado con flow real de Meta" } });
+    } catch (error: any) {
+      const mapped = buildMetaErrorResponse(error, "WHATSAPP_DEBUG_SEND_PROBE_FAILED", "Falló diagnóstico de envío en Meta");
+      return res.status(mapped.status).json({ ok: false, ...mapped.body });
+    }
+  });
 
   app.get(
     "/api/whatsapp/conversations/:id/template-suggestions",
@@ -400,16 +447,8 @@ export function registerWhatsappRoutes(app: Express) {
         });
         return res.json({ data: result });
       } catch (error: any) {
-        const providerError = error as WhatsAppProviderError;
-        const providerCode = providerError?.code || "unknown";
-        const providerDetails = providerError?.details || providerError?.message || "Error enviando plantilla";
-        return res.status(providerError?.status || 500).json({
-          error: `[META ${providerCode}] ${providerDetails}`,
-          code: "WHATSAPP_INBOX_SEND_TEMPLATE_FAILED",
-          providerCode,
-          providerDetails,
-          providerRaw: providerError?.raw || null,
-        });
+        const mapped = buildMetaErrorResponse(error as WhatsAppProviderError, "WHATSAPP_INBOX_SEND_TEMPLATE_FAILED", "Error enviando plantilla");
+        return res.status(mapped.status).json(mapped.body);
       }
     },
   );
@@ -445,16 +484,8 @@ export function registerWhatsappRoutes(app: Express) {
             hint: "Usá una plantilla de re-engagement para reabrir la conversación.",
           });
         }
-        const providerError = error as WhatsAppProviderError;
-        const providerCode = providerError?.code || "unknown";
-        const providerDetails = providerError?.details || providerError?.message || "Error enviando mensaje";
-        return res.status(providerError?.status || 500).json({
-          error: `[META ${providerCode}] ${providerDetails}`,
-          code: "WHATSAPP_INBOX_SEND_FAILED",
-          providerCode,
-          providerDetails,
-          providerRaw: providerError?.raw || null,
-        });
+        const mapped = buildMetaErrorResponse(error as WhatsAppProviderError, "WHATSAPP_INBOX_SEND_FAILED", "Error enviando mensaje");
+        return res.status(mapped.status).json(mapped.body);
       }
     },
   );
