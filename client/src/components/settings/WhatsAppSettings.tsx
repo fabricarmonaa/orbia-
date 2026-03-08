@@ -41,6 +41,20 @@ interface WhatsappAutomationConfigForm {
   retryMaxAttempts: number;
 }
 
+interface WhatsappAiConfigForm {
+  enabled: boolean;
+  model: string;
+  systemPrompt: string;
+  businessContext: string;
+  responseStyle: string;
+  summaryEnabled: boolean;
+  maxContextMessages: number;
+  maxOutputTokens: number;
+  temperature: number;
+  apiKey: string;
+  globalMemory: string;
+}
+
 const emptyForm: WhatsappChannelForm = {
   provider: "meta",
   phoneNumber: "",
@@ -116,6 +130,20 @@ export function WhatsAppSettings() {
   });
   const [savingAutomation, setSavingAutomation] = useState(false);
   const [testingAutomation, setTestingAutomation] = useState(false);
+  const [aiConfig, setAiConfig] = useState<WhatsappAiConfigForm>({
+    enabled: false,
+    model: "gpt-4o-mini",
+    systemPrompt: "",
+    businessContext: "",
+    responseStyle: "professional_friendly",
+    summaryEnabled: true,
+    maxContextMessages: 20,
+    maxOutputTokens: 500,
+    temperature: 20,
+    apiKey: "",
+    globalMemory: "",
+  });
+  const [savingAi, setSavingAi] = useState(false);
 
   const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
 
@@ -217,15 +245,53 @@ export function WhatsAppSettings() {
     }
   }
 
+  async function loadAiConfig() {
+    try {
+      const res = await apiRequest("GET", "/api/whatsapp/automation/ai-config");
+      const json = await res.json();
+      const data = json?.data;
+      if (!data) return;
+      setAiConfig((prev) => ({
+        ...prev,
+        enabled: Boolean(data.enabled),
+        model: data.model || "gpt-4o-mini",
+        systemPrompt: data.systemPrompt || "",
+        businessContext: data.businessContext || "",
+        responseStyle: data.responseStyle || "professional_friendly",
+        summaryEnabled: data.summaryEnabled !== false,
+        maxContextMessages: Number(data.maxContextMessages || 20),
+        maxOutputTokens: Number(data.maxOutputTokens || 500),
+        temperature: Number(data.temperature || 20),
+        apiKey: data.apiKey || "",
+      }));
+    } catch {
+      // noop
+    }
+  }
+
   useEffect(() => {
     loadChannel();
     loadHealth();
     loadOnboarding();
     loadAutomationConfig();
+    loadAiConfig();
   }, []);
 
   async function refreshState() {
-    await Promise.all([loadChannel(), loadHealth(), loadOnboarding(), loadAutomationConfig()]);
+    await Promise.all([loadChannel(), loadHealth(), loadOnboarding(), loadAutomationConfig(), loadAiConfig()]);
+  }
+
+  async function saveAiConfig() {
+    setSavingAi(true);
+    try {
+      await apiRequest("PUT", "/api/whatsapp/automation/ai-config", aiConfig);
+      toast({ title: "Configuración IA guardada" });
+      await refreshState();
+    } catch (err: any) {
+      toast({ title: "Error guardando IA", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setSavingAi(false);
+    }
   }
 
   async function saveAutomationConfig() {
@@ -497,6 +563,27 @@ export function WhatsAppSettings() {
           <div className="flex gap-2">
             <Button variant="secondary" onClick={saveAutomationConfig} disabled={savingAutomation || !canEditTechnicalConfig}>{savingAutomation ? "Guardando..." : "Guardar automatización"}</Button>
             <Button variant="outline" onClick={testAutomationWebhook} disabled={testingAutomation || !canEditTechnicalConfig}>{testingAutomation ? "Probando..." : "Probar webhook"}</Button>
+          </div>
+        </div>
+
+        <div className="border rounded-md p-3 space-y-3">
+          <p className="text-sm font-medium">IA conversacional (OpenAI)</p>
+          <p className="text-xs text-muted-foreground">Base multi-tenant para respuestas naturales controladas por reglas operativas.</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="flex items-center gap-2"><Switch checked={aiConfig.enabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, enabled: checked }))} /><Label>IA habilitada</Label></div>
+            <div className="space-y-1"><Label>Modelo</Label><Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder="gpt-4o-mini" /></div>
+            <div className="space-y-1 md:col-span-2"><Label>System prompt</Label><Textarea value={aiConfig.systemPrompt} onChange={(e) => setAiConfig((p) => ({ ...p, systemPrompt: e.target.value }))} rows={3} /></div>
+            <div className="space-y-1 md:col-span-2"><Label>Business context</Label><Textarea value={aiConfig.businessContext} onChange={(e) => setAiConfig((p) => ({ ...p, businessContext: e.target.value }))} rows={3} /></div>
+            <div className="space-y-1"><Label>Estilo</Label><Input value={aiConfig.responseStyle} onChange={(e) => setAiConfig((p) => ({ ...p, responseStyle: e.target.value }))} /></div>
+            <div className="space-y-1"><Label>API key OpenAI</Label><Input value={aiConfig.apiKey} onChange={(e) => setAiConfig((p) => ({ ...p, apiKey: e.target.value }))} placeholder="sk-..." /></div>
+            <div className="flex items-center gap-2"><Switch checked={aiConfig.summaryEnabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, summaryEnabled: checked }))} /><Label>Resumen habilitado</Label></div>
+            <div className="space-y-1"><Label>Contexto máximo mensajes</Label><Input type="number" value={aiConfig.maxContextMessages} onChange={(e) => setAiConfig((p) => ({ ...p, maxContextMessages: Number(e.target.value) || 20 }))} /></div>
+            <div className="space-y-1"><Label>Max output tokens</Label><Input type="number" value={aiConfig.maxOutputTokens} onChange={(e) => setAiConfig((p) => ({ ...p, maxOutputTokens: Number(e.target.value) || 500 }))} /></div>
+            <div className="space-y-1"><Label>Temperatura (0-100)</Label><Input type="number" value={aiConfig.temperature} onChange={(e) => setAiConfig((p) => ({ ...p, temperature: Number(e.target.value) || 20 }))} /></div>
+            <div className="space-y-1 md:col-span-2"><Label>Memoria global tenant</Label><Textarea value={aiConfig.globalMemory} onChange={(e) => setAiConfig((p) => ({ ...p, globalMemory: e.target.value }))} rows={2} /></div>
+          </div>
+          <div className="flex gap-2">
+            <Button variant="secondary" onClick={saveAiConfig} disabled={savingAi || !canEditTechnicalConfig}>{savingAi ? "Guardando..." : "Guardar IA"}</Button>
           </div>
         </div>
 

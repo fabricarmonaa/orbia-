@@ -157,12 +157,63 @@ export const tenantWhatsappAutomationConfigs = pgTable("tenant_whatsapp_automati
   index("idx_tenant_whatsapp_automation_configs_branch").on(table.allowedBranchId),
 ]);
 
+
+export const tenantWhatsappAiConfigs = pgTable("tenant_whatsapp_ai_configs", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  enabled: boolean("enabled").notNull().default(false),
+  provider: varchar("provider", { length: 30 }).notNull().default("openai"),
+  model: varchar("model", { length: 120 }).notNull().default("gpt-4o-mini"),
+  systemPrompt: text("system_prompt"),
+  businessContext: text("business_context"),
+  responseStyle: varchar("response_style", { length: 50 }).notNull().default("professional_friendly"),
+  escalationRules: jsonb("escalation_rules").notNull().default({}),
+  maxContextMessages: integer("max_context_messages").notNull().default(20),
+  summaryEnabled: boolean("summary_enabled").notNull().default(true),
+  summaryMaxChars: integer("summary_max_chars").notNull().default(1200),
+  toolsEnabled: boolean("tools_enabled").notNull().default(false),
+  temperature: integer("temperature").notNull().default(20),
+  maxOutputTokens: integer("max_output_tokens").notNull().default(500),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_tenant_whatsapp_ai_configs_tenant").on(table.tenantId),
+]);
+
+export const tenantWhatsappAiMemory = pgTable("tenant_whatsapp_ai_memory", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  memoryType: varchar("memory_type", { length: 40 }).notNull().default("global"),
+  content: text("content"),
+  metadataJson: jsonb("metadata_json").notNull().default({}),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_tenant_whatsapp_ai_memory_tenant_type").on(table.tenantId, table.memoryType),
+]);
+
+export const whatsappConversationAiMemory = pgTable("whatsapp_conversation_ai_memory", {
+  id: serial("id").primaryKey(),
+  tenantId: integer("tenant_id").notNull().references(() => tenants.id, { onDelete: "cascade" }),
+  conversationId: integer("conversation_id").notNull().references(() => whatsappConversations.id, { onDelete: "cascade" }),
+  summary: text("summary"),
+  flagsJson: jsonb("flags_json").notNull().default({}),
+  lastMessagesJson: jsonb("last_messages_json").notNull().default([]),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_whatsapp_conversation_ai_memory_conversation").on(table.conversationId),
+  index("idx_whatsapp_conversation_ai_memory_tenant").on(table.tenantId),
+]);
+
 export const insertTenantWhatsappChannelSchema = createInsertSchema(tenantWhatsappChannels).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappConversationSchema = createInsertSchema(whatsappConversations).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWhatsappMessageSchema = createInsertSchema(whatsappMessages).omit({ id: true, createdAt: true });
 export const insertWhatsappWebhookEventSchema = createInsertSchema(whatsappWebhookEvents).omit({ id: true, createdAt: true });
 export const insertWhatsappConversationEventSchema = createInsertSchema(whatsappConversationEvents).omit({ id: true, createdAt: true });
 export const insertTenantWhatsappAutomationConfigSchema = createInsertSchema(tenantWhatsappAutomationConfigs).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTenantWhatsappAiConfigSchema = createInsertSchema(tenantWhatsappAiConfigs).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertTenantWhatsappAiMemorySchema = createInsertSchema(tenantWhatsappAiMemory).omit({ id: true, updatedAt: true });
+export const insertWhatsappConversationAiMemorySchema = createInsertSchema(whatsappConversationAiMemory).omit({ id: true, updatedAt: true });
 
 export type TenantWhatsappChannel = typeof tenantWhatsappChannels.$inferSelect;
 export type InsertTenantWhatsappChannel = z.infer<typeof insertTenantWhatsappChannelSchema>;
@@ -176,3 +227,10 @@ export type WhatsappConversationEvent = typeof whatsappConversationEvents.$infer
 export type InsertWhatsappConversationEvent = z.infer<typeof insertWhatsappConversationEventSchema>;
 export type TenantWhatsappAutomationConfig = typeof tenantWhatsappAutomationConfigs.$inferSelect;
 export type InsertTenantWhatsappAutomationConfig = z.infer<typeof insertTenantWhatsappAutomationConfigSchema>;
+
+export type TenantWhatsappAiConfig = typeof tenantWhatsappAiConfigs.$inferSelect;
+export type InsertTenantWhatsappAiConfig = z.infer<typeof insertTenantWhatsappAiConfigSchema>;
+export type TenantWhatsappAiMemory = typeof tenantWhatsappAiMemory.$inferSelect;
+export type InsertTenantWhatsappAiMemory = z.infer<typeof insertTenantWhatsappAiMemorySchema>;
+export type WhatsappConversationAiMemory = typeof whatsappConversationAiMemory.$inferSelect;
+export type InsertWhatsappConversationAiMemory = z.infer<typeof insertWhatsappConversationAiMemorySchema>;

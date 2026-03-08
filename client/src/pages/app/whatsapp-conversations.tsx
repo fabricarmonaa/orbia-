@@ -25,6 +25,11 @@ const TIMELINE_LABELS: Record<string, string> = {
   "whatsapp.automation.reply_rejected": "Error de respuesta automática",
   "whatsapp.automation.rule_skipped": "Regla de automatización omitida",
   "whatsapp.automation.rule_applied": "Regla de automatización aplicada",
+  "whatsapp.automation.ai_requested": "IA solicitada",
+  "whatsapp.automation.ai_replied": "IA respondió",
+  "whatsapp.automation.ai_handoff_requested": "IA pidió handoff",
+  "whatsapp.automation.ai_skipped": "IA omitida por guardrail",
+  "whatsapp.automation.ai_error": "Error de IA",
 };
 
 type StreamStatus = "connecting" | "live" | "reconnecting" | "offline";

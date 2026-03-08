@@ -46,6 +46,14 @@ import { db } from "../db";
 import { whatsappRealtimeBus } from "../services/whatsapp-realtime";
 import { createHmac } from "node:crypto";
 import { decryptSecret } from "../services/whatsapp-crypto";
+import {
+  decideAutomationWithAi,
+  getTenantAiGlobalMemory,
+  getTenantWhatsappAiConfig,
+  tenantWhatsappAiConfigToSafeResponse,
+  upsertTenantAiGlobalMemory,
+  upsertTenantWhatsappAiConfig,
+} from "../services/whatsapp-ai";
 
 const channelSchema = z.object({
   provider: z.string().trim().min(2).max(20).default("meta"),
@@ -95,6 +103,24 @@ const automationReplySchema = z.object({
   idempotencyKey: z.string().trim().min(4).max(180),
   handoff: z.boolean().optional(),
 }).refine((v) => Boolean(v.text || v.message), { message: "text o message es requerido" });
+
+const aiConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  provider: z.literal("openai").optional(),
+  model: z.string().trim().min(2).max(120).optional(),
+  systemPrompt: z.string().trim().max(12000).nullable().optional(),
+  businessContext: z.string().trim().max(12000).nullable().optional(),
+  responseStyle: z.string().trim().max(50).nullable().optional(),
+  escalationRules: z.record(z.any()).optional(),
+  maxContextMessages: z.coerce.number().int().min(4).max(40).optional(),
+  summaryEnabled: z.boolean().optional(),
+  summaryMaxChars: z.coerce.number().int().min(300).max(4000).optional(),
+  toolsEnabled: z.boolean().optional(),
+  temperature: z.coerce.number().int().min(0).max(100).optional(),
+  maxOutputTokens: z.coerce.number().int().min(100).max(1500).optional(),
+  apiKey: z.string().trim().max(4000).nullable().optional(),
+  globalMemory: z.string().trim().max(20000).nullable().optional(),
+});
 
 
 function buildMetaErrorResponse(error: any, fallbackCode: string, fallbackMessage: string) {
@@ -353,6 +379,36 @@ export function registerWhatsappRoutes(app: Express) {
     }
   });
 
+  app.get("/api/whatsapp/automation/ai-config", tenantAuth, requireAddon("whatsapp_inbox"), requireTenantAdmin, async (req, res) => {
+    const cfg = await getTenantWhatsappAiConfig(req.auth!.tenantId!);
+    const mem = await getTenantAiGlobalMemory(req.auth!.tenantId!);
+    return res.json({ data: { ...tenantWhatsappAiConfigToSafeResponse(cfg), globalMemory: mem?.content || "" } });
+  });
+
+  app.put("/api/whatsapp/automation/ai-config", tenantAuth, requireAddon("whatsapp_inbox"), requireTenantAdmin, blockBranchScope, validateBody(aiConfigSchema), async (req, res) => {
+    const cfg = await upsertTenantWhatsappAiConfig({
+      tenantId: req.auth!.tenantId!,
+      enabled: req.body.enabled,
+      provider: req.body.provider,
+      model: req.body.model,
+      systemPrompt: req.body.systemPrompt,
+      businessContext: req.body.businessContext,
+      responseStyle: req.body.responseStyle,
+      escalationRules: req.body.escalationRules,
+      maxContextMessages: req.body.maxContextMessages,
+      summaryEnabled: req.body.summaryEnabled,
+      summaryMaxChars: req.body.summaryMaxChars,
+      toolsEnabled: req.body.toolsEnabled,
+      temperature: req.body.temperature,
+      maxOutputTokens: req.body.maxOutputTokens,
+      apiKey: req.body.apiKey,
+    });
+    if (req.body.globalMemory !== undefined) {
+      await upsertTenantAiGlobalMemory({ tenantId: req.auth!.tenantId!, content: req.body.globalMemory || "", metadataJson: { source: "settings" } });
+    }
+    return res.json({ data: tenantWhatsappAiConfigToSafeResponse(cfg) });
+  });
+
   const requireAutomationSignature = async (req: any, res: any, next: any) => {
     const tenantHeader = String(req.headers["x-orbia-tenant"] || "").trim();
     const signature = String(req.headers["x-orbia-signature"] || "").trim();
@@ -455,6 +511,13 @@ export function registerWhatsappRoutes(app: Express) {
     const automationAuth = (req as any).automationAuth;
     const data = await automationPauseConversation({ tenantId: automationAuth.tenantId, conversationId: Number(req.params.id), until: req.body.until, reason: req.body.reason });
     return res.json({ data });
+  });
+
+  app.post("/api/whatsapp/automation/conversations/:id/ai/decide", validateParams(conversationIdSchema), requireAutomationSignature, async (req, res) => {
+    const automationAuth = (req as any).automationAuth;
+    const conversationId = Number(req.params.id);
+    const result = await decideAutomationWithAi({ tenantId: automationAuth.tenantId, conversationId });
+    return res.json({ data: result.decision });
   });
 
 
