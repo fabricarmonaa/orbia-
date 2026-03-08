@@ -106,7 +106,7 @@ const automationReplySchema = z.object({
 
 const aiConfigSchema = z.object({
   enabled: z.boolean().optional(),
-  provider: z.literal("openai").optional(),
+  provider: z.enum(["openai", "openrouter"]).optional(),
   model: z.string().trim().min(2).max(120).optional(),
   systemPrompt: z.string().trim().max(12000).nullable().optional(),
   businessContext: z.string().trim().max(12000).nullable().optional(),

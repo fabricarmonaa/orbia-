@@ -43,7 +43,7 @@ interface WhatsappAutomationConfigForm {
 
 interface WhatsappAiConfigForm {
   enabled: boolean;
-  provider: "openai";
+  provider: "openai" | "openrouter";
   model: string;
   systemPrompt: string;
   businessContext: string;
@@ -77,6 +77,9 @@ const AI_DEFAULTS: WhatsappAiConfigForm = {
   apiKey: "",
   globalMemory: "",
 };
+
+
+const DEFAULT_OPENROUTER_MODEL = "mistralai/mistral-7b-instruct";
 
 const MASK_CHAR = "•";
 
@@ -280,8 +283,8 @@ export function WhatsAppSettings() {
       setAiHasStoredApiKey(Boolean(apiKeyValue.trim()));
       setAiConfig({
         enabled: Boolean(data.enabled),
-        provider: "openai",
-        model: data.model || AI_DEFAULTS.model,
+        provider: data.provider === "openrouter" ? "openrouter" : "openai",
+        model: data.model || (data.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : AI_DEFAULTS.model),
         systemPrompt: data.systemPrompt || "",
         businessContext: data.businessContext || "",
         responseStyle: data.responseStyle || AI_DEFAULTS.responseStyle,
@@ -347,7 +350,7 @@ export function WhatsAppSettings() {
 
     const apiKey = String(aiConfig.apiKey || "").trim();
     if (aiConfig.enabled && !aiHasStoredApiKey && !apiKey) {
-      return "Para habilitar IA necesitás guardar una API key de OpenAI.";
+      return "Para habilitar IA necesitás guardar una API key del proveedor configurado.";
     }
 
     return null;
@@ -397,7 +400,7 @@ export function WhatsAppSettings() {
     setSavingAi(true);
     try {
       await apiRequest("PUT", "/api/whatsapp/automation/ai-config", payload);
-      toast({ title: "Configuración de IA guardada", description: "Los cambios de OpenAI se aplicaron correctamente." });
+      toast({ title: "Configuración de IA guardada", description: "Los cambios del proveedor de IA se aplicaron correctamente." });
       await refreshState();
     } catch (err: any) {
       toast({ title: "Error guardando IA", description: err?.message || "No se pudo guardar la configuración.", variant: "destructive" });
@@ -691,25 +694,41 @@ export function WhatsAppSettings() {
 
             <div className="space-y-1">
               <Label>Proveedor de IA</Label>
-              <Input value={aiConfig.provider} disabled />
-              <p className="text-xs text-muted-foreground">Preparado para futuros proveedores. Hoy se usa OpenAI.</p>
+              <select
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
+                value={aiConfig.provider}
+                onChange={(e) => {
+                  const provider = e.target.value === "openrouter" ? "openrouter" : "openai";
+                  setAiConfig((prev) => ({
+                    ...prev,
+                    provider,
+                    model: provider === "openrouter"
+                      ? (prev.provider === "openrouter" && prev.model.trim() ? prev.model : DEFAULT_OPENROUTER_MODEL)
+                      : (prev.provider === "openai" && prev.model.trim() ? prev.model : AI_DEFAULTS.model),
+                  }));
+                }}
+              >
+                <option value="openai">OpenAI</option>
+                <option value="openrouter">OpenRouter</option>
+              </select>
+              <p className="text-xs text-muted-foreground">Elegí el proveedor por tenant sin romper la operación actual.</p>
             </div>
 
             <div className="space-y-1">
               <Label>Modelo de IA</Label>
-              <Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder="gpt-4o-mini" />
+              <Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder={aiConfig.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : "gpt-4o-mini"} />
             </div>
 
             <div className="space-y-1">
-              <Label>API key de OpenAI</Label>
+              <Label>API key del proveedor</Label>
               <Input
                 type="password"
                 autoComplete="new-password"
                 value={aiConfig.apiKey}
                 onChange={(e) => setAiConfig((p) => ({ ...p, apiKey: e.target.value }))}
-                placeholder="sk-..."
+                placeholder={aiConfig.provider === "openrouter" ? "or-..." : "sk-..."}
               />
-              <p className="text-xs text-muted-foreground">Pegá acá tu API key del proyecto OpenAI. Se guarda cifrada.</p>
+              <p className="text-xs text-muted-foreground">Pegá acá la API key del proveedor seleccionado. Se guarda cifrada.</p>
               {aiHasStoredApiKey ? <p className="text-xs text-muted-foreground">Ya existe una API key guardada (enmascarada). Solo reemplazala si querés cambiarla.</p> : null}
             </div>
 
