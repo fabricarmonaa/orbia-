@@ -31,7 +31,11 @@ interface WhatsappChannelForm {
 interface WhatsappAutomationConfigForm {
   enabled: boolean;
   webhookUrl: string;
+  webhookUrlProduction: string;
   signingSecret: string;
+  rulesEnabled: boolean;
+  handoffOnUnknown: boolean;
+  genericFallbackReply: string;
   timeoutMs: number;
   retryEnabled: boolean;
   retryMaxAttempts: number;
@@ -101,7 +105,11 @@ export function WhatsAppSettings() {
   const [automationConfig, setAutomationConfig] = useState<WhatsappAutomationConfigForm>({
     enabled: false,
     webhookUrl: "",
+    webhookUrlProduction: "",
     signingSecret: "",
+    rulesEnabled: true,
+    handoffOnUnknown: false,
+    genericFallbackReply: "",
     timeoutMs: 8000,
     retryEnabled: true,
     retryMaxAttempts: 3,
@@ -195,7 +203,11 @@ export function WhatsAppSettings() {
       setAutomationConfig({
         enabled: Boolean(data.enabled),
         webhookUrl: data.webhookUrl || "",
+        webhookUrlProduction: data.webhookUrlProduction || "",
         signingSecret: data.signingSecret || "",
+        rulesEnabled: data.rulesEnabled !== false,
+        handoffOnUnknown: Boolean(data.handoffOnUnknown),
+        genericFallbackReply: data.genericFallbackReply || "",
         timeoutMs: Number(data.timeoutMs || 8000),
         retryEnabled: Boolean(data.retryEnabled),
         retryMaxAttempts: Number(data.retryMaxAttempts || 3),
@@ -472,8 +484,12 @@ export function WhatsAppSettings() {
           <p className="text-xs text-muted-foreground">La automatización solo actuará en conversaciones configuradas en modo automatizado.</p>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="flex items-center gap-2"><Switch checked={automationConfig.enabled} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, enabled: checked }))} /><Label>Integración habilitada</Label></div>
-            <div className="space-y-1"><Label>Webhook URL</Label><Input value={automationConfig.webhookUrl} onChange={(e) => setAutomationConfig((p) => ({ ...p, webhookUrl: e.target.value }))} placeholder="https://n8n..." /></div>
+            <div className="space-y-1"><Label>Webhook URL (sandbox/default)</Label><Input value={automationConfig.webhookUrl} onChange={(e) => setAutomationConfig((p) => ({ ...p, webhookUrl: e.target.value }))} placeholder="https://n8n..." /></div>
+            <div className="space-y-1"><Label>Webhook URL (producción)</Label><Input value={automationConfig.webhookUrlProduction} onChange={(e) => setAutomationConfig((p) => ({ ...p, webhookUrlProduction: e.target.value }))} placeholder="https://n8n-prod..." /></div>
             <div className="space-y-1"><Label>Signing secret</Label><Input value={automationConfig.signingSecret} onChange={(e) => setAutomationConfig((p) => ({ ...p, signingSecret: e.target.value }))} placeholder="clave compartida" /></div>
+            <div className="flex items-center gap-2"><Switch checked={automationConfig.rulesEnabled} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, rulesEnabled: checked }))} /><Label>Reglas automáticas locales</Label></div>
+            <div className="flex items-center gap-2"><Switch checked={automationConfig.handoffOnUnknown} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, handoffOnUnknown: checked }))} /><Label>Handoff si no hay match</Label></div>
+            <div className="space-y-1 md:col-span-2"><Label>Respuesta fallback genérica</Label><Textarea value={automationConfig.genericFallbackReply} onChange={(e) => setAutomationConfig((p) => ({ ...p, genericFallbackReply: e.target.value }))} placeholder="Mensaje fallback cuando no hay regla" rows={2} /></div>
             <div className="space-y-1"><Label>Timeout (ms)</Label><Input type="number" value={automationConfig.timeoutMs} onChange={(e) => setAutomationConfig((p) => ({ ...p, timeoutMs: Number(e.target.value) || 8000 }))} /></div>
             <div className="flex items-center gap-2"><Switch checked={automationConfig.retryEnabled} onCheckedChange={(checked) => setAutomationConfig((p) => ({ ...p, retryEnabled: checked }))} /><Label>Retry habilitado</Label></div>
             <div className="space-y-1"><Label>Reintentos máximos</Label><Input type="number" value={automationConfig.retryMaxAttempts} onChange={(e) => setAutomationConfig((p) => ({ ...p, retryMaxAttempts: Number(e.target.value) || 1 }))} /></div>

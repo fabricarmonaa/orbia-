@@ -43,6 +43,45 @@ function isAutomationPaused(conversation: any) {
   return new Date(conversation.automationPausedUntil).getTime() > Date.now();
 }
 
+function normalizeAutomationText(input?: string | null) {
+  return String(input || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function evaluateInboundRule(text: string) {
+  const raw = normalizeAutomationText(text);
+  const has = (arr: string[]) => arr.some((w) => raw.includes(w));
+  if (!raw) return { intent: "unknown", action: "handoff" as const, reason: "empty_message" };
+  if (has(["humano", "persona", "asesor", "operador", "agente"])) {
+    return { intent: "human_request", action: "handoff" as const, reason: "requested_human" };
+  }
+  if (has(["reclamo", "enojo", "enojado", "malo", "pesimo", "horrible", "demora", "cancelar", "estafa"])) {
+    return { intent: "negative_sentiment", action: "handoff" as const, reason: "negative_or_claim" };
+  }
+  if (has(["hola", "buenas", "buen dia", "buenas tardes", "buenas noches"])) {
+    return { intent: "saludo", action: "reply" as const, text: "¡Hola! 👋 Gracias por escribir a Orbia. ¿En qué te podemos ayudar hoy?" };
+  }
+  if (has(["precio", "precios", "costo", "cuanto sale", "valor"])) {
+    return { intent: "precios", action: "reply" as const, text: "¡Gracias por tu consulta! 💬 Decinos qué producto/servicio te interesa y te pasamos precio actualizado enseguida." };
+  }
+  if (has(["horario", "horarios", "atencion", "abren", "cierran"])) {
+    return { intent: "horarios", action: "reply" as const, text: "Nuestro horario de atención puede variar por sucursal. Si querés, te confirmamos ahora mismo el horario exacto." };
+  }
+  if (has(["ubicacion", "donde estan", "direccion", "local", "sucursal"])) {
+    return { intent: "ubicacion", action: "reply" as const, text: "Estamos para ayudarte con la ubicación 📍. Decinos tu zona y te compartimos la dirección/sucursal correcta." };
+  }
+  if (has(["pago", "medios de pago", "tarjeta", "transferencia", "efectivo"])) {
+    return { intent: "medios_pago", action: "reply" as const, text: "Aceptamos distintos medios de pago 💳. Si querés, te confirmamos cuáles aplican para tu compra puntual." };
+  }
+  if (has(["seguimiento", "pedido", "estado", "envio", "mi compra"])) {
+    return { intent: "seguimiento", action: "reply" as const, text: "Perfecto, te ayudamos con el seguimiento 🚚. Compartinos tu número de pedido y lo revisamos." };
+  }
+  return { intent: "unknown", action: "unknown" as const, reason: "no_rule_match" };
+}
+
 
 function buildMetaErrorDiagnostic(error: any) {
   return {
@@ -817,7 +856,9 @@ async function dispatchInboundToAutomation(input: {
   const { channel, conversation, inboundMessage } = input;
   const addons = await getTenantAddons(channel.tenantId);
   const inboxAddonOn = Boolean((addons as any).whatsapp_inbox);
-  if (!inboxAddonOn || !conversation.automationEnabled || conversation.ownerMode !== "automation" || conversation.handoffStatus === "active" || isAutomationPaused(conversation)) {
+  const humanCooldownMinutes = Math.max(1, Number(process.env.WHATSAPP_AUTOMATION_HUMAN_COOLDOWN_MINUTES || "20"));
+  const recentHumanTakeover = Boolean(conversation.lastHumanAt) && ((Date.now() - new Date(conversation.lastHumanAt).getTime()) <= humanCooldownMinutes * 60_000);
+  if (!inboxAddonOn || !conversation.automationEnabled || conversation.ownerMode !== "automation" || conversation.handoffStatus === "active" || isAutomationPaused(conversation) || recentHumanTakeover) {
     await persistConversationDomainEvent({
       tenantId: channel.tenantId,
       branchId: conversation.branchId,
@@ -832,6 +873,7 @@ async function dispatchInboundToAutomation(input: {
         handoffStatus: conversation.handoffStatus,
         automationEnabled: conversation.automationEnabled,
         paused: isAutomationPaused(conversation),
+        recentHumanTakeover,
       },
     });
     return;
@@ -839,7 +881,7 @@ async function dispatchInboundToAutomation(input: {
 
   const cfg = await getTenantWhatsappAutomationConfig(channel.tenantId);
   const secret = decryptSecret(cfg?.signingSecretEncrypted || null);
-  if (!cfg?.enabled || !cfg?.webhookUrl || !secret || (cfg.allowedBranchId && cfg.allowedBranchId !== conversation.branchId)) {
+  if (!cfg?.enabled || !secret || (cfg.allowedBranchId && cfg.allowedBranchId !== conversation.branchId)) {
     await persistConversationDomainEvent({
       tenantId: channel.tenantId,
       branchId: conversation.branchId,
@@ -852,8 +894,147 @@ async function dispatchInboundToAutomation(input: {
         reason: "automation_config_incomplete",
         configEnabled: Boolean(cfg?.enabled),
         hasWebhook: Boolean(cfg?.webhookUrl),
+        hasWebhookProduction: Boolean((cfg as any)?.webhookUrlProduction),
         hasSecret: Boolean(secret),
       },
+    });
+    return;
+  }
+
+  const rule = evaluateInboundRule(inboundMessage.contentText || "");
+  waLog("automation_rule_detected", {
+    tenantId: channel.tenantId,
+    conversationId: conversation.id,
+    channelId: channel.id,
+    intent: rule.intent,
+    action: rule.action,
+  });
+  await persistConversationDomainEvent({
+    tenantId: channel.tenantId,
+    branchId: conversation.branchId,
+    channelId: channel.id,
+    conversationId: conversation.id,
+    messageId: inboundMessage.id,
+    customerId: conversation.customerId,
+    eventType: "whatsapp.automation.intent_detected",
+    payload: { intent: rule.intent, action: rule.action },
+  });
+
+  if ((cfg as any).rulesEnabled !== false) {
+    if (rule.action === "handoff") {
+      waLog("automation_handoff_requested", {
+        tenantId: channel.tenantId,
+        conversationId: conversation.id,
+        channelId: channel.id,
+        reason: rule.reason || "auto_rule",
+      });
+      const saved = await automationRequestHandoff({
+        tenantId: channel.tenantId,
+        conversationId: conversation.id,
+        reason: rule.reason || "auto_rule",
+        note: `Handoff automático por intención: ${rule.intent}`,
+      });
+      await persistConversationDomainEvent({
+        tenantId: channel.tenantId,
+        branchId: saved.branchId,
+        channelId: saved.channelId,
+        conversationId: saved.id,
+        customerId: saved.customerId,
+        eventType: "whatsapp.automation.handoff_activated",
+        payload: { reason: rule.reason || "auto_rule", intent: rule.intent },
+      });
+      return;
+    }
+
+    const shouldHandoffOnUnknown = Boolean((cfg as any).handoffOnUnknown);
+    if (rule.action === "unknown" && shouldHandoffOnUnknown) {
+      waLog("automation_handoff_requested", {
+        tenantId: channel.tenantId,
+        conversationId: conversation.id,
+        channelId: channel.id,
+        reason: "unknown_intent",
+      });
+      const saved = await automationRequestHandoff({
+        tenantId: channel.tenantId,
+        conversationId: conversation.id,
+        reason: "unknown_intent",
+        note: "Handoff automático por intención no reconocida",
+      });
+      await persistConversationDomainEvent({
+        tenantId: channel.tenantId,
+        branchId: saved.branchId,
+        channelId: saved.channelId,
+        conversationId: saved.id,
+        customerId: saved.customerId,
+        eventType: "whatsapp.automation.handoff_activated",
+        payload: { reason: "unknown_intent", intent: rule.intent },
+      });
+      return;
+    }
+
+    const fallback = String((cfg as any).genericFallbackReply || "").trim();
+    const replyText = rule.action === "reply" ? rule.text : (fallback || "");
+    if (replyText) {
+      try {
+        await automationReplyToConversation({
+          tenantId: channel.tenantId,
+          conversationId: conversation.id,
+          text: replyText,
+          idempotencyKey: `rule-${conversation.id}-${inboundMessage.id}-${rule.intent}`,
+        });
+        await persistConversationDomainEvent({
+          tenantId: channel.tenantId,
+          branchId: conversation.branchId,
+          channelId: conversation.channelId,
+          conversationId: conversation.id,
+          messageId: inboundMessage.id,
+          customerId: conversation.customerId,
+          eventType: "whatsapp.automation.rule_applied",
+          payload: { intent: rule.intent, text: replyText.slice(0, 180) },
+        });
+        waLog("automation_reply_ok", {
+          tenantId: channel.tenantId,
+          conversationId: conversation.id,
+          channelId: channel.id,
+          intent: rule.intent,
+        });
+        return;
+      } catch (error: any) {
+        waLog("automation_reply_error", {
+          tenantId: channel.tenantId,
+          conversationId: conversation.id,
+          channelId: channel.id,
+          intent: rule.intent,
+          error: error?.message || "unknown",
+        });
+        await persistConversationDomainEvent({
+          tenantId: channel.tenantId,
+          branchId: conversation.branchId,
+          channelId: conversation.channelId,
+          conversationId: conversation.id,
+          messageId: inboundMessage.id,
+          customerId: conversation.customerId,
+          eventType: "whatsapp.automation.reply_rejected",
+          payload: { reason: "rule_reply_failed", details: error?.message || "unknown" },
+        });
+      }
+    }
+  }
+
+  const environmentMode = getChannelRuntimeInfo(channel).environmentMode;
+  const targetWebhook = environmentMode === "production"
+    ? ((cfg as any).webhookUrlProduction || cfg.webhookUrl)
+    : cfg.webhookUrl;
+  if (!targetWebhook) {
+    await persistConversationDomainEvent({
+      tenantId: channel.tenantId,
+      branchId: conversation.branchId,
+      channelId: channel.id,
+      conversationId: conversation.id,
+      messageId: inboundMessage.id,
+      customerId: conversation.customerId,
+      eventType: "whatsapp.automation.rule_skipped",
+      payload: { reason: "missing_webhook_target", environmentMode },
     });
     return;
   }
@@ -889,7 +1070,7 @@ async function dispatchInboundToAutomation(input: {
       matched: Boolean(conversation.customerId),
     },
     meta: {
-      environmentMode: getChannelRuntimeInfo(channel).environmentMode,
+      environmentMode,
       timestamp: new Date().toISOString(),
       eventId,
     },
@@ -898,14 +1079,14 @@ async function dispatchInboundToAutomation(input: {
   const body = JSON.stringify(payload);
   const signature = signAutomationPayload(secret, eventType, body);
   const attempts = cfg.retryEnabled ? Math.max(1, cfg.retryMaxAttempts || 1) : 1;
-  waLog("automation_dispatch_start", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, ownerMode: conversation.ownerMode, handoffStatus: conversation.handoffStatus, webhookHost: hostFromUrl(cfg.webhookUrl), attempts });
+  waLog("automation_dispatch_start", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, ownerMode: conversation.ownerMode, handoffStatus: conversation.handoffStatus, environmentMode, webhookHost: hostFromUrl(targetWebhook), attempts });
 
   let lastError: string | null = null;
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), cfg.timeoutMs || 8000);
-      const res = await fetch(cfg.webhookUrl, {
+      const res = await fetch(targetWebhook, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -927,13 +1108,13 @@ async function dispatchInboundToAutomation(input: {
         messageId: inboundMessage.id,
         customerId: conversation.customerId,
         eventType: "whatsapp.automation.webhook_dispatched",
-        payload: { eventId, statusCode: res.status, attempt, webhookHost: hostFromUrl(cfg.webhookUrl) },
+        payload: { eventId, statusCode: res.status, attempt, webhookHost: hostFromUrl(targetWebhook), environmentMode },
       });
-      waLog("automation_dispatch_ok", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, statusCode: res.status, webhookHost: hostFromUrl(cfg.webhookUrl) });
+      waLog("automation_dispatch_ok", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, statusCode: res.status, webhookHost: hostFromUrl(targetWebhook), environmentMode });
       return;
     } catch (err: any) {
       lastError = err?.message || "dispatch_failed";
-      waLog("automation_dispatch_error", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, attempt, webhookHost: hostFromUrl(cfg.webhookUrl), error: lastError });
+      waLog("automation_dispatch_error", { tenantId: channel.tenantId, conversationId: conversation.id, channelId: channel.id, attempt, webhookHost: hostFromUrl(targetWebhook), environmentMode, error: lastError });
     }
   }
 
@@ -945,7 +1126,7 @@ async function dispatchInboundToAutomation(input: {
     messageId: inboundMessage.id,
     customerId: conversation.customerId,
     eventType: "whatsapp.automation.reply_rejected",
-    payload: { reason: "dispatch_failed", error: lastError, webhookHost: hostFromUrl(cfg.webhookUrl) },
+    payload: { reason: "dispatch_failed", error: lastError, webhookHost: hostFromUrl(targetWebhook), environmentMode },
   });
 }
 
@@ -1475,7 +1656,11 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
   enabled?: boolean;
   providerType?: "n8n_webhook";
   webhookUrl?: string | null;
+  webhookUrlProduction?: string | null;
   signingSecret?: string | null;
+  rulesEnabled?: boolean;
+  handoffOnUnknown?: boolean;
+  genericFallbackReply?: string | null;
   timeoutMs?: number;
   retryEnabled?: boolean;
   retryMaxAttempts?: number;
@@ -1492,6 +1677,10 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
   if (typeof input.enabled === "boolean") values.enabled = input.enabled;
   if (input.providerType) values.providerType = input.providerType;
   if (input.webhookUrl !== undefined) values.webhookUrl = input.webhookUrl || null;
+  if (input.webhookUrlProduction !== undefined) values.webhookUrlProduction = input.webhookUrlProduction || null;
+  if (typeof input.rulesEnabled === "boolean") values.rulesEnabled = input.rulesEnabled;
+  if (typeof input.handoffOnUnknown === "boolean") values.handoffOnUnknown = input.handoffOnUnknown;
+  if (input.genericFallbackReply !== undefined) values.genericFallbackReply = (input.genericFallbackReply || "").trim() || null;
   if (typeof input.timeoutMs === "number") values.timeoutMs = Math.max(1000, Math.min(30000, input.timeoutMs));
   if (typeof input.retryEnabled === "boolean") values.retryEnabled = input.retryEnabled;
   if (typeof input.retryMaxAttempts === "number") values.retryMaxAttempts = Math.max(1, Math.min(8, input.retryMaxAttempts));
@@ -1515,7 +1704,11 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
         enabled: Boolean(input.enabled),
         providerType: input.providerType || "n8n_webhook",
         webhookUrl: input.webhookUrl || null,
+        webhookUrlProduction: input.webhookUrlProduction || null,
         signingSecretEncrypted: normalizedSigningSecret ? encryptSecret(normalizedSigningSecret) : null,
+        rulesEnabled: input.rulesEnabled !== false,
+        handoffOnUnknown: Boolean(input.handoffOnUnknown),
+        genericFallbackReply: (input.genericFallbackReply || "").trim() || null,
         timeoutMs: Math.max(1000, Math.min(30000, input.timeoutMs || 8000)),
         retryEnabled: input.retryEnabled !== false,
         retryMaxAttempts: Math.max(1, Math.min(8, input.retryMaxAttempts || 3)),

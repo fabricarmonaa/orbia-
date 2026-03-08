@@ -12,6 +12,21 @@ import { getWhatsappConversationStatusLabel } from "@/lib/whatsapp-conversation-
 const STATUS_OPTIONS = ["OPEN", "PENDING_CUSTOMER", "PENDING_BUSINESS", "WAITING_INTERNAL", "RESOLVED", "CLOSED"] as const;
 const USAGE_FILTER_OPTIONS = ["all", "greeting", "follow_up", "reengagement", "confirmation", "reminder", "quote_or_budget", "handoff_human", "error_fallback", "closing", "custom"] as const;
 
+const TIMELINE_LABELS: Record<string, string> = {
+  "whatsapp.automation.webhook_dispatched": "Webhook de automatización enviado",
+  "whatsapp.automation.intent_detected": "Intención detectada",
+  "whatsapp.automation.reply_sent": "Respuesta automática enviada",
+  "whatsapp.automation.handoff_requested": "Handoff solicitado",
+  "whatsapp.automation.handoff_activated": "Handoff activado",
+  "whatsapp.automation.paused": "Automatización pausada",
+  "whatsapp.automation.resumed": "Automatización reanudada",
+  "whatsapp.automation.enabled": "Automatización activada",
+  "whatsapp.automation.disabled": "Automatización desactivada",
+  "whatsapp.automation.reply_rejected": "Error de respuesta automática",
+  "whatsapp.automation.rule_skipped": "Regla de automatización omitida",
+  "whatsapp.automation.rule_applied": "Regla de automatización aplicada",
+};
+
 type StreamStatus = "connecting" | "live" | "reconnecting" | "offline";
 
 export default function WhatsappConversationsPage() {
@@ -405,7 +420,7 @@ export default function WhatsappConversationsPage() {
               <button key={c.id} onClick={() => { setSelected(c); loadMessages(c.id); loadTemplateSuggestions(c.id); loadTimeline(c.id); loadCustomerMatches(c.id); }} className={`w-full text-left border rounded-md p-2 hover:bg-muted/50 ${selected?.id === c.id ? "border-primary" : ""}`}>
                 <div className="flex items-center justify-between">
                   <p className="font-medium">{c.customerName || c.customerPhone}</p>
-                  <div className="flex gap-1"><Badge>{getWhatsappConversationStatusLabel(c.status)}</Badge><Badge variant={c.windowOpen ? "secondary" : "destructive"}>{c.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge>{c.sandboxRecipientOverride ? <Badge variant="outline">sandbox recipient override</Badge> : null}</div>
+                  <div className="flex gap-1 flex-wrap"><Badge>{getWhatsappConversationStatusLabel(c.status)}</Badge><Badge variant={c.windowOpen ? "secondary" : "destructive"}>{c.windowOpen ? "Ventana abierta" : "Ventana cerrada"}</Badge>{c.automationEnabled ? <Badge variant="secondary">Automatización activa</Badge> : <Badge variant="outline">Automatización inactiva</Badge>}{c.automationPausedUntil ? <Badge variant="outline">Pausada</Badge> : null}{c.handoffStatus === "active" ? <Badge variant="destructive">Handoff activo</Badge> : null}{c.lastHumanAt && (!c.lastAutomationAt || new Date(c.lastHumanAt).getTime() > new Date(c.lastAutomationAt).getTime()) ? <Badge variant="outline">Takeover humano</Badge> : null}{c.sandboxRecipientOverride ? <Badge variant="outline">sandbox recipient override</Badge> : null}</div>
                 </div>
                 <p className="text-xs text-muted-foreground">{c.customerPhone}</p>
                 <p className="text-xs text-muted-foreground">{getWhatsappConversationStatusLabel(c.status)} · No leídos: {c.unreadCount}</p>
@@ -502,7 +517,7 @@ export default function WhatsappConversationsPage() {
               <div className="border rounded-md p-2">
                 <p className="text-sm font-medium mb-2">Timeline</p>
                 <div className="space-y-1 max-h-[120px] overflow-auto text-xs text-muted-foreground">
-                  {timeline.map((ev) => <p key={ev.id}>{new Date(ev.createdAt).toLocaleString()} · {ev.eventType}</p>)}
+                  {timeline.map((ev) => <p key={ev.id}>{new Date(ev.createdAt).toLocaleString()} · {TIMELINE_LABELS[ev.eventType] || ev.eventType}</p>)}
                   {!timeline.length ? <p>Sin eventos aún</p> : null}
                 </div>
               </div>
