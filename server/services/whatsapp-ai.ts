@@ -17,7 +17,7 @@ export type WhatsAppAiDecisionAction = "reply" | "handoff" | "pause" | "no_actio
 export type WhatsAppAiProvider = "openai" | "openrouter";
 
 const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
-const DEFAULT_OPENROUTER_MODEL = "mistralai/mistral-7b-instruct";
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini";
 
 export type WhatsAppAiDecision = {
   action: WhatsAppAiDecisionAction;
@@ -87,6 +87,17 @@ export async function upsertTenantWhatsappAiConfig(input: {
   if (input.apiKey !== undefined && !isMaskedSecretValue(input.apiKey)) {
     values.apiKeyEncrypted = (input.apiKey || "").trim() ? encryptSecret((input.apiKey || "").trim()) : null;
   }
+
+  const providerForValidation = (input.provider || existing?.provider || "openai") as WhatsAppAiProvider;
+  const modelForValidation = String(input.model || values.model || existing?.model || getDefaultModelForProvider(providerForValidation)).trim();
+  const hasApiKeyForValidation = Boolean((values.apiKeyEncrypted as string | undefined) || existing?.apiKeyEncrypted || (input.apiKey && !isMaskedSecretValue(input.apiKey) && input.apiKey.trim()));
+  const enabledForValidation = typeof input.enabled === "boolean" ? input.enabled : Boolean(existing?.enabled);
+  validateAiConfigForRuntime({
+    provider: providerForValidation,
+    model: modelForValidation,
+    hasApiKey: hasApiKeyForValidation,
+    enabled: enabledForValidation,
+  });
 
   if (existing) {
     const [saved] = await db.update(tenantWhatsappAiConfigs).set(values).where(eq(tenantWhatsappAiConfigs.id, existing.id)).returning();
@@ -199,6 +210,26 @@ function getDefaultModelForProvider(provider: WhatsAppAiProvider) {
 
 function getEffectiveProvider(cfg: any): WhatsAppAiProvider {
   return cfg?.provider === "openrouter" ? "openrouter" : "openai";
+}
+
+function isModelCompatibleWithProvider(provider: WhatsAppAiProvider, model: string) {
+  const normalized = String(model || "").trim();
+  if (!normalized) return false;
+  if (provider === "openrouter") {
+    return normalized.includes("/");
+  }
+  return !normalized.includes("/");
+}
+
+function validateAiConfigForRuntime(input: { provider: WhatsAppAiProvider; model: string; hasApiKey: boolean; enabled: boolean }) {
+  if (!input.enabled) return;
+  if (!input.provider) throw new Error("AI_CONFIG_PROVIDER_REQUIRED");
+  if (!input.model.trim()) throw new Error("AI_CONFIG_MODEL_REQUIRED");
+  if (!input.hasApiKey) throw new Error("AI_CONFIG_API_KEY_REQUIRED");
+  if (!isModelCompatibleWithProvider(input.provider, input.model)) {
+    if (input.provider === "openrouter") throw new Error("AI_CONFIG_MODEL_INCOMPATIBLE_OPENROUTER");
+    throw new Error("AI_CONFIG_MODEL_INCOMPATIBLE_OPENAI");
+  }
 }
 
 function buildSystemPrompt(input: { cfg: any; context: any }) {
@@ -324,10 +355,14 @@ async function callOpenRouterGenerate(input: { cfg: any; context: any }) {
 
     const payload: any = await response.json().catch(() => ({}));
     if (!response.ok) {
-      throw new Error(payload?.error?.message || `OPENROUTER_HTTP_${response.status}`);
+      const providerMessage = String(payload?.error?.message || payload?.message || "").trim();
+      throw new Error(`OPENROUTER_HTTP_${response.status}:${providerMessage || "no_message"}`);
     }
 
     const outputText = String(payload?.choices?.[0]?.message?.content || "").trim();
+    if (!outputText) {
+      throw new Error("OPENROUTER_INVALID_RESPONSE:missing_choices_message_content");
+    }
     const decision = parseAiOutputText(outputText, input.cfg.model || DEFAULT_OPENROUTER_MODEL);
     const usage = payload?.usage || {};
     return {
@@ -366,18 +401,37 @@ async function appendConversationEvent(input: { tenantId: number; context: any; 
 
 function classifyAiError(error: any) {
   const message = String(error?.message || "unknown_error");
-  if (message.includes("API_KEY_MISSING")) return { code: "config_missing_api_key", message };
+  const msgLower = message.toLowerCase();
+
+  if (message.includes("AI_CONFIG_PROVIDER_REQUIRED")) return { code: "config_missing_provider", message };
+  if (message.includes("AI_CONFIG_MODEL_REQUIRED")) return { code: "config_missing_model", message };
+  if (message.includes("AI_CONFIG_API_KEY_REQUIRED") || message.includes("API_KEY_MISSING")) return { code: "config_missing_api_key", message };
+  if (message.includes("AI_CONFIG_MODEL_INCOMPATIBLE_OPENROUTER")) return { code: "config_model_incompatible_openrouter", message };
+  if (message.includes("AI_CONFIG_MODEL_INCOMPATIBLE_OPENAI")) return { code: "config_model_incompatible_openai", message };
   if (message.includes("Conversación no encontrada")) return { code: "conversation_not_found", message };
-  if (message.includes("OPENROUTER_HTTP_")) return { code: "provider_http_error", message };
+
+  if (message.includes("OPENROUTER_HTTP_")) {
+    const statusPart = message.split("OPENROUTER_HTTP_")[1] || "";
+    const statusCode = Number(statusPart.split(":")[0] || 0);
+    if (statusCode === 401) return { code: "provider_http_401", message };
+    if (statusCode === 402) return { code: "provider_http_402", message };
+    if (statusCode === 404) return { code: "provider_http_404_model", message };
+    if (statusCode === 429) return { code: "provider_http_429", message };
+    return { code: "provider_http_error", message };
+  }
+
+  if (message.includes("OPENROUTER_INVALID_RESPONSE")) return { code: "provider_invalid_response", message };
+  if (msgLower.includes("no endpoints found for")) return { code: "provider_no_endpoint_for_model", message };
+  if (msgLower.includes("abort") || msgLower.includes("timeout")) return { code: "provider_timeout", message };
   if (message.includes("OPENAI")) return { code: "provider_openai_error", message };
   if (message.includes("OPENROUTER")) return { code: "provider_openrouter_error", message };
-  if (message.toLowerCase().includes("abort")) return { code: "provider_timeout", message };
   return { code: "unknown_error", message };
 }
 
 function getAiErrorFallbackPolicy(cfg: any): { action: AiErrorFallbackAction; replyText: string } {
   const raw = String(cfg?.escalationRules?.providerErrorPolicy || cfg?.escalationRules?.onProviderErrorAction || "").trim().toLowerCase();
-  const action: AiErrorFallbackAction = raw === "handoff" || raw === "fallback_reply" || raw === "no_action" ? raw : "no_action";
+  const normalizedRaw = raw === "reply_fallback" ? "fallback_reply" : raw;
+  const action: AiErrorFallbackAction = normalizedRaw === "handoff" || normalizedRaw === "fallback_reply" || normalizedRaw === "no_action" ? normalizedRaw : "no_action";
   const replyText = String(cfg?.escalationRules?.providerErrorFallbackReply || "Estamos procesando tu consulta. En breve te respondemos.").trim();
   return { action, replyText };
 }
@@ -389,7 +443,9 @@ export async function decideAutomationWithAi(input: { tenantId: number; conversa
   }
 
   const provider = getEffectiveProvider(cfg);
-  const model = cfg.model || getDefaultModelForProvider(provider);
+  const model = String(cfg.model || getDefaultModelForProvider(provider)).trim();
+  const hasApiKey = Boolean(decryptSecret(cfg.apiKeyEncrypted || null) || (provider === "openai" ? process.env.OPENAI_API_KEY : process.env.OPENROUTER_API_KEY));
+  validateAiConfigForRuntime({ provider, model, hasApiKey, enabled: Boolean(cfg.enabled) });
 
   aiLog("automation_ai_request_start", { tenantId: input.tenantId, conversationId: input.conversationId, provider, model, trigger: input.trigger || "unknown", source: input.source || "unknown" });
 
@@ -445,7 +501,7 @@ export async function decideAutomationWithAi(input: { tenantId: number; conversa
 
     const ai = await callAiProviderGenerate({ cfg: { ...cfg, model, provider }, context });
 
-    aiLog("automation_ai_provider_result", {
+    aiLog("automation_ai_provider_response_preview", {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
       provider,

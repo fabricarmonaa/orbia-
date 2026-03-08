@@ -120,6 +120,13 @@ const aiConfigSchema = z.object({
   maxOutputTokens: z.coerce.number().int().min(100).max(1500).optional(),
   apiKey: z.string().trim().max(4000).nullable().optional(),
   globalMemory: z.string().trim().max(20000).nullable().optional(),
+}).superRefine((value, ctx) => {
+  if (value.enabled === true && !value.provider) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["provider"], message: "provider es requerido cuando IA está habilitada" });
+  }
+  if (value.enabled === true && !String(value.model || "").trim()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["model"], message: "model es requerido cuando IA está habilitada" });
+  }
 });
 
 
@@ -392,27 +399,43 @@ export function registerWhatsappRoutes(app: Express) {
   });
 
   app.put("/api/whatsapp/automation/ai-config", tenantAuth, requireAddon("whatsapp_inbox"), requireTenantAdmin, blockBranchScope, validateBody(aiConfigSchema), async (req, res) => {
-    const cfg = await upsertTenantWhatsappAiConfig({
-      tenantId: req.auth!.tenantId!,
-      enabled: req.body.enabled,
-      provider: req.body.provider,
-      model: req.body.model,
-      systemPrompt: req.body.systemPrompt,
-      businessContext: req.body.businessContext,
-      responseStyle: req.body.responseStyle,
-      escalationRules: req.body.escalationRules,
-      maxContextMessages: req.body.maxContextMessages,
-      summaryEnabled: req.body.summaryEnabled,
-      summaryMaxChars: req.body.summaryMaxChars,
-      toolsEnabled: req.body.toolsEnabled,
-      temperature: req.body.temperature,
-      maxOutputTokens: req.body.maxOutputTokens,
-      apiKey: req.body.apiKey,
-    });
-    if (req.body.globalMemory !== undefined) {
-      await upsertTenantAiGlobalMemory({ tenantId: req.auth!.tenantId!, content: req.body.globalMemory || "", metadataJson: { source: "settings" } });
+    try {
+      const cfg = await upsertTenantWhatsappAiConfig({
+        tenantId: req.auth!.tenantId!,
+        enabled: req.body.enabled,
+        provider: req.body.provider,
+        model: req.body.model,
+        systemPrompt: req.body.systemPrompt,
+        businessContext: req.body.businessContext,
+        responseStyle: req.body.responseStyle,
+        escalationRules: req.body.escalationRules,
+        maxContextMessages: req.body.maxContextMessages,
+        summaryEnabled: req.body.summaryEnabled,
+        summaryMaxChars: req.body.summaryMaxChars,
+        toolsEnabled: req.body.toolsEnabled,
+        temperature: req.body.temperature,
+        maxOutputTokens: req.body.maxOutputTokens,
+        apiKey: req.body.apiKey,
+      });
+      if (req.body.globalMemory !== undefined) {
+        await upsertTenantAiGlobalMemory({ tenantId: req.auth!.tenantId!, content: req.body.globalMemory || "", metadataJson: { source: "settings" } });
+      }
+      return res.json({ data: tenantWhatsappAiConfigToSafeResponse(cfg) });
+    } catch (error: any) {
+      const message = String(error?.message || "AI_CONFIG_INVALID");
+      const code = [
+        "AI_CONFIG_PROVIDER_REQUIRED",
+        "AI_CONFIG_MODEL_REQUIRED",
+        "AI_CONFIG_API_KEY_REQUIRED",
+        "AI_CONFIG_MODEL_INCOMPATIBLE_OPENROUTER",
+        "AI_CONFIG_MODEL_INCOMPATIBLE_OPENAI",
+      ].includes(message) ? message : "AI_CONFIG_INVALID";
+      return res.status(400).json({
+        error: "Configuración de IA inválida",
+        code,
+        details: message,
+      });
     }
-    return res.json({ data: tenantWhatsappAiConfigToSafeResponse(cfg) });
   });
 
   const requireAutomationSignature = async (req: any, res: any, next: any) => {

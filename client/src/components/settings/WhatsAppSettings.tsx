@@ -60,10 +60,13 @@ interface WhatsappAiConfigForm {
 }
 
 
+const DEFAULT_OPENROUTER_MODEL = "openai/gpt-4o-mini";
+const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+
 const AI_DEFAULTS: WhatsappAiConfigForm = {
   enabled: false,
   provider: "openai",
-  model: "gpt-4o-mini",
+  model: DEFAULT_OPENAI_MODEL,
   systemPrompt: "",
   businessContext: "",
   responseStyle: "professional_friendly",
@@ -78,8 +81,6 @@ const AI_DEFAULTS: WhatsappAiConfigForm = {
   globalMemory: "",
 };
 
-
-const DEFAULT_OPENROUTER_MODEL = "mistralai/mistral-7b-instruct";
 
 const MASK_CHAR = "•";
 
@@ -284,7 +285,7 @@ export function WhatsAppSettings() {
       setAiConfig({
         enabled: Boolean(data.enabled),
         provider: data.provider === "openrouter" ? "openrouter" : "openai",
-        model: data.model || (data.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : AI_DEFAULTS.model),
+        model: data.model || (data.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : DEFAULT_OPENAI_MODEL),
         systemPrompt: data.systemPrompt || "",
         businessContext: data.businessContext || "",
         responseStyle: data.responseStyle || AI_DEFAULTS.responseStyle,
@@ -326,6 +327,14 @@ export function WhatsAppSettings() {
   function validateAiConfig() {
     if (aiConfig.enabled && !aiConfig.model.trim()) {
       return "Indicá un modelo de IA para continuar.";
+    }
+
+    if (aiConfig.enabled && aiConfig.provider === "openrouter" && !aiConfig.model.includes("/")) {
+      return "Para OpenRouter usá el slug exacto del modelo (ejemplo: openai/gpt-4o-mini).";
+    }
+
+    if (aiConfig.enabled && aiConfig.provider === "openai" && aiConfig.model.includes("/")) {
+      return "Para OpenAI usá un modelo nativo de OpenAI (sin slash), por ejemplo gpt-4o-mini.";
     }
 
     const maxContextMessages = Number(aiConfig.maxContextMessages);
@@ -704,7 +713,7 @@ export function WhatsAppSettings() {
                     provider,
                     model: provider === "openrouter"
                       ? (prev.provider === "openrouter" && prev.model.trim() ? prev.model : DEFAULT_OPENROUTER_MODEL)
-                      : (prev.provider === "openai" && prev.model.trim() ? prev.model : AI_DEFAULTS.model),
+                      : (prev.provider === "openai" && prev.model.trim() ? prev.model : DEFAULT_OPENAI_MODEL),
                   }));
                 }}
               >
@@ -716,7 +725,12 @@ export function WhatsAppSettings() {
 
             <div className="space-y-1">
               <Label>Modelo de IA</Label>
-              <Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder={aiConfig.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : "gpt-4o-mini"} />
+              <Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder={aiConfig.provider === "openrouter" ? DEFAULT_OPENROUTER_MODEL : DEFAULT_OPENAI_MODEL} />
+              <p className="text-xs text-muted-foreground">
+                {aiConfig.provider === "openrouter"
+                  ? "OpenRouter requiere el slug exacto del modelo (proveedor/modelo)."
+                  : "OpenAI requiere un modelo válido de OpenAI (por ejemplo gpt-4o-mini)."}
+              </p>
             </div>
 
             <div className="space-y-1">
