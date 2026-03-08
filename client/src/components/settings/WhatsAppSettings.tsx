@@ -43,16 +43,46 @@ interface WhatsappAutomationConfigForm {
 
 interface WhatsappAiConfigForm {
   enabled: boolean;
+  provider: "openai";
   model: string;
   systemPrompt: string;
   businessContext: string;
   responseStyle: string;
+  escalationRules: string;
   summaryEnabled: boolean;
+  summaryMaxChars: number;
   maxContextMessages: number;
   maxOutputTokens: number;
+  toolsEnabled: boolean;
   temperature: number;
   apiKey: string;
   globalMemory: string;
+}
+
+
+const AI_DEFAULTS: WhatsappAiConfigForm = {
+  enabled: false,
+  provider: "openai",
+  model: "gpt-4o-mini",
+  systemPrompt: "",
+  businessContext: "",
+  responseStyle: "professional_friendly",
+  escalationRules: "{}",
+  summaryEnabled: true,
+  summaryMaxChars: 1200,
+  maxContextMessages: 20,
+  maxOutputTokens: 500,
+  toolsEnabled: false,
+  temperature: 20,
+  apiKey: "",
+  globalMemory: "",
+};
+
+const MASK_CHAR = "•";
+
+function looksMaskedSecret(value: string) {
+  const trimmed = String(value || "").trim();
+  return Boolean(trimmed) && (trimmed.includes(MASK_CHAR) || /^\*{4,}/.test(trimmed));
 }
 
 const emptyForm: WhatsappChannelForm = {
@@ -130,20 +160,10 @@ export function WhatsAppSettings() {
   });
   const [savingAutomation, setSavingAutomation] = useState(false);
   const [testingAutomation, setTestingAutomation] = useState(false);
-  const [aiConfig, setAiConfig] = useState<WhatsappAiConfigForm>({
-    enabled: false,
-    model: "gpt-4o-mini",
-    systemPrompt: "",
-    businessContext: "",
-    responseStyle: "professional_friendly",
-    summaryEnabled: true,
-    maxContextMessages: 20,
-    maxOutputTokens: 500,
-    temperature: 20,
-    apiKey: "",
-    globalMemory: "",
-  });
+  const [aiConfig, setAiConfig] = useState<WhatsappAiConfigForm>(AI_DEFAULTS);
   const [savingAi, setSavingAi] = useState(false);
+  const [loadingAi, setLoadingAi] = useState(false);
+  const [aiHasStoredApiKey, setAiHasStoredApiKey] = useState(false);
 
   const normalizedRecipientPreview = useMemo(() => normalizeRecipient(testPhone), [testPhone]);
 
@@ -246,26 +266,45 @@ export function WhatsAppSettings() {
   }
 
   async function loadAiConfig() {
+    setLoadingAi(true);
     try {
       const res = await apiRequest("GET", "/api/whatsapp/automation/ai-config");
       const json = await res.json();
       const data = json?.data;
-      if (!data) return;
-      setAiConfig((prev) => ({
-        ...prev,
+      if (!data) {
+        setAiConfig(AI_DEFAULTS);
+        setAiHasStoredApiKey(false);
+        return;
+      }
+      const apiKeyValue = String(data.apiKey || "");
+      setAiHasStoredApiKey(Boolean(apiKeyValue.trim()));
+      setAiConfig({
         enabled: Boolean(data.enabled),
-        model: data.model || "gpt-4o-mini",
+        provider: "openai",
+        model: data.model || AI_DEFAULTS.model,
         systemPrompt: data.systemPrompt || "",
         businessContext: data.businessContext || "",
-        responseStyle: data.responseStyle || "professional_friendly",
+        responseStyle: data.responseStyle || AI_DEFAULTS.responseStyle,
+        escalationRules: JSON.stringify(data.escalationRules || {}, null, 2),
         summaryEnabled: data.summaryEnabled !== false,
-        maxContextMessages: Number(data.maxContextMessages || 20),
-        maxOutputTokens: Number(data.maxOutputTokens || 500),
-        temperature: Number(data.temperature || 20),
-        apiKey: data.apiKey || "",
-      }));
+        summaryMaxChars: Number(data.summaryMaxChars || AI_DEFAULTS.summaryMaxChars),
+        maxContextMessages: Number(data.maxContextMessages || AI_DEFAULTS.maxContextMessages),
+        maxOutputTokens: Number(data.maxOutputTokens || AI_DEFAULTS.maxOutputTokens),
+        toolsEnabled: Boolean(data.toolsEnabled),
+        temperature: Number(data.temperature ?? AI_DEFAULTS.temperature),
+        apiKey: apiKeyValue,
+        globalMemory: data.globalMemory || "",
+      });
     } catch {
-      // noop
+      toast({
+        title: "No se pudo cargar la configuración de IA",
+        description: "Podés completar los campos y guardar para crearla por primera vez.",
+        variant: "destructive",
+      });
+      setAiConfig(AI_DEFAULTS);
+      setAiHasStoredApiKey(false);
+    } finally {
+      setLoadingAi(false);
     }
   }
 
@@ -281,14 +320,87 @@ export function WhatsAppSettings() {
     await Promise.all([loadChannel(), loadHealth(), loadOnboarding(), loadAutomationConfig(), loadAiConfig()]);
   }
 
+  function validateAiConfig() {
+    if (aiConfig.enabled && !aiConfig.model.trim()) {
+      return "Indicá un modelo de IA para continuar.";
+    }
+
+    const maxContextMessages = Number(aiConfig.maxContextMessages);
+    if (!Number.isFinite(maxContextMessages) || maxContextMessages < 4 || maxContextMessages > 40) {
+      return "La cantidad máxima de mensajes de contexto debe estar entre 4 y 40.";
+    }
+
+    const summaryMaxChars = Number(aiConfig.summaryMaxChars);
+    if (!Number.isFinite(summaryMaxChars) || summaryMaxChars < 300 || summaryMaxChars > 4000) {
+      return "El límite de caracteres del resumen debe estar entre 300 y 4000.";
+    }
+
+    const maxOutputTokens = Number(aiConfig.maxOutputTokens);
+    if (!Number.isFinite(maxOutputTokens) || maxOutputTokens < 100 || maxOutputTokens > 1500) {
+      return "El límite de tokens de salida debe estar entre 100 y 1500.";
+    }
+
+    const temperature = Number(aiConfig.temperature);
+    if (!Number.isFinite(temperature) || temperature < 0 || temperature > 100) {
+      return "La temperatura debe estar entre 0 y 100.";
+    }
+
+    const apiKey = String(aiConfig.apiKey || "").trim();
+    if (aiConfig.enabled && !aiHasStoredApiKey && !apiKey) {
+      return "Para habilitar IA necesitás guardar una API key de OpenAI.";
+    }
+
+    return null;
+  }
+
   async function saveAiConfig() {
+    const validationError = validateAiConfig();
+    if (validationError) {
+      toast({ title: "Revisá la configuración de IA", description: validationError, variant: "destructive" });
+      return;
+    }
+
+    let escalationRules: Record<string, unknown> = {};
+    try {
+      escalationRules = aiConfig.escalationRules.trim() ? JSON.parse(aiConfig.escalationRules) : {};
+    } catch {
+      toast({
+        title: "Reglas de escalado inválidas",
+        description: "Usá un JSON válido para las reglas de escalado.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const payload: Record<string, unknown> = {
+      enabled: aiConfig.enabled,
+      provider: aiConfig.provider,
+      model: aiConfig.model.trim(),
+      systemPrompt: aiConfig.systemPrompt,
+      businessContext: aiConfig.businessContext,
+      responseStyle: aiConfig.responseStyle,
+      escalationRules,
+      summaryEnabled: aiConfig.summaryEnabled,
+      summaryMaxChars: Number(aiConfig.summaryMaxChars),
+      maxContextMessages: Number(aiConfig.maxContextMessages),
+      maxOutputTokens: Number(aiConfig.maxOutputTokens),
+      toolsEnabled: aiConfig.toolsEnabled,
+      temperature: Number(aiConfig.temperature),
+      globalMemory: aiConfig.globalMemory,
+    };
+
+    const apiKeyTrimmed = String(aiConfig.apiKey || "").trim();
+    if (apiKeyTrimmed && !looksMaskedSecret(apiKeyTrimmed)) {
+      payload.apiKey = apiKeyTrimmed;
+    }
+
     setSavingAi(true);
     try {
-      await apiRequest("PUT", "/api/whatsapp/automation/ai-config", aiConfig);
-      toast({ title: "Configuración IA guardada" });
+      await apiRequest("PUT", "/api/whatsapp/automation/ai-config", payload);
+      toast({ title: "Configuración de IA guardada", description: "Los cambios de OpenAI se aplicaron correctamente." });
       await refreshState();
     } catch (err: any) {
-      toast({ title: "Error guardando IA", description: err?.message || "Error", variant: "destructive" });
+      toast({ title: "Error guardando IA", description: err?.message || "No se pudo guardar la configuración.", variant: "destructive" });
     } finally {
       setSavingAi(false);
     }
@@ -567,23 +679,105 @@ export function WhatsAppSettings() {
         </div>
 
         <div className="border rounded-md p-3 space-y-3">
-          <p className="text-sm font-medium">IA conversacional (OpenAI)</p>
-          <p className="text-xs text-muted-foreground">Base multi-tenant para respuestas naturales controladas por reglas operativas.</p>
+          <p className="text-sm font-medium">Inteligencia artificial / OpenAI</p>
+          <p className="text-xs text-muted-foreground">La automatización con IA solo actúa en conversaciones habilitadas para modo automático.</p>
+          {loadingAi ? <p className="text-xs text-muted-foreground">Cargando configuración de IA...</p> : null}
+
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="flex items-center gap-2"><Switch checked={aiConfig.enabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, enabled: checked }))} /><Label>IA habilitada</Label></div>
-            <div className="space-y-1"><Label>Modelo</Label><Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder="gpt-4o-mini" /></div>
-            <div className="space-y-1 md:col-span-2"><Label>System prompt</Label><Textarea value={aiConfig.systemPrompt} onChange={(e) => setAiConfig((p) => ({ ...p, systemPrompt: e.target.value }))} rows={3} /></div>
-            <div className="space-y-1 md:col-span-2"><Label>Business context</Label><Textarea value={aiConfig.businessContext} onChange={(e) => setAiConfig((p) => ({ ...p, businessContext: e.target.value }))} rows={3} /></div>
-            <div className="space-y-1"><Label>Estilo</Label><Input value={aiConfig.responseStyle} onChange={(e) => setAiConfig((p) => ({ ...p, responseStyle: e.target.value }))} /></div>
-            <div className="space-y-1"><Label>API key OpenAI</Label><Input value={aiConfig.apiKey} onChange={(e) => setAiConfig((p) => ({ ...p, apiKey: e.target.value }))} placeholder="sk-..." /></div>
-            <div className="flex items-center gap-2"><Switch checked={aiConfig.summaryEnabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, summaryEnabled: checked }))} /><Label>Resumen habilitado</Label></div>
-            <div className="space-y-1"><Label>Contexto máximo mensajes</Label><Input type="number" value={aiConfig.maxContextMessages} onChange={(e) => setAiConfig((p) => ({ ...p, maxContextMessages: Number(e.target.value) || 20 }))} /></div>
-            <div className="space-y-1"><Label>Max output tokens</Label><Input type="number" value={aiConfig.maxOutputTokens} onChange={(e) => setAiConfig((p) => ({ ...p, maxOutputTokens: Number(e.target.value) || 500 }))} /></div>
-            <div className="space-y-1"><Label>Temperatura (0-100)</Label><Input type="number" value={aiConfig.temperature} onChange={(e) => setAiConfig((p) => ({ ...p, temperature: Number(e.target.value) || 20 }))} /></div>
-            <div className="space-y-1 md:col-span-2"><Label>Memoria global tenant</Label><Textarea value={aiConfig.globalMemory} onChange={(e) => setAiConfig((p) => ({ ...p, globalMemory: e.target.value }))} rows={2} /></div>
+            <div className="flex items-center gap-2">
+              <Switch checked={aiConfig.enabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, enabled: checked }))} />
+              <Label>IA habilitada</Label>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Proveedor de IA</Label>
+              <Input value={aiConfig.provider} disabled />
+              <p className="text-xs text-muted-foreground">Preparado para futuros proveedores. Hoy se usa OpenAI.</p>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Modelo de IA</Label>
+              <Input value={aiConfig.model} onChange={(e) => setAiConfig((p) => ({ ...p, model: e.target.value }))} placeholder="gpt-4o-mini" />
+            </div>
+
+            <div className="space-y-1">
+              <Label>API key de OpenAI</Label>
+              <Input
+                type="password"
+                autoComplete="new-password"
+                value={aiConfig.apiKey}
+                onChange={(e) => setAiConfig((p) => ({ ...p, apiKey: e.target.value }))}
+                placeholder="sk-..."
+              />
+              <p className="text-xs text-muted-foreground">Pegá acá tu API key del proyecto OpenAI. Se guarda cifrada.</p>
+              {aiHasStoredApiKey ? <p className="text-xs text-muted-foreground">Ya existe una API key guardada (enmascarada). Solo reemplazala si querés cambiarla.</p> : null}
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <Label>Prompt base</Label>
+              <Textarea value={aiConfig.systemPrompt} onChange={(e) => setAiConfig((p) => ({ ...p, systemPrompt: e.target.value }))} rows={3} />
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <Label>Contexto del negocio</Label>
+              <Textarea value={aiConfig.businessContext} onChange={(e) => setAiConfig((p) => ({ ...p, businessContext: e.target.value }))} rows={3} />
+              <p className="text-xs text-muted-foreground">Incluí datos estables del negocio: rubro, zona, políticas y alcance.</p>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Estilo de respuesta</Label>
+              <Input value={aiConfig.responseStyle} onChange={(e) => setAiConfig((p) => ({ ...p, responseStyle: e.target.value }))} placeholder="professional_friendly" />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Temperatura (0 a 100)</Label>
+              <Input type="number" value={aiConfig.temperature} onChange={(e) => setAiConfig((p) => ({ ...p, temperature: Number(e.target.value) || 0 }))} min={0} max={100} />
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <Label>Reglas de escalado</Label>
+              <Textarea
+                value={aiConfig.escalationRules}
+                onChange={(e) => setAiConfig((p) => ({ ...p, escalationRules: e.target.value }))}
+                rows={4}
+                placeholder='{"handoffKeywords":["humano","asesor"]}'
+              />
+              <p className="text-xs text-muted-foreground">Formato JSON para criterios operativos de escalado/handoff.</p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch checked={aiConfig.summaryEnabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, summaryEnabled: checked }))} />
+              <Label>Resumen automático</Label>
+            </div>
+
+            <div className="space-y-1">
+              <Label>Límite de caracteres del resumen</Label>
+              <Input type="number" value={aiConfig.summaryMaxChars} onChange={(e) => setAiConfig((p) => ({ ...p, summaryMaxChars: Number(e.target.value) || 0 }))} min={300} max={4000} />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Cantidad máxima de mensajes de contexto</Label>
+              <Input type="number" value={aiConfig.maxContextMessages} onChange={(e) => setAiConfig((p) => ({ ...p, maxContextMessages: Number(e.target.value) || 0 }))} min={4} max={40} />
+            </div>
+
+            <div className="space-y-1">
+              <Label>Límite de tokens de salida</Label>
+              <Input type="number" value={aiConfig.maxOutputTokens} onChange={(e) => setAiConfig((p) => ({ ...p, maxOutputTokens: Number(e.target.value) || 0 }))} min={100} max={1500} />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Switch checked={aiConfig.toolsEnabled} onCheckedChange={(checked) => setAiConfig((p) => ({ ...p, toolsEnabled: checked }))} />
+              <Label>Permitir herramientas internas</Label>
+            </div>
+
+            <div className="space-y-1 md:col-span-2">
+              <Label>Memoria global del negocio</Label>
+              <Textarea value={aiConfig.globalMemory} onChange={(e) => setAiConfig((p) => ({ ...p, globalMemory: e.target.value }))} rows={3} />
+            </div>
           </div>
+
           <div className="flex gap-2">
-            <Button variant="secondary" onClick={saveAiConfig} disabled={savingAi || !canEditTechnicalConfig}>{savingAi ? "Guardando..." : "Guardar IA"}</Button>
+            <Button variant="secondary" onClick={saveAiConfig} disabled={savingAi || !canEditTechnicalConfig}>{savingAi ? "Guardando..." : "Guardar configuración de IA"}</Button>
           </div>
         </div>
 
