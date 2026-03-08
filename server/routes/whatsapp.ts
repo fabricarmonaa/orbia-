@@ -133,6 +133,10 @@ function verifyAutomationSignature(secret: string, eventName: string, rawBody: s
   return expected === signature;
 }
 
+function buildExpectedAutomationSignature(secret: string, eventName: string, rawBody: string) {
+  return createHmac("sha256", secret).update(`${eventName}.${rawBody}`).digest("hex");
+}
+
 function automationLog(event: string, payload: Record<string, unknown>) {
   if (String(process.env.WHATSAPP_DEBUG_LOGS || "").toLowerCase() !== "true") return;
   console.log("[WA]", event, payload);
@@ -359,16 +363,46 @@ export function registerWhatsappRoutes(app: Express) {
     }
     const cfg = await getTenantWhatsappAutomationConfig(tenantId);
     const addon = await storage.getTenantAddon(tenantId, "whatsapp_inbox");
-    const secret = decryptSecret(cfg?.signingSecretEncrypted || null);
-    if (!cfg?.enabled || !secret || !addon?.enabled) {
-      automationLog("automation_auth_start", { tenantId, path: req.path, enabled: Boolean(cfg?.enabled), hasSecret: Boolean(secret), addonEnabled: Boolean(addon?.enabled) });
+    const decryptedSecret = decryptSecret(cfg?.signingSecretEncrypted || null);
+    const secret = (decryptedSecret || "").trim();
+    const secretPresent = Boolean(secret);
+    const configSource = cfg ? "tenant_whatsapp_automation_configs" : "none";
+    if (!cfg?.enabled || !secretPresent || !addon?.enabled) {
+      automationLog("automation_auth_start", {
+        tenantId,
+        path: req.path,
+        enabled: Boolean(cfg?.enabled),
+        hasSecret: secretPresent,
+        secretLength: secret.length,
+        addonEnabled: Boolean(addon?.enabled),
+        configSource,
+      });
       return res.status(403).json({ error: "Configuración de automatización no disponible", code: "AUTOMATION_CONFIG_MISSING" });
     }
     const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString("utf8") : JSON.stringify(req.body || {});
-    automationLog("automation_auth_start", { tenantId, path: req.path, eventName });
+    const expectedSignature = buildExpectedAutomationSignature(secret, eventName, rawBody);
     const valid = verifyAutomationSignature(secret, eventName, rawBody, signature);
+    automationLog("automation_auth_start", {
+      tenantId,
+      path: req.path,
+      eventName,
+      rawBody,
+      signatureReceived: signature,
+      signatureExpected: expectedSignature,
+      secretPresent,
+      secretLength: secret.length,
+      configSource,
+      comparisonResult: valid,
+    });
     if (!valid) {
-      automationLog("automation_auth_signature_invalid", { tenantId, path: req.path, eventName });
+      const hint = !secretPresent
+        ? "secret_empty"
+        : !cfg
+          ? "config_missing"
+          : signature !== expectedSignature
+            ? "signature_mismatch_or_raw_body_mismatch"
+            : "unknown";
+      automationLog("automation_auth_signature_invalid", { tenantId, path: req.path, eventName, hint, rawBody, signatureReceived: signature, signatureExpected: expectedSignature });
       return res.status(401).json({ error: "Firma de automatización inválida", code: "AUTOMATION_SIGNATURE_INVALID" });
     }
     automationLog("automation_auth_signature_valid", { tenantId, path: req.path, eventName });

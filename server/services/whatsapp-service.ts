@@ -1483,6 +1483,9 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
   actorUserId: number;
 }) {
   const existing = await getTenantWhatsappAutomationConfig(input.tenantId);
+  const normalizedSigningSecret = input.signingSecret === undefined
+    ? undefined
+    : (input.signingSecret || "").trim();
   const values: Record<string, unknown> = {
     updatedAt: new Date(),
   };
@@ -1493,8 +1496,8 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
   if (typeof input.retryEnabled === "boolean") values.retryEnabled = input.retryEnabled;
   if (typeof input.retryMaxAttempts === "number") values.retryMaxAttempts = Math.max(1, Math.min(8, input.retryMaxAttempts));
   if (input.allowedBranchId !== undefined) values.allowedBranchId = input.allowedBranchId;
-  if (input.signingSecret !== undefined) {
-    values.signingSecretEncrypted = input.signingSecret ? encryptSecret(input.signingSecret) : null;
+  if (normalizedSigningSecret !== undefined) {
+    values.signingSecretEncrypted = normalizedSigningSecret ? encryptSecret(normalizedSigningSecret) : null;
   }
 
   let saved: any;
@@ -1512,7 +1515,7 @@ export async function upsertTenantWhatsappAutomationConfig(input: {
         enabled: Boolean(input.enabled),
         providerType: input.providerType || "n8n_webhook",
         webhookUrl: input.webhookUrl || null,
-        signingSecretEncrypted: input.signingSecret ? encryptSecret(input.signingSecret) : null,
+        signingSecretEncrypted: normalizedSigningSecret ? encryptSecret(normalizedSigningSecret) : null,
         timeoutMs: Math.max(1000, Math.min(30000, input.timeoutMs || 8000)),
         retryEnabled: input.retryEnabled !== false,
         retryMaxAttempts: Math.max(1, Math.min(8, input.retryMaxAttempts || 3)),
