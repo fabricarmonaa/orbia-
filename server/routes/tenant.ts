@@ -351,8 +351,14 @@ export function registerTenantRoutes(app: Express) {
         agenda,
         notes: { active: notesRows.rows || [] },
       });
-    } catch (err) {
-      console.error("[dashboard] DASHBOARD_SUMMARY_ERROR", err);
+    } catch (err: any) {
+      const msg = String(err?.message || "");
+      const isMissingRelation = err?.code === "42P01" || msg.includes('relation "agenda_events" does not exist') || msg.includes('relation "notes" does not exist');
+      if (isMissingRelation) {
+        console.warn("[dashboard] DASHBOARD_SUMMARY_SKIPPED_MISSING_TABLE", { code: err?.code, message: msg });
+      } else {
+        console.error("[dashboard] DASHBOARD_SUMMARY_ERROR", err);
+      }
       return res.json(empty);
     }
   });
