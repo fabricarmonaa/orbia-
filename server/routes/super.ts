@@ -122,6 +122,14 @@ const transferInfoSchema = z.object({
   whatsapp_contact: z.string().trim().max(50),
 });
 
+const mailerConfigSchema = z.object({
+  from: z.string().trim().min(3).max(255),
+  replyTo: z.string().trim().max(255).optional().or(z.literal("")),
+  clientId: z.string().trim().min(10).max(255),
+  clientSecret: z.string().trim().min(10).max(255),
+  refreshToken: z.string().trim().min(10).max(512),
+});
+
 const legalConfigSchema = z.object({
   slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/, "Slug inválido"),
   termsText: z.string().trim().min(1).max(200000),
@@ -271,6 +279,40 @@ export function registerSuperRoutes(app: Express) {
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "VALIDATION_ERROR", details: err.errors });
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/super/settings/mailer", superAuth, async (_req, res) => {
+    try {
+      const row = await storage.getSystemSetting("gmail_oauth_config");
+      const parsed = row?.value ? JSON.parse(row.value) : {};
+      const data = {
+        from: parsed?.from || "",
+        replyTo: parsed?.replyTo || "",
+        clientId: parsed?.clientId ? "********" : "",
+        clientSecret: parsed?.clientSecret ? "********" : "",
+        refreshToken: parsed?.refreshToken ? "********" : "",
+      };
+      res.json({ data });
+    } catch {
+      res.status(500).json({ error: "No se pudo obtener configuración de correo", code: "SUPER_MAILER_CONFIG_READ_ERROR" });
+    }
+  });
+
+  app.put("/api/super/settings/mailer", superAuth, async (req, res) => {
+    try {
+      const payload = mailerConfigSchema.parse(req.body || {});
+      await storage.upsertSystemSetting("gmail_oauth_config", JSON.stringify({
+        from: payload.from,
+        replyTo: payload.replyTo || null,
+        clientId: payload.clientId,
+        clientSecret: payload.clientSecret,
+        refreshToken: payload.refreshToken,
+      }));
+      res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "SUPER_MAILER_CONFIG_INVALID", details: err.errors });
+      res.status(500).json({ error: "No se pudo guardar configuración de correo", code: "SUPER_MAILER_CONFIG_SAVE_ERROR" });
     }
   });
 
@@ -616,7 +658,7 @@ export function registerSuperRoutes(app: Express) {
       await storage.updateUser(admin.id, tenantId, { password: hashedPassword });
 
       const isProd = process.env.NODE_ENV === "production";
-      const configured = isMailerConfigured();
+      const configured = await isMailerConfigured();
       let mailSent = false;
       if (configured) {
         try {
@@ -1025,7 +1067,7 @@ export function registerSuperRoutes(app: Express) {
         })
         .returning();
 
-      const configured = isMailerConfigured();
+      const configured = await isMailerConfigured();
       let sent = 0;
       let failed = 0;
       let skipped = 0;

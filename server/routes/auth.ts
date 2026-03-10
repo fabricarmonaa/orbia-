@@ -8,6 +8,7 @@ import {
   isIpAllowedForSuperAdmin,
   getClientIp,
   tenantAuth,
+  hashPassword,
 } from "../auth";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { strictLoginLimiter } from "../middleware/http-rate-limit";
@@ -18,6 +19,10 @@ import { verify as verifyTotp } from "otplib";
 import { sanitizeShortText } from "../security/sanitize";
 import { evaluatePassword } from "../services/password-policy";
 import { setPasswordWeakFlag } from "../services/password-weak-cache";
+import { buildLoginFingerprint, clearLoginAttempts, getLoginAttemptState, loginHintFromState, registerFailedLoginAttempt } from "../services/auth/login-security";
+import { consumePasswordResetToken, createPasswordResetToken, validatePasswordResetToken } from "../services/auth/password-recovery";
+import { sendMail } from "../services/mailer/gmailMailer";
+import { renderPasswordResetTemplate } from "../services/mailer/templates/password-reset";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -36,7 +41,19 @@ const superLoginSchema = z.object({
 const tenantLoginSchema = z.object({
   tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
+  userId: z.coerce.number().int().positive().optional(),
   password: z.string().min(1).max(256),
+});
+
+const passwordRecoveryRequestSchema = z.object({
+  tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
+  email: z.string().trim().email().max(120),
+  userId: z.coerce.number().int().positive(),
+});
+
+const passwordRecoveryResetSchema = z.object({
+  token: z.string().trim().min(20).max(512),
+  newPassword: z.string().min(6).max(256),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -106,7 +123,6 @@ function isLocked(map: Map<string, LockState>, key: string) {
   return true;
 }
 
-
 function normalizeTotpToken(value: unknown): string {
   return String(value || "").replace(/\s+/g, "").replace(/-/g, "").trim();
 }
@@ -126,6 +142,10 @@ async function logSuperSecurity(superAdminId: number | null, action: string, met
   });
 }
 
+function buildPublicBaseUrl(req: Request) {
+  if (process.env.PUBLIC_APP_URL) return process.env.PUBLIC_APP_URL.replace(/\/$/, "");
+  return `${req.protocol}://${req.get("host")}`;
+}
 
 export function registerAuthRoutes(app: Express) {
   app.post("/api/auth/logout", async (req, res) => {
@@ -157,7 +177,6 @@ export function registerAuthRoutes(app: Express) {
     }
   });
 
-
   app.post("/api/auth/logout-all", tenantAuth, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
@@ -165,58 +184,45 @@ export function registerAuthRoutes(app: Express) {
       if (!userId || userId <= 0) {
         return res.status(400).json({ error: "Usuario inválido", code: "USER_INVALID" });
       }
-      await storage.updateUser(userId, tenantId, { tokenInvalidBefore: new Date() as any });
-      await storage.createAuditLog({
-        tenantId,
-        userId,
-        action: "logout_all",
-        entityType: "auth",
-        metadata: { ip: req.ip, userAgent: req.headers["user-agent"] || null },
-      });
+      const user = await storage.getUserById(userId, tenantId);
+      if (!user) {
+        return res.status(404).json({ error: "Usuario no encontrado", code: "USER_NOT_FOUND" });
+      }
+      await storage.updateUser(userId, tenantId, { tokenInvalidBefore: new Date() } as any);
+      await storage.createAuditLog({ tenantId, userId, action: "logout_all", entityType: "auth", metadata: { ip: req.ip } });
       return res.json({ ok: true });
     } catch {
-      return res.status(500).json({ error: "No se pudo cerrar todas las sesiones", code: "LOGOUT_ALL_ERROR" });
+      return res.status(500).json({ error: "No se pudo cerrar todas las sesiones", code: "AUTH_LOGOUT_ALL_ERROR" });
     }
   });
 
   app.post("/api/auth/super/login", superLoginLimiter, async (req, res) => {
     try {
-      if (!isIpAllowedForSuperAdmin(req)) {
-        return res.status(403).json({ error: "Acceso restringido", code: "SUPERADMIN_IP_BLOCKED" });
-      }
-
-      const parsed = superLoginSchema.parse(req.body);
+      const parsed = superLoginSchema.parse(req.body || {});
       const email = parsed.email.trim().toLowerCase();
       const password = parsed.password;
       const totpCode = parsed.totpCode;
       const ip = getClientIp(req);
+      if (!isIpAllowedForSuperAdmin(req)) {
+        await logSuperSecurity(null, "SUPER_LOGIN_IP_BLOCKED", { ip, email });
+        return res.status(403).json({ error: "Acceso restringido", code: "SUPERADMIN_IP_BLOCKED" });
+      }
+
       const ipKey = `ip:${ip}`;
       const emailKey = `email:${email}`;
-
       if (isLocked(superLoginByIp, ipKey) || isLocked(superLoginByEmail, emailKey)) {
-        const remaining = Math.max(getRemainingLockSeconds(superLoginByIp, ipKey), getRemainingLockSeconds(superLoginByEmail, emailKey));
-        await logSuperSecurity(null, "SUPER_LOGIN_LOCKED", { ip, email, remainingSeconds: remaining });
-        return res.status(429).json({
-          error: "Acceso temporalmente bloqueado por intentos fallidos.",
-          code: "SUPERADMIN_LOCKED",
-          secondsRemaining: remaining,
-        });
+        const retryAfterSec = Math.max(getRemainingLockSeconds(superLoginByIp, ipKey), getRemainingLockSeconds(superLoginByEmail, emailKey));
+        await logSuperSecurity(null, "SUPER_LOGIN_LOCKED", { ip, email, retryAfterSec });
+        res.setHeader("Retry-After", String(retryAfterSec || 1));
+        return res.status(429).json({ error: "Demasiados intentos fallidos. Probá más tarde.", code: "SUPERAUTH_LOCKED", retryAfterSec });
       }
 
       const user = await storage.getSuperAdminByEmail(email);
-      if (user?.tenantId) {
-        const rootCode = (process.env.ROOT_TENANT_CODE || "t_root").toLowerCase();
-        const rootTenant = await storage.getTenantById(user.tenantId);
-        if (!rootTenant || String(rootTenant.code || "").toLowerCase() !== rootCode) {
-          await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "ROOT_TENANT_MISMATCH" });
-          return res.status(403).json({ error: "Superadmin no pertenece al tenant root", code: "SUPERADMIN_ROOT_REQUIRED" });
-        }
-      }
-      if (!user) {
+      if (!user || user.deletedAt || !user.isActive) {
         markFailure(superLoginByIp, ipKey);
         markFailure(superLoginByEmail, emailKey);
-        await logSuperSecurity(null, "SUPER_LOGIN_FAIL", { ip, email, reason: "NOT_FOUND" });
-        return res.status(401).json({ error: "Credenciales incorrectas", code: "SUPERAUTH_INVALID" });
+        await logSuperSecurity(null, "SUPER_LOGIN_FAIL", { ip, email, reason: "USER" });
+        return res.status(401).json({ error: "Credenciales inválidas", code: "SUPERAUTH_INVALID" });
       }
 
       const valid = await comparePassword(password, user.password);
@@ -224,7 +230,7 @@ export function registerAuthRoutes(app: Express) {
         markFailure(superLoginByIp, ipKey);
         markFailure(superLoginByEmail, emailKey);
         await logSuperSecurity(user.id, "SUPER_LOGIN_FAIL", { ip, email, reason: "PASSWORD" });
-        return res.status(401).json({ error: "Credenciales incorrectas", code: "SUPERAUTH_INVALID" });
+        return res.status(401).json({ error: "Credenciales inválidas", code: "SUPERAUTH_INVALID" });
       }
 
       const totpRows = await db.select().from(superAdminTotp).where(eq(superAdminTotp.superAdminId, user.id)).limit(1);
@@ -279,39 +285,59 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/login", strictLoginLimiter, tenantLoginLimiter, async (req, res) => {
     try {
-      const { tenantCode, email, password } = tenantLoginSchema.parse(req.body);
+      const { tenantCode, email, userId, password } = tenantLoginSchema.parse(req.body);
+      const fingerprint = buildLoginFingerprint({ tenantCode, email, userId, ip: getClientIp(req) });
+      const lockState = await getLoginAttemptState(fingerprint);
+      const lockHint = loginHintFromState(lockState);
+      if (lockHint.lockedSeconds > 0) {
+        res.setHeader("Retry-After", String(lockHint.lockedSeconds));
+        return res.status(429).json({
+          error: "Demasiados intentos fallidos. Esperá 1 minuto antes de volver a intentar.",
+          code: "AUTH_TEMP_LOCKED",
+          showForgotPassword: true,
+          failedAttempts: lockHint.failedCount,
+          lockedSeconds: lockHint.lockedSeconds,
+        });
+      }
+
       const tenant = await storage.getTenantByCode(tenantCode);
       if (!tenant) {
-        return res.status(401).json({ error: "Negocio no encontrado", code: "TENANT_NOT_FOUND" });
-      }
-      if (tenant.deletedAt) {
-        return res.status(403).json({ error: "Negocio eliminado", code: "TENANT_DELETED" });
-      }
-      if (tenant.isBlocked) {
-        return res.status(403).json({ error: "Negocio bloqueado", code: "TENANT_BLOCKED" });
-      }
-      if (!tenant.isActive) {
-        return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
-      }
-      if (tenant.subscriptionEndDate) {
-        const now = new Date();
-        const endDate = new Date(tenant.subscriptionEndDate);
-        const graceDays = 3;
-        const graceEnd = new Date(endDate);
-        graceEnd.setDate(graceEnd.getDate() + graceDays);
-        if (now > graceEnd) {
-          await storage.updateTenantActive(tenant.id, false);
-          return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
-        }
-      }
-      const user = await storage.getUserByEmail(email, tenant.id);
-      if (!user || !user.isActive) {
         return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
       }
+      if (tenant.deletedAt) return res.status(403).json({ error: "Negocio eliminado", code: "TENANT_DELETED" });
+      if (tenant.isBlocked) return res.status(403).json({ error: "Negocio bloqueado", code: "TENANT_BLOCKED" });
+      if (!tenant.isActive) return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
+
+      const user = userId
+        ? await storage.getUserById(userId, tenant.id)
+        : await storage.getUserByEmail(email, tenant.id);
+      const userMatches = user && user.email.toLowerCase() === email.toLowerCase();
+
+      if (!user || !user.isActive || !userMatches) {
+        const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: userId || null, email, ip: getClientIp(req) });
+        return res.status(401).json({
+          error: "Credenciales incorrectas",
+          code: "AUTH_INVALID",
+          failedAttempts: next.failedCount,
+          showForgotPassword: next.showForgotPassword,
+          lockedSeconds: next.lockedSeconds,
+        });
+      }
+
       const valid = await comparePassword(password, user.password);
       if (!valid) {
-        return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
+        const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: user.id, email, ip: getClientIp(req) });
+        return res.status(401).json({
+          error: "Credenciales incorrectas",
+          code: "AUTH_INVALID",
+          failedAttempts: next.failedCount,
+          showForgotPassword: next.showForgotPassword,
+          lockedSeconds: next.lockedSeconds,
+        });
       }
+
+      await clearLoginAttempts(fingerprint);
+
       let subscriptionWarning: string | null = null;
       if (tenant.subscriptionEndDate) {
         const now = new Date();
@@ -334,6 +360,7 @@ export function registerAuthRoutes(app: Express) {
           }
         }
       }
+
       const weakEvaluation = evaluatePassword(password, { tenantCode: tenant.code, tenantName: tenant.name, email: user.email });
       setPasswordWeakFlag(user.id, weakEvaluation.score < 45);
       const token = generateToken({
@@ -366,6 +393,83 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "AUTH_INVALID_INPUT", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo iniciar sesión", code: "AUTH_ERROR" });
+    }
+  });
+
+  app.post("/api/auth/password-recovery/request", async (req, res) => {
+    try {
+      const payload = passwordRecoveryRequestSchema.parse(req.body || {});
+      const tenant = await storage.getTenantByCode(payload.tenantCode);
+      const genericOk = { ok: true, message: "Si los datos son correctos, enviaremos instrucciones al correo." };
+      if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) return res.json(genericOk);
+
+      const user = await storage.getUserById(payload.userId, tenant.id);
+      if (!user || user.deletedAt || !user.isActive) return res.json(genericOk);
+      if (user.email.toLowerCase() !== payload.email.toLowerCase()) return res.json(genericOk);
+
+      const reset = await createPasswordResetToken({ userId: user.id, tenantId: tenant.id, email: user.email, requestedIp: getClientIp(req) });
+      const branding = await storage.getAppBranding().catch(() => null as any);
+      const baseUrl = buildPublicBaseUrl(req);
+      const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(reset.token)}`;
+      const ttlMin = Math.max(5, parseInt(process.env.PASSWORD_RESET_TTL_MIN || "20", 10));
+      const template = renderPasswordResetTemplate({
+        appName: branding?.orbiaName || "Orbia",
+        logoUrl: branding?.orbiaLogoUrl || null,
+        resetUrl,
+        expiresInMinutes: ttlMin,
+      });
+
+      await sendMail({
+        to: user.email,
+        subject: "Restablecer contraseña · Orbia",
+        html: template.html,
+        text: template.text,
+      });
+
+      return res.json(genericOk);
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "PASSWORD_RECOVERY_INVALID_INPUT", details: err.errors });
+      }
+      return res.json({ ok: true, message: "Si los datos son correctos, enviaremos instrucciones al correo." });
+    }
+  });
+
+  app.get("/api/auth/password-recovery/validate", async (req, res) => {
+    try {
+      const token = String(req.query.token || "").trim();
+      if (!token) return res.status(400).json({ error: "Token inválido", code: "PASSWORD_RESET_INVALID" });
+      const valid = await validatePasswordResetToken(token);
+      if (!valid) return res.status(400).json({ error: "Token inválido o expirado", code: "PASSWORD_RESET_INVALID" });
+      return res.json({ data: { email: valid.email, expiresAt: valid.expiresAt } });
+    } catch {
+      return res.status(500).json({ error: "No se pudo validar token", code: "PASSWORD_RESET_VALIDATE_ERROR" });
+    }
+  });
+
+  app.post("/api/auth/password-recovery/reset", async (req, res) => {
+    try {
+      const payload = passwordRecoveryResetSchema.parse(req.body || {});
+      const token = await consumePasswordResetToken(payload.token);
+      if (!token) {
+        return res.status(400).json({ error: "Token inválido o expirado", code: "PASSWORD_RESET_INVALID" });
+      }
+
+      const user = token.tenantId
+        ? await storage.getUserById(token.userId, token.tenantId)
+        : await storage.getUserByEmail(token.email, null);
+      if (!user) {
+        return res.status(400).json({ error: "No se pudo restablecer la contraseña", code: "PASSWORD_RESET_USER_INVALID" });
+      }
+
+      const hashed = await hashPassword(payload.newPassword);
+      await storage.updateUser(user.id, user.tenantId!, { password: hashed, tokenInvalidBefore: new Date() } as any);
+      return res.json({ ok: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "PASSWORD_RESET_INVALID_INPUT", details: err.errors });
+      }
+      return res.status(500).json({ error: "No se pudo restablecer la contraseña", code: "PASSWORD_RESET_ERROR" });
     }
   });
 }

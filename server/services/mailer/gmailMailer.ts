@@ -1,3 +1,5 @@
+import { getMailerRuntimeConfig, isMailerConfiguredRuntime } from "./config";
+
 type SendMailInput = {
   to: string;
   subject: string;
@@ -55,34 +57,22 @@ function buildMime({ from, to, subject, html, text, replyTo }: { from: string; t
   return lines.join("\r\n");
 }
 
-function hasGmailOauth() {
-  return !!(
-    process.env.GMAIL_OAUTH_CLIENT_ID &&
-    process.env.GMAIL_OAUTH_CLIENT_SECRET &&
-    process.env.GMAIL_OAUTH_REFRESH_TOKEN &&
-    process.env.GMAIL_FROM
-  );
-}
-
-export function isMailerConfigured() {
-  return hasGmailOauth();
+export async function isMailerConfigured() {
+  return isMailerConfiguredRuntime();
 }
 
 async function getAccessToken() {
-  const clientId = process.env.GMAIL_OAUTH_CLIENT_ID;
-  const clientSecret = process.env.GMAIL_OAUTH_CLIENT_SECRET;
-  const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN;
-
-  if (!clientId || !clientSecret || !refreshToken) {
+  const config = await getMailerRuntimeConfig();
+  if (!config) {
     const err = new Error("Mailer no configurado");
     (err as any).code = "MAILER_NOT_CONFIGURED";
     throw err;
   }
 
   const body = new URLSearchParams({
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
+    refresh_token: config.refreshToken,
     grant_type: "refresh_token",
   });
 
@@ -104,15 +94,16 @@ async function getAccessToken() {
 }
 
 export async function sendMail(input: SendMailInput) {
-  if (!hasGmailOauth()) {
+  const config = await getMailerRuntimeConfig();
+  if (!config) {
     const err = new Error("Mailer no configurado para Gmail OAuth2");
     (err as any).code = "MAILER_NOT_CONFIGURED";
     throw err;
   }
 
-  const from = process.env.GMAIL_FROM!;
+  const from = config.from;
   const fromEmail = extractEmail(from);
-  const replyTo = input.replyTo || process.env.GMAIL_REPLY_TO || undefined;
+  const replyTo = input.replyTo || config.replyTo || undefined;
 
   const mime = buildMime({
     from,
