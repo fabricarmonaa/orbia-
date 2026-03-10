@@ -23,11 +23,14 @@ const cashMovementSchema = z.object({
   sessionId: z.coerce.number().int().positive().optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
   associatedCost: z.coerce.number().min(0).optional().default(0),
+  impactsCash: z.coerce.boolean().optional().default(true),
 });
 
 const editCashMovementSchema = z.object({
+  type: z.enum(["ingreso", "egreso"]).optional(),
   amount: z.coerce.number().positive(),
   associatedCost: z.coerce.number().min(0).optional().default(0),
+  impactsCash: z.coerce.boolean().optional(),
   method: sanitizeOptionalShort(40),
   category: sanitizeOptionalShort(80).nullable(),
   description: sanitizeOptionalLong(200).nullable(),
@@ -199,6 +202,7 @@ export function registerCashRoutes(app: Express) {
         branchId,
         associatedCost: String(payload.associatedCost || 0),
         createdById: userId,
+        impactsCash: payload.impactsCash ?? true,
       });
 
       await refreshMetricsForDate(tenantId, new Date());
@@ -235,8 +239,10 @@ export function registerCashRoutes(app: Express) {
       }
 
       const updated = await storage.updateCashMovement(movementId, tenantId, {
+        type: payload.type ?? existing.type,
         amount: String(payload.amount),
         associatedCost: String(payload.associatedCost),
+        impactsCash: payload.impactsCash ?? (existing as any).impactsCash ?? true,
         method: payload.method || existing.method,
         category: payload.category !== undefined ? payload.category : existing.category,
         description: payload.description !== undefined ? payload.description : existing.description,
