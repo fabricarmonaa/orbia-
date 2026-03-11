@@ -42,6 +42,14 @@ interface Config {
   trackingTosText: string;
 }
 
+
+function toAddonBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true" || value === "1";
+  if (typeof value === "number") return value === 1;
+  return false;
+}
+
 const layoutPresets = [
   {
     value: "classic",
@@ -165,7 +173,13 @@ export default function SettingsPage() {
         const res = await apiRequest("GET", "/api/addons/status");
         const json = await res.json();
         if (!cancelled) {
-          setAddonStatus(json?.data || {});
+          const raw = json?.data || {};
+          setAddonStatus({
+            whatsapp_inbox: toAddonBoolean((raw as any).whatsapp_inbox),
+            messaging_whatsapp: toAddonBoolean((raw as any).messaging_whatsapp),
+            barcode_scanner: toAddonBoolean((raw as any).barcode_scanner),
+            delivery: toAddonBoolean((raw as any).delivery),
+          });
         }
       } catch (err: any) {
         if (!cancelled) {

@@ -9,21 +9,30 @@ import {
   type InsertTenantMonthlySummary,
 } from "@shared/schema";
 
-export const cashStorage = {
-  async getCashMovementColumns() {
-    const result = await pool.query<{ column_name: string }>(
-      `
+
+async function getCashMovementColumnsSet() {
+  const result = await pool.query<{ column_name: string }>(
+    `
       SELECT column_name
       FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'cash_movements'
     `,
-    );
-    return new Set(result.rows.map((row) => row.column_name));
+  );
+  return new Set(result.rows.map((row) => row.column_name));
+}
+
+async function supportsCashMovementColumnName(columnName: string) {
+  const columns = await getCashMovementColumnsSet();
+  return columns.has(columnName);
+}
+
+export const cashStorage = {
+  async getCashMovementColumns() {
+    return getCashMovementColumnsSet();
   },
 
   async supportsCashMovementColumn(columnName: string) {
-    const columns = await this.getCashMovementColumns();
-    return columns.has(columnName);
+    return supportsCashMovementColumnName(columnName);
   },
 
   async getCashSessions(tenantId: number) {
@@ -84,7 +93,7 @@ export const cashStorage = {
       .where(and(eq(cashSessions.id, id), eq(cashSessions.tenantId, tenantId)));
   },
   async getCashMovements(tenantId: number) {
-    const columns = await this.getCashMovementColumns();
+    const columns = await getCashMovementColumnsSet();
     const pick = (columnName: string, alias: string, fallbackSql: string) =>
       columns.has(columnName) ? `${columnName} AS "${alias}"` : `${fallbackSql} AS "${alias}"`;
 
@@ -119,7 +128,7 @@ export const cashStorage = {
     return result.rows as any[];
   },
   async createCashMovement(data: InsertCashMovement) {
-    const columns = await this.getCashMovementColumns();
+    const columns = await getCashMovementColumnsSet();
     const payload: Record<string, unknown> = { ...data };
     if (!columns.has("impacts_cash")) delete payload.impactsCash;
     if (!columns.has("associated_cost")) delete payload.associatedCost;
@@ -140,7 +149,7 @@ export const cashStorage = {
     return movement;
   },
   async updateCashMovement(id: number, tenantId: number, data: Partial<InsertCashMovement>) {
-    const columns = await this.getCashMovementColumns();
+    const columns = await getCashMovementColumnsSet();
     const payload: Record<string, unknown> = { ...data };
     if (!columns.has("impacts_cash")) delete payload.impactsCash;
     if (!columns.has("associated_cost")) delete payload.associatedCost;
@@ -161,7 +170,7 @@ export const cashStorage = {
       sql`${cashMovements.createdAt} >= ${startOfMonth}`,
     ];
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
-    const supportsImpactsCash = await this.supportsCashMovementColumn("impacts_cash");
+    const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
       conditions.push(eq(cashMovements.impactsCash, true));
     }
@@ -181,7 +190,7 @@ export const cashStorage = {
       sql`${cashMovements.createdAt} >= ${startOfMonth}`,
     ];
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
-    const supportsImpactsCash = await this.supportsCashMovementColumn("impacts_cash");
+    const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
       conditions.push(eq(cashMovements.impactsCash, true));
     }
@@ -241,7 +250,7 @@ export const cashStorage = {
       sql`${cashMovements.createdAt} >= ${today}`,
     ];
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
-    const supportsImpactsCash = await this.supportsCashMovementColumn("impacts_cash");
+    const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
       conditions.push(eq(cashMovements.impactsCash, true));
     }
@@ -260,7 +269,7 @@ export const cashStorage = {
       sql`${cashMovements.createdAt} >= ${today}`,
     ];
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
-    const supportsImpactsCash = await this.supportsCashMovementColumn("impacts_cash");
+    const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
       conditions.push(eq(cashMovements.impactsCash, true));
     }
@@ -278,7 +287,7 @@ export const cashStorage = {
       .orderBy(desc(cashSessions.openedAt));
   },
   async getCashMovementsByBranch(tenantId: number, branchId: number) {
-    const columns = await this.getCashMovementColumns();
+    const columns = await getCashMovementColumnsSet();
     const pick = (columnName: string, alias: string, fallbackSql: string) =>
       columns.has(columnName) ? `${columnName} AS "${alias}"` : `${fallbackSql} AS "${alias}"`;
 

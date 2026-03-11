@@ -22,7 +22,7 @@ export function registerBranchRoutes(app: Express) {
         const features = (plan?.featuresJson || {}) as Record<string, boolean>;
         const hasBranchesFeature = Boolean(features.branches) || Boolean((plan as any)?.allowBranches);
         if (!hasBranchesFeature) {
-          return res.json({ data: [{ id: 0, tenantId, name: "Casa Central", address: null, phone: null, isActive: true }] });
+          return res.json({ data: [] });
         }
         if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
           const branch = await storage.getBranchById(req.auth!.branchId, tenantId);

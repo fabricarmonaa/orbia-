@@ -6,7 +6,7 @@ WITH presets AS (
   VALUES
     ('cliente', 'Cliente', 'TEXT', 0),
     ('telefono', 'Teléfono', 'TEXT', 1),
-    ('descripcion', 'Descripción', 'TEXT_LONG', 2),
+    ('descripcion', 'Descripción', 'TEXT', 2),
     ('sena_pago', 'Seña / Pago', 'NUMBER', 3),
     ('valor_total', 'Valor total', 'NUMBER', 4)
 )

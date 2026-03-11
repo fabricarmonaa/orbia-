@@ -19,7 +19,7 @@ const MAX_PRESETS_PER_TYPE = 3;
 const SYSTEM_BASE_FIELDS = [
   { fieldKey: "cliente", label: "Cliente", fieldType: "TEXT", sortOrder: 0 },
   { fieldKey: "telefono", label: "Teléfono", fieldType: "TEXT", sortOrder: 1 },
-  { fieldKey: "descripcion", label: "Descripción", fieldType: "TEXT_LONG", sortOrder: 2 },
+  { fieldKey: "descripcion", label: "Descripción", fieldType: "TEXT", sortOrder: 2 },
   { fieldKey: "sena_pago", label: "Seña / Pago", fieldType: "NUMBER", sortOrder: 3 },
   { fieldKey: "valor_total", label: "Valor total", fieldType: "NUMBER", sortOrder: 4 },
 ] as const;
@@ -60,6 +60,13 @@ function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "F
   if (!ALLOWED_FIELD_TYPES.has(normalized as any)) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "fieldType inválido");
   }
+
+  // Backward compatibility: older DBs still enforce CHECK(field_type IN ('TEXT','NUMBER','FILE')).
+  // We accept richer field types at API level but degrade storage type to TEXT when needed.
+  if (["TEXT_LONG", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"].includes(normalized)) {
+    return "TEXT" as any;
+  }
+
   return normalized as any;
 }
 
