@@ -59,6 +59,34 @@ BEGIN
   END IF;
 END $$;
 
+
+CREATE OR REPLACE FUNCTION order_field_allowed_mime_config_is_valid(cfg jsonb)
+RETURNS boolean
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT
+    cfg IS NULL
+    OR NOT (cfg ? 'allowedMime')
+    OR (
+      jsonb_typeof(cfg->'allowedMime') = 'array'
+      AND NOT EXISTS (
+        SELECT 1
+        FROM jsonb_array_elements_text(cfg->'allowedMime') AS elem(mime)
+        WHERE elem.mime NOT IN (
+          'application/pdf',
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'image/jpg',
+          'image/jpeg',
+          'image/png',
+          'image/pjpeg',
+          'image/jfif'
+        )
+      )
+    );
+$$;
+
 DO $$
 BEGIN
   IF NOT EXISTS (
@@ -70,21 +98,7 @@ BEGIN
       ADD CONSTRAINT ck_order_field_definitions_file_mime_config
       CHECK (
         field_type <> 'FILE'
-        OR NOT (config ? 'allowedMime')
-        OR NOT EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements_text(config->'allowedMime') AS elem(mime)
-          WHERE elem.mime NOT IN (
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'image/jpg',
-            'image/jpeg',
-            'image/png',
-            'image/pjpeg',
-            'image/jfif'
-          )
-        )
+        OR order_field_allowed_mime_config_is_valid(config)
       );
   END IF;
 END $$;
