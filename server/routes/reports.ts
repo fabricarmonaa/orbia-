@@ -31,6 +31,13 @@ const salesQuerySchema = reportFiltersSchema.extend({
   groupBy: z.enum(["day", "week", "month", "product", "cashier", "branch", "paymentMethod"]).default("day"),
 });
 
+const reportsOverviewQuerySchema = z.object({
+  period: z.enum(["today", "week", "month", "custom"]).optional().default("month"),
+  from: z.string().date().optional(),
+  to: z.string().date().optional(),
+  branchId: z.coerce.number().int().positive().optional(),
+});
+
 const exportSchema = z.object({
   type: z.enum(["sales", "products", "customers", "cash", "kpis"]),
   params: z.record(z.any()).default({}),
@@ -68,6 +75,36 @@ function validateExportToken(token: string) {
   if (!sig || sig !== expected) throw new Error("EXPORT_TOKEN_INVALID");
   if (Math.floor(Date.now() / 1000) > Number(exp)) throw new Error("EXPORT_TOKEN_EXPIRED");
   return { tenantId: Number(tid), fileName };
+}
+
+function resolveReportRange(input: z.infer<typeof reportsOverviewQuerySchema>) {
+  const today = new Date();
+  today.setHours(23, 59, 59, 999);
+
+  if (input.period === "custom" && input.from && input.to) {
+    return {
+      from: new Date(`${input.from}T00:00:00.000Z`),
+      to: new Date(`${input.to}T23:59:59.999Z`),
+    };
+  }
+
+  if (input.period === "today") {
+    const from = new Date();
+    from.setHours(0, 0, 0, 0);
+    return { from, to: today };
+  }
+
+  if (input.period === "week") {
+    const from = new Date();
+    from.setDate(from.getDate() - 6);
+    from.setHours(0, 0, 0, 0);
+    return { from, to: today };
+  }
+
+  const from = new Date();
+  from.setDate(1);
+  from.setHours(0, 0, 0, 0);
+  return { from, to: today };
 }
 async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSchema>) {
   const { where, params } = buildWhere(filters, tenantId);
@@ -192,6 +229,140 @@ export function registerReportRoutes(app: Express) {
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Filtros inválidos", code: "REPORT_FILTERS_INVALID" });
       return res.status(500).json({ error: "No se pudieron obtener KPIs", code: "REPORT_KPIS_ERROR" });
+    }
+  });
+
+
+  app.get("/api/reports/overview", tenantAuth, requireTenantAdmin, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const query = reportsOverviewQuerySchema.parse(req.query || {});
+      const range = resolveReportRange(query);
+      const diffMs = Math.max(1, range.to.getTime() - range.from.getTime());
+      const previousTo = new Date(range.from.getTime() - 1);
+      const previousFrom = new Date(previousTo.getTime() - diffMs);
+
+      const paramsCurrent: any[] = [tenantId, range.from, range.to];
+      let branchSql = "";
+      if (query.branchId) {
+        paramsCurrent.push(query.branchId);
+        branchSql = ` AND s.branch_id = $${paramsCurrent.length}`;
+      }
+
+      const paramsPrev: any[] = [tenantId, previousFrom, previousTo];
+      let branchPrevSql = "";
+      if (query.branchId) {
+        paramsPrev.push(query.branchId);
+        branchPrevSql = ` AND s.branch_id = $${paramsPrev.length}`;
+      }
+
+      const [currentSales, previousSales, ordersCount, topProducts, slowProducts, categoryRevenue, statusBreakdown, byHour, byWeekday] = await Promise.all([
+        pool.query(`SELECT COALESCE(SUM(s.total_amount::numeric),0) total, COUNT(*)::int count, COALESCE(AVG(s.total_amount::numeric),0) avg_ticket FROM sales s WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}`, paramsCurrent),
+        pool.query(`SELECT COALESCE(SUM(s.total_amount::numeric),0) total, COUNT(*)::int count FROM sales s WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchPrevSql}`, paramsPrev),
+        pool.query(`SELECT COUNT(*)::int total_orders FROM orders o WHERE o.tenant_id = $1 AND o.created_at >= $2 AND o.created_at <= $3`, [tenantId, range.from, range.to]),
+        pool.query(`
+          SELECT
+            COALESCE(si.product_name_snapshot, 'Sin producto') name,
+            COALESCE(SUM(si.quantity),0)::int qty_sold,
+            COALESCE(SUM(si.line_total::numeric),0) revenue
+          FROM sale_items si
+          JOIN sales s ON s.id = si.sale_id
+          WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
+          GROUP BY COALESCE(si.product_name_snapshot, 'Sin producto')
+          ORDER BY qty_sold DESC, revenue DESC
+          LIMIT 8
+        `, paramsCurrent),
+        pool.query(`
+          SELECT * FROM (
+            SELECT
+              COALESCE(si.product_name_snapshot, 'Sin producto') name,
+              COALESCE(SUM(si.quantity),0)::int qty_sold,
+              COALESCE(SUM(si.line_total::numeric),0) revenue
+            FROM sale_items si
+            JOIN sales s ON s.id = si.sale_id
+            WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
+            GROUP BY COALESCE(si.product_name_snapshot, 'Sin producto')
+          ) q
+          WHERE q.qty_sold > 0
+          ORDER BY q.qty_sold ASC, q.revenue ASC
+          LIMIT 8
+        `, paramsCurrent),
+        pool.query(`
+          SELECT
+            COALESCE(pc.name, 'Sin categoría') category,
+            COALESCE(SUM(si.line_total::numeric),0) revenue
+          FROM sale_items si
+          JOIN sales s ON s.id = si.sale_id
+          LEFT JOIN products p ON p.id = si.product_id AND p.tenant_id = s.tenant_id
+          LEFT JOIN product_categories pc ON pc.id = p.category_id AND pc.tenant_id = s.tenant_id
+          WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
+          GROUP BY COALESCE(pc.name, 'Sin categoría')
+          ORDER BY revenue DESC
+          LIMIT 10
+        `, paramsCurrent),
+        pool.query(`
+          SELECT COALESCE(o.status_code, 'SIN_ESTADO') status_code, COUNT(*)::int count
+          FROM orders o
+          WHERE o.tenant_id = $1 AND o.created_at >= $2 AND o.created_at <= $3
+          GROUP BY COALESCE(o.status_code, 'SIN_ESTADO')
+          ORDER BY count DESC
+        `, [tenantId, range.from, range.to]),
+        pool.query(`
+          SELECT EXTRACT(HOUR FROM s.sale_datetime)::int hour, COUNT(*)::int count
+          FROM sales s
+          WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
+          GROUP BY EXTRACT(HOUR FROM s.sale_datetime)
+          ORDER BY hour
+        `, paramsCurrent),
+        pool.query(`
+          SELECT EXTRACT(DOW FROM s.sale_datetime)::int dow, COUNT(*)::int count
+          FROM sales s
+          WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
+          GROUP BY EXTRACT(DOW FROM s.sale_datetime)
+          ORDER BY dow
+        `, paramsCurrent),
+      ]);
+
+      const salesTotal = Number((currentSales.rows[0] as any)?.total || 0);
+      const salesCount = Number((currentSales.rows[0] as any)?.count || 0);
+      const avgTicket = Number((currentSales.rows[0] as any)?.avg_ticket || 0);
+      const previousTotal = Number((previousSales.rows[0] as any)?.total || 0);
+      const previousCount = Number((previousSales.rows[0] as any)?.count || 0);
+      const growthPct = previousTotal > 0 ? ((salesTotal - previousTotal) / previousTotal) * 100 : null;
+      const concentrationPct = salesTotal > 0
+        ? (topProducts.rows.slice(0, 3).reduce((acc: number, row: any) => acc + Number(row.revenue || 0), 0) / salesTotal) * 100
+        : 0;
+
+      const hourMap = new Map<number, number>((byHour.rows as any[]).map((r) => [Number(r.hour), Number(r.count)]));
+      const byHourSeries = Array.from({ length: 24 }).map((_, hour) => ({ hour, count: hourMap.get(hour) || 0 }));
+
+      const dowNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
+      const weekdaySeries = (byWeekday.rows as any[]).map((r) => ({ dow: dowNames[Number(r.dow)] || String(r.dow), count: Number(r.count) }));
+
+      return res.json({
+        data: {
+          period: { from: range.from.toISOString(), to: range.to.toISOString(), mode: query.period },
+          summary: {
+            salesTotal,
+            salesCount,
+            ordersCount: Number((ordersCount.rows[0] as any)?.total_orders || 0),
+            avgTicket,
+            previousTotal,
+            previousCount,
+            growthPct,
+            concentrationPct,
+          },
+          topProducts: topProducts.rows.map((r: any) => ({ name: r.name, qtySold: Number(r.qty_sold || 0), revenue: Number(r.revenue || 0) })),
+          lowProducts: slowProducts.rows.map((r: any) => ({ name: r.name, qtySold: Number(r.qty_sold || 0), revenue: Number(r.revenue || 0) })),
+          categoryRevenue: categoryRevenue.rows.map((r: any) => ({ category: r.category, revenue: Number(r.revenue || 0) })),
+          orderStatuses: statusBreakdown.rows.map((r: any) => ({ statusCode: r.status_code, count: Number(r.count || 0) })),
+          movementByHour: byHourSeries,
+          movementByWeekday: weekdaySeries,
+        },
+      });
+    } catch (err) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Filtros inválidos", code: "REPORT_FILTERS_INVALID" });
+      return res.status(500).json({ error: "No se pudo obtener reporte general", code: "REPORT_OVERVIEW_ERROR" });
     }
   });
 
