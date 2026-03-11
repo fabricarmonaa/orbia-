@@ -1,6 +1,29 @@
 import crypto from "crypto";
 import { pool } from "../../db";
 
+let ensuredTable = false;
+
+async function ensurePasswordRecoveryTable() {
+  if (ensuredTable) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_tokens (
+      id SERIAL PRIMARY KEY,
+      tenant_id INTEGER REFERENCES tenants(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      email VARCHAR(255) NOT NULL,
+      token_hash VARCHAR(128) NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
+      used_at TIMESTAMP,
+      revoked BOOLEAN NOT NULL DEFAULT false,
+      requested_ip VARCHAR(100),
+      created_at TIMESTAMP NOT NULL DEFAULT now()
+    );
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash);`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id, created_at);`);
+  ensuredTable = true;
+}
+
 const TOKEN_TTL_MIN = Math.max(5, parseInt(process.env.PASSWORD_RESET_TTL_MIN || "20", 10));
 
 function hashToken(token: string) {
@@ -8,6 +31,7 @@ function hashToken(token: string) {
 }
 
 export async function createPasswordResetToken(input: { userId: number; tenantId?: number | null; email: string; requestedIp?: string | null }) {
+  await ensurePasswordRecoveryTable();
   const rawToken = crypto.randomBytes(32).toString("hex");
   const tokenHash = hashToken(rawToken);
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MIN * 60_000);
@@ -29,6 +53,7 @@ export async function createPasswordResetToken(input: { userId: number; tenantId
 }
 
 export async function validatePasswordResetToken(rawToken: string) {
+  await ensurePasswordRecoveryTable();
   const tokenHash = hashToken(rawToken);
   const row = (await pool.query(
     `
@@ -56,6 +81,7 @@ export async function validatePasswordResetToken(rawToken: string) {
 }
 
 export async function consumePasswordResetToken(rawToken: string) {
+  await ensurePasswordRecoveryTable();
   const tokenHash = hashToken(rawToken);
   const valid = await validatePasswordResetToken(rawToken);
   if (!valid) return null;

@@ -388,6 +388,11 @@ export function registerAuthRoutes(app: Express) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "AUTH_INVALID_INPUT", details: err.errors });
       }
+      console.error("[auth/login] unexpected error", {
+        message: err?.message,
+        code: err?.code,
+        stack: err?.stack,
+      });
       res.status(500).json({ error: "No se pudo iniciar sesión", code: "AUTH_ERROR" });
     }
   });
@@ -426,6 +431,10 @@ export function registerAuthRoutes(app: Express) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "PASSWORD_RECOVERY_INVALID_INPUT", details: err.errors });
       }
+      console.error("[auth/password-recovery/request] unexpected error", {
+        message: err?.message,
+        code: err?.code,
+      });
       return res.json({ ok: true, message: "Si los datos son correctos, enviaremos instrucciones al correo." });
     }
   });

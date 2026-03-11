@@ -355,7 +355,7 @@ export function registerSuperRoutes(app: Express) {
       const data = await buildTenantSummary(tenant);
       return res.json({ data });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message });
     }
   });
 
@@ -657,9 +657,9 @@ export function registerSuperRoutes(app: Express) {
       const hashedPassword = await hashPassword(tempPassword);
       await storage.updateUser(admin.id, tenantId, { password: hashedPassword });
 
-      const isProd = process.env.NODE_ENV === "production";
       const configured = await isMailerConfigured();
       let mailSent = false;
+      let mailError: string | null = null;
       if (configured) {
         try {
           await sendMail({
@@ -670,7 +670,8 @@ export function registerSuperRoutes(app: Express) {
           });
           mailSent = true;
         } catch (mailErr: any) {
-          return res.status(500).json({ error: `No se pudo enviar mail: ${mailErr?.message || "MAIL_ERROR"}` });
+          mailError = String(mailErr?.message || "MAIL_ERROR");
+          console.error("[super/reset-password] mail send failed", { tenantId, adminId: admin.id, mailError });
         }
       }
 
@@ -680,16 +681,18 @@ export function registerSuperRoutes(app: Express) {
         action: "TENANT_ADMIN_PASSWORD_RESET",
         entityType: "USER",
         entityId: admin.id,
-        metadata: { adminEmail: admin.email, mailSent },
+        metadata: { adminEmail: admin.email, mailSent, mailError },
       });
 
-      if (isProd && !mailSent) {
-        return res.status(500).json({ error: "Mailer no configurado en producción" });
-      }
-
-      return res.json({ ok: true, tempPassword: isProd ? undefined : tempPassword, mailSent });
+      return res.json({
+        ok: true,
+        tempPassword: tempPassword,
+        mailSent,
+        warning: !mailSent ? "No se pudo enviar el correo automáticamente. Compartí la contraseña temporal de forma segura." : undefined,
+      });
     } catch (err: any) {
-      return res.status(500).json({ error: err.message });
+      console.error("[super/reset-password] unexpected error", err);
+      return res.status(500).json({ error: err.message, code: "TENANT_ADMIN_PASSWORD_RESET_ERROR" });
     }
   });
 
