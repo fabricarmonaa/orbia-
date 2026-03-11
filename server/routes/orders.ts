@@ -181,10 +181,11 @@ export function registerOrderRoutes(app: Express) {
         : null;
 
       // Validate paid vs total (cross-field)
-      const totalNum = payload.totalAmount !== undefined && payload.totalAmount !== null ? Number(payload.totalAmount) : 0;
+      const hasTotal = payload.totalAmount !== undefined && payload.totalAmount !== null && String(payload.totalAmount) !== "";
+      const totalNum = hasTotal ? Number(payload.totalAmount) : 0;
       const paidNum = payload.paidAmount !== undefined && payload.paidAmount !== null ? Number(payload.paidAmount) : 0;
       if (paidNum < 0) return res.status(400).json({ error: "El monto pagado no puede ser negativo", code: "PAID_NEGATIVE" });
-      if (paidNum > totalNum + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
+      if (hasTotal && paidNum > totalNum + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
 
       const data = await db.transaction(async (tx) => {
         // Look up open cash session inside transaction scope

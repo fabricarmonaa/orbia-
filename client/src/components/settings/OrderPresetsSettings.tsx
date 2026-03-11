@@ -26,6 +26,7 @@ type OrderField = {
   sortOrder: number;
   config?: { allowedExtensions?: string[] };
   isActive: boolean;
+  isSystemDefault?: boolean;
 };
 
 type ApiErr = { message: string; code?: string };
@@ -106,6 +107,9 @@ export function OrderPresetsSettings() {
     [fields]
   );
 
+  const systemFields = useMemo(() => sortedFields.filter((f) => f.isSystemDefault), [sortedFields]);
+  const customFields = useMemo(() => sortedFields.filter((f) => !f.isSystemDefault), [sortedFields]);
+
   const activePresets = useMemo(() => presets.filter(p => p.isActive), [presets]);
 
   async function loadTypes() {
@@ -155,7 +159,7 @@ export function OrderPresetsSettings() {
     }
     setLoadingFields(true);
     try {
-      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields`);
+      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields?includeInactive=true`);
       setFields(json.data || []);
     } catch (err: any) {
       toast({ title: "Error al cargar campos", description: err?.message || "No se pudo cargar", variant: "destructive" });
@@ -372,6 +376,7 @@ export function OrderPresetsSettings() {
               <div className="pt-4 border-t space-y-4">
                 <div className="flex items-center justify-between">
                   <h4 className="font-medium">Campos del Preset</h4>
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1">Los campos base del sistema pueden deshabilitarse bajo tu responsabilidad. Si desactivás Seña/Pago o Valor total, el registro en caja puede quedar incompleto. Si desactivás Cliente, no podrás vincular cliente al pedido.</p>
                   <Button size="sm" onClick={() => setOpenCreateField(true)} data-testid="button-add-order-preset-field">
                     <Plus className="w-4 h-4 mr-2" /> Agregar campo
                   </Button>
@@ -380,14 +385,14 @@ export function OrderPresetsSettings() {
                 {loadingFields ? <p className="text-sm text-muted-foreground">Cargando campos...</p> : null}
 
                 <div className="space-y-2">
-                  {sortedFields.map((f, idx) => (
+                  {[...systemFields, ...customFields].map((f, idx) => (
                     <div key={f.id} className="border rounded-md p-3 flex flex-wrap items-center gap-4">
                       <div className="flex-1 min-w-[200px]">
                         <p className="font-medium truncate">{f.label}</p>
                         <p className="text-xs text-muted-foreground">key: {f.fieldKey}</p>
                       </div>
 
-                      <Badge variant="secondary" className="mr-auto">{f.fieldType}</Badge>
+                      <div className="mr-auto flex items-center gap-2"><Badge variant="secondary">{f.fieldType}</Badge>{f.isSystemDefault ? <Badge variant="outline">Sistema</Badge> : <Badge variant="outline">Personalizado</Badge>}</div>
 
                       <div className="flex items-center gap-6 text-sm">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -420,7 +425,7 @@ export function OrderPresetsSettings() {
 
                       <div className="flex items-center gap-1">
                         <Button size="icon" variant="ghost" disabled={idx === 0} onClick={() => moveField(f.id, -1)}><ArrowUp className="w-4 h-4" /></Button>
-                        <Button size="icon" variant="ghost" disabled={idx === sortedFields.length - 1} onClick={() => moveField(f.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
+                        <Button size="icon" variant="ghost" disabled={idx === ([...systemFields, ...customFields].length - 1)} onClick={() => moveField(f.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
                         <Button size="icon" variant="outline" onClick={() => {
                           setEditTarget(f);
                           setEditForm({
@@ -434,11 +439,11 @@ export function OrderPresetsSettings() {
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="destructive" onClick={() => deactivateField(f.id)}>Desactivar</Button>
+                        <Switch checked={f.isActive} onCheckedChange={(checked) => patchField(f.id, { isActive: checked }, checked ? "Campo habilitado" : "Campo deshabilitado")} />
                       </div>
                     </div>
                   ))}
-                  {!loadingFields && sortedFields.length === 0 ? <p className="text-sm text-muted-foreground">No hay campos activos para este preset.</p> : null}
+                  {!loadingFields && [...systemFields, ...customFields].length === 0 ? <p className="text-sm text-muted-foreground">No hay campos configurados para este preset.</p> : null}
                 </div>
               </div>
             ) : null}

@@ -16,6 +16,14 @@ const ALLOWED_FIELD_TYPES = new Set(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHE
 const ALLOWED_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
 const MAX_PRESETS_PER_TYPE = 3;
 
+const SYSTEM_BASE_FIELDS = [
+  { fieldKey: "cliente", label: "Cliente", fieldType: "TEXT", sortOrder: 0 },
+  { fieldKey: "telefono", label: "Teléfono", fieldType: "TEXT", sortOrder: 1 },
+  { fieldKey: "descripcion", label: "Descripción", fieldType: "TEXT_LONG", sortOrder: 2 },
+  { fieldKey: "sena_pago", label: "Seña / Pago", fieldType: "NUMBER", sortOrder: 3 },
+  { fieldKey: "valor_total", label: "Valor total", fieldType: "NUMBER", sortOrder: 4 },
+] as const;
+
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
@@ -137,6 +145,36 @@ async function getPresetOrThrow(tenantId: number, presetId: number) {
     .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)));
   if (!preset) throw notFound("PRESET_NOT_FOUND", "Preset no encontrado");
   return preset;
+}
+
+
+async function ensureSystemFieldsForPreset(tenantId: number, presetId: number, orderTypeId: number) {
+  const keys = SYSTEM_BASE_FIELDS.map((f) => f.fieldKey);
+  const existing = await db
+    .select({ fieldKey: orderFieldDefinitions.fieldKey })
+    .from(orderFieldDefinitions)
+    .where(and(eq(orderFieldDefinitions.tenantId, tenantId), eq(orderFieldDefinitions.presetId, presetId), inArray(orderFieldDefinitions.fieldKey, keys as any)));
+  const have = new Set(existing.map((e) => e.fieldKey));
+
+  const toInsert = SYSTEM_BASE_FIELDS.filter((f) => !have.has(f.fieldKey)).map((f) => ({
+    tenantId,
+    orderTypeId,
+    presetId,
+    fieldKey: f.fieldKey,
+    label: f.label,
+    fieldType: f.fieldType,
+    required: false,
+    sortOrder: f.sortOrder,
+    config: {},
+    isActive: true,
+    isSystemDefault: true,
+    visibleInTracking: false,
+    useInAgenda: false,
+  }));
+
+  if (toInsert.length > 0) {
+    await db.insert(orderFieldDefinitions).values(toInsert as any);
+  }
 }
 
 async function resolveUniqueFieldKey(
@@ -357,18 +395,19 @@ export const orderPresetsStorage = {
   },
 
   // ── Fields by preset ─────────────────────────────────────────────────────
-  async listFieldsByPreset(tenantId: number, presetId: number) {
+  async listFieldsByPreset(tenantId: number, presetId: number, includeInactive = false) {
     const preset = await getPresetOrThrow(tenantId, presetId);
+    await ensureSystemFieldsForPreset(tenantId, presetId, preset.orderTypeId);
+    const conditions = [
+      eq(orderFieldDefinitions.tenantId, tenantId),
+      eq(orderFieldDefinitions.presetId, presetId),
+    ];
+    if (!includeInactive) conditions.push(eq(orderFieldDefinitions.isActive, true));
+
     const fields = await db
       .select()
       .from(orderFieldDefinitions)
-      .where(
-        and(
-          eq(orderFieldDefinitions.tenantId, tenantId),
-          eq(orderFieldDefinitions.presetId, presetId),
-          eq(orderFieldDefinitions.isActive, true)
-        )
-      )
+      .where(and(...conditions))
       .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
     return { preset, fields };
   },
@@ -443,6 +482,7 @@ export const orderPresetsStorage = {
       .limit(1);
 
     const values: InsertOrderFieldDefinition = {
+      isSystemDefault: false,
       tenantId,
       orderTypeId: preset.orderTypeId,
       presetId,
