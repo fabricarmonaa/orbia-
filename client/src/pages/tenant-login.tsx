@@ -20,9 +20,7 @@ export default function TenantLogin() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"admin" | "cashier">("admin");
   const [pin, setPin] = useState("");
-  const [failedAttempts, setFailedAttempts] = useState(0);
   const [lockedSeconds, setLockedSeconds] = useState(0);
-  const [forgotVisible, setForgotVisible] = useState(false);
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
@@ -66,13 +64,9 @@ export default function TenantLogin() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setFailedAttempts(Number(data.failedAttempts || failedAttempts + 1));
-        setForgotVisible(Boolean(data.showForgotPassword) || Number(data.failedAttempts || 0) >= 3);
         setLockedSeconds(Number(data.lockedSeconds || 0));
         throw new Error(data.error || "Error de autenticación");
       }
-      setFailedAttempts(0);
-      setForgotVisible(false);
       setLockedSeconds(0);
       login(data.token, { ...data.user, subscriptionWarning: data.subscriptionWarning });
       setLocation("/app");
@@ -156,14 +150,12 @@ export default function TenantLogin() {
                 </div>
               )}
 
-              {failedAttempts > 0 && mode === "admin" && (
-                <p className="text-xs text-muted-foreground">
-                  Intentos fallidos recientes: <b>{failedAttempts}</b>
-                  {lockedSeconds > 0 && <span className="ml-2 text-destructive">Bloqueado {lockedSeconds}s</span>}
-                </p>
+              {lockedSeconds > 0 && mode === "admin" && (
+                <p className="text-xs text-destructive">Inicio temporalmente bloqueado. Intentá nuevamente en {lockedSeconds}s.</p>
               )}
 
-              {forgotVisible && mode === "admin" && (
+
+              {mode === "admin" && (
                 <Button type="button" variant="ghost" className="px-0 h-auto underline" onClick={() => {
                   setForgotEmail(email);
                   setForgotOpen(true);
