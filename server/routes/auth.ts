@@ -41,14 +41,12 @@ const superLoginSchema = z.object({
 const tenantLoginSchema = z.object({
   tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
-  userId: z.coerce.number().int().positive().optional(),
   password: z.string().min(1).max(256),
 });
 
 const passwordRecoveryRequestSchema = z.object({
   tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
-  userId: z.coerce.number().int().positive(),
 });
 
 const passwordRecoveryResetSchema = z.object({
@@ -285,8 +283,8 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/login", strictLoginLimiter, tenantLoginLimiter, async (req, res) => {
     try {
-      const { tenantCode, email, userId, password } = tenantLoginSchema.parse(req.body);
-      const fingerprint = buildLoginFingerprint({ tenantCode, email, userId, ip: getClientIp(req) });
+      const { tenantCode, email, password } = tenantLoginSchema.parse(req.body);
+      const fingerprint = buildLoginFingerprint({ tenantCode, email, ip: getClientIp(req) });
       const lockState = await getLoginAttemptState(fingerprint);
       const lockHint = loginHintFromState(lockState);
       if (lockHint.lockedSeconds > 0) {
@@ -308,13 +306,11 @@ export function registerAuthRoutes(app: Express) {
       if (tenant.isBlocked) return res.status(403).json({ error: "Negocio bloqueado", code: "TENANT_BLOCKED" });
       if (!tenant.isActive) return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
 
-      const user = userId
-        ? await storage.getUserById(userId, tenant.id)
-        : await storage.getUserByEmail(email, tenant.id);
+      const user = await storage.getUserByEmail(email, tenant.id);
       const userMatches = user && user.email.toLowerCase() === email.toLowerCase();
 
       if (!user || !user.isActive || !userMatches) {
-        const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: userId || null, email, ip: getClientIp(req) });
+        const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: null, email, ip: getClientIp(req) });
         return res.status(401).json({
           error: "Credenciales incorrectas",
           code: "AUTH_INVALID",
@@ -403,9 +399,8 @@ export function registerAuthRoutes(app: Express) {
       const genericOk = { ok: true, message: "Si los datos son correctos, enviaremos instrucciones al correo." };
       if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) return res.json(genericOk);
 
-      const user = await storage.getUserById(payload.userId, tenant.id);
+      const user = await storage.getUserByEmail(payload.email, tenant.id);
       if (!user || user.deletedAt || !user.isActive) return res.json(genericOk);
-      if (user.email.toLowerCase() !== payload.email.toLowerCase()) return res.json(genericOk);
 
       const reset = await createPasswordResetToken({ userId: user.id, tenantId: tenant.id, email: user.email, requestedIp: getClientIp(req) });
       const branding = await storage.getAppBranding().catch(() => null as any);

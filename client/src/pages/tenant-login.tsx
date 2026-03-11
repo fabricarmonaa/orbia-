@@ -15,7 +15,6 @@ export default function TenantLogin() {
   const [, setLocation] = useLocation();
   const [tenantCode, setTenantCode] = useState("");
   const [email, setEmail] = useState("");
-  const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -27,7 +26,6 @@ export default function TenantLogin() {
   const [forgotOpen, setForgotOpen] = useState(false);
   const [forgotLoading, setForgotLoading] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotUserId, setForgotUserId] = useState("");
   const { toast } = useToast();
   const { appBranding } = useBranding();
 
@@ -60,7 +58,7 @@ export default function TenantLogin() {
       const endpoint = mode === "cashier" ? "/api/cashiers/login" : "/api/auth/login";
       const body = mode === "cashier"
         ? { tenant_code: tenantCode, pin }
-        : { tenantCode, email, userId: userId ? Number(userId) : undefined, password };
+        : { tenantCode, email, password };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -95,7 +93,6 @@ export default function TenantLogin() {
         body: JSON.stringify({
           tenantCode,
           email: forgotEmail.trim().toLowerCase(),
-          userId: Number(forgotUserId),
         }),
       });
       const data = await res.json();
@@ -139,10 +136,6 @@ export default function TenantLogin() {
               {mode === "admin" ? (
                 <>
                   <div className="space-y-2">
-                    <Label htmlFor="userId">ID de usuario</Label>
-                    <Input id="userId" type="number" placeholder="Ej: 12" value={userId} onChange={(e) => setUserId(e.target.value)} required data-testid="input-user-id" />
-                  </div>
-                  <div className="space-y-2">
                     <Label htmlFor="email">Email</Label>
                     <Input id="email" type="email" placeholder="Email empresa/dueño" value={email} onChange={(e) => setEmail(e.target.value)} required data-testid="input-email" />
                   </div>
@@ -173,7 +166,6 @@ export default function TenantLogin() {
               {forgotVisible && mode === "admin" && (
                 <Button type="button" variant="ghost" className="px-0 h-auto underline" onClick={() => {
                   setForgotEmail(email);
-                  setForgotUserId(userId);
                   setForgotOpen(true);
                 }}>
                   ¿Olvidaste tu contraseña?
@@ -195,10 +187,6 @@ export default function TenantLogin() {
             <DialogTitle>Recuperar contraseña</DialogTitle>
           </DialogHeader>
           <form className="space-y-3" onSubmit={handleForgotPassword}>
-            <div className="space-y-2">
-              <Label>ID de usuario</Label>
-              <Input type="number" value={forgotUserId} onChange={(e) => setForgotUserId(e.target.value)} required />
-            </div>
             <div className="space-y-2">
               <Label>Email registrado</Label>
               <Input type="email" value={forgotEmail} onChange={(e) => setForgotEmail(e.target.value)} required />
