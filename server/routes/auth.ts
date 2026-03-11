@@ -320,6 +320,17 @@ export function registerAuthRoutes(app: Express) {
         });
       }
 
+      if (!user.password || typeof user.password !== "string") {
+        const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: user.id, email, ip: getClientIp(req) });
+        return res.status(401).json({
+          error: "Credenciales incorrectas",
+          code: "AUTH_INVALID",
+          failedAttempts: next.failedCount,
+          showForgotPassword: next.showForgotPassword,
+          lockedSeconds: next.lockedSeconds,
+        });
+      }
+
       const valid = await comparePassword(password, user.password);
       if (!valid) {
         const next = await registerFailedLoginAttempt({ fingerprint, tenantId: tenant.id, tenantCode, userId: user.id, email, ip: getClientIp(req) });
