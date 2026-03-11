@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { useAuth } from "@/lib/auth";
+import { apiRequest, useAuth } from "@/lib/auth";
 import { fetchPlan, clearPlanCache } from "@/lib/plan";
 import { useLocation, Route, Switch } from "wouter";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, MessageCircleOff, X } from "lucide-react";
 import Dashboard from "./dashboard";
 import OrdersPage from "./orders";
 import CashPage from "./cash";
@@ -29,7 +29,6 @@ import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
-import { Button } from "@/components/ui/button";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -56,9 +55,31 @@ function SubscriptionBanner() {
   );
 }
 
+
+function WhatsappInboxUnavailable({ loading }: { loading: boolean }) {
+  if (loading) {
+    return <div className="p-6 text-sm text-muted-foreground">Validando acceso a WhatsApp Inbox…</div>;
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center py-20 space-y-4 text-center">
+      <MessageCircleOff className="w-16 h-16 text-muted-foreground" />
+      <h2 className="text-xl font-semibold">Próximamente</h2>
+      <p className="text-muted-foreground max-w-md">
+        Esta funcionalidad de WhatsApp Inbox no está disponible en tu plan o addons actuales.
+      </p>
+      <p className="text-sm text-muted-foreground max-w-lg">
+        Si necesitás habilitarla, contactá a soporte o al administrador de tu cuenta.
+      </p>
+    </div>
+  );
+}
+
 export default function AppLayout() {
   const { isAuthenticated, user } = useAuth();
   const [location, setLocation] = useLocation();
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean> | null>(null);
+  const [addonsLoading, setAddonsLoading] = useState(true);
 
   useEffect(() => {
     if (!isAuthenticated || user?.isSuperAdmin) {
@@ -69,9 +90,44 @@ export default function AppLayout() {
     }
   }, [isAuthenticated, user]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchAddonStatus() {
+      if (!isAuthenticated || user?.isSuperAdmin || user?.role === "CASHIER") {
+        setAddonStatus(null);
+        setAddonsLoading(false);
+        return;
+      }
+
+      setAddonsLoading(true);
+      try {
+        const res = await apiRequest("GET", "/api/addons/status");
+        const json = await res.json();
+        if (!cancelled) {
+          setAddonStatus(json?.data || {});
+        }
+      } catch {
+        if (!cancelled) {
+          setAddonStatus({});
+        }
+      } finally {
+        if (!cancelled) {
+          setAddonsLoading(false);
+        }
+      }
+    }
+
+    fetchAddonStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, user?.isSuperAdmin, user?.role]);
+
   if (!isAuthenticated || user?.isSuperAdmin) return null;
 
   const isPrintRoute = location.startsWith("/app/print/");
+  const canAccessWhatsappInbox = Boolean(addonStatus?.whatsapp_inbox);
 
   if (isPrintRoute) {
     return (
@@ -118,7 +174,11 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/print/order/:orderId" component={OrderPrintPage} />}
               <Route path="/app/print/sale/:saleId" component={SalePrintPage} />
               {user?.role !== "CASHIER" && <Route path="/app/messaging" component={MessagingSettingsPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/whatsapp/conversations" component={WhatsappConversationsPage} />}
+              {user?.role !== "CASHIER" && (
+                <Route path="/app/whatsapp/conversations">
+                  {() => (canAccessWhatsappInbox ? <WhatsappConversationsPage /> : <WhatsappInboxUnavailable loading={addonsLoading} />)}
+                </Route>
+              )}
               {user?.role !== "CASHIER" && <Route path="/app/agenda" component={AgendaPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/notes" component={NotesPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/reports" component={ReportsPage} />}
