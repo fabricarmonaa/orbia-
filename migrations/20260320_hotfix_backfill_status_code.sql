@@ -19,17 +19,25 @@ SET is_default = true
 FROM pick_one p
 WHERE sd.id = p.id;
 
--- 1) Backfill from legacy status_id -> order_statuses.code -> status_definitions.code
+-- 1) Backfill from legacy status_id -> order_statuses.name -> canonical status_definitions.code
+WITH legacy_map AS (
+  SELECT
+    os.tenant_id,
+    os.id AS legacy_status_id,
+    LEFT(REGEXP_REPLACE(UPPER(COALESCE(os.name, '')), '[^A-Z0-9]+', '_', 'g'), 40) AS legacy_code
+  FROM order_statuses os
+)
 UPDATE orders o
 SET status_code = sd.code
-FROM order_statuses os
+FROM legacy_map lm
 JOIN status_definitions sd
-  ON sd.tenant_id = os.tenant_id
+  ON sd.tenant_id = lm.tenant_id
  AND sd.entity_type = 'ORDER'
- AND upper(sd.code) = upper(os.code)
+ AND sd.code = lm.legacy_code
 WHERE (o.status_code IS NULL OR btrim(o.status_code) = '')
   AND o.status_id IS NOT NULL
-  AND os.id = o.status_id;
+  AND o.tenant_id = lm.tenant_id
+  AND o.status_id = lm.legacy_status_id;
 
 -- 2) Fill remaining NULL/empty with tenant default ORDER status
 UPDATE orders o
