@@ -54,7 +54,8 @@ async function runMigrations() {
             }
 
             console.log(`Running migration: ${file}`);
-            const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+            const rawSql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+            const sql = rawSql.charCodeAt(0) === 0xfeff ? rawSql.slice(1) : rawSql;
 
             await client.query("BEGIN");
             try {
