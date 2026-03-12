@@ -22,7 +22,9 @@ const pool = new pg.Pool({ connectionString });
 async function runMigrations() {
     const client = await pool.connect();
     try {
-        await client.query("BEGIN");
+        // Serialize migration execution if multiple app replicas start simultaneously.
+        await client.query("SELECT pg_advisory_lock(hashtext('schema_migrations_lock'))");
+
         await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version VARCHAR(255) PRIMARY KEY,
@@ -46,26 +48,37 @@ async function runMigrations() {
                 [file]
             );
 
-            if (rows.length === 0) {
-                console.log(`Running migration: ${file}`);
-                const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+            if (rows.length > 0) {
+                console.log(`Skipping applied migration: ${file}`);
+                continue;
+            }
+
+            console.log(`Running migration: ${file}`);
+            const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+
+            await client.query("BEGIN");
+            try {
                 if (sql.trim()) {
-                    // Wrap in exception block if needed, but standard query is fine
                     await client.query(sql);
                 }
                 await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [file]);
-            } else {
-                console.log(`Skipping applied migration: ${file}`);
+                await client.query("COMMIT");
+            } catch (migrationError) {
+                await client.query("ROLLBACK");
+                throw new Error(`Migration ${file} failed: ${(migrationError as Error).message}`);
             }
         }
 
-        await client.query("COMMIT");
         console.log("All migrations applied successfully.");
     } catch (err: any) {
-        await client.query("ROLLBACK");
         console.error(`Migration failed:`, err.message);
         process.exit(1);
     } finally {
+        try {
+            await client.query("SELECT pg_advisory_unlock(hashtext('schema_migrations_lock'))");
+        } catch {
+            // no-op
+        }
         client.release();
         await pool.end();
     }
