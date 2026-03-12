@@ -26,6 +26,21 @@ async function supportsCashMovementColumnName(columnName: string) {
   return columns.has(columnName);
 }
 
+async function sanitizeCashMovementInsertPayload(data: InsertCashMovement) {
+  const columns = await getCashMovementColumnsSet();
+  const payload: Record<string, unknown> = { ...data };
+  if (!columns.has("impacts_cash")) delete payload.impactsCash;
+  if (!columns.has("associated_cost")) delete payload.associatedCost;
+  if (!columns.has("expense_definition_id")) delete payload.expenseDefinitionId;
+  if (!columns.has("expense_definition_name")) delete payload.expenseDefinitionName;
+  if (!columns.has("entity_type")) delete payload.entityType;
+  if (!columns.has("entity_id")) delete payload.entityId;
+  if (!columns.has("created_by_id")) delete payload.createdById;
+  if (!columns.has("sale_id")) delete payload.saleId;
+  if (!columns.has("order_id")) delete payload.orderId;
+  return payload as InsertCashMovement;
+}
+
 export const cashStorage = {
   async getCashMovementColumns() {
     return getCashMovementColumnsSet();
@@ -128,18 +143,13 @@ export const cashStorage = {
     return result.rows as any[];
   },
   async createCashMovement(data: InsertCashMovement) {
-    const columns = await getCashMovementColumnsSet();
-    const payload: Record<string, unknown> = { ...data };
-    if (!columns.has("impacts_cash")) delete payload.impactsCash;
-    if (!columns.has("associated_cost")) delete payload.associatedCost;
-    if (!columns.has("expense_definition_id")) delete payload.expenseDefinitionId;
-    if (!columns.has("expense_definition_name")) delete payload.expenseDefinitionName;
-    if (!columns.has("entity_type")) delete payload.entityType;
-    if (!columns.has("entity_id")) delete payload.entityId;
-    if (!columns.has("created_by_id")) delete payload.createdById;
-    if (!columns.has("sale_id")) delete payload.saleId;
-    const [movement] = await db.insert(cashMovements).values(payload as InsertCashMovement).returning();
+    const payload = await sanitizeCashMovementInsertPayload(data);
+    const [movement] = await db.insert(cashMovements).values(payload).returning();
     return movement;
+  },
+
+  async sanitizeCashMovementForInsert(data: InsertCashMovement) {
+    return sanitizeCashMovementInsertPayload(data);
   },
   async getCashMovementById(id: number, tenantId: number) {
     const [movement] = await db

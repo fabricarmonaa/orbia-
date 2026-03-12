@@ -16,6 +16,7 @@ import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustom
 import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
 import { generatePublicToken } from "../utils/public-token";
 import { syncOrderAgendaEvents } from "../services/agenda";
+import { cashStorage } from "../storage/cash";
 
 /** Decimal-safe payment status calculation (tolerates floating-point rounding) */
 function calcPaymentStatus(paid: number, total: number): "UNPAID" | "PARTIAL" | "PAID" {
@@ -246,7 +247,7 @@ export function registerOrderRoutes(app: Express) {
           const desc = calcPaymentStatus(paidNum, totalNum || paidNum) === "PARTIAL"
             ? `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}/${totalNum.toFixed(2)}`
             : `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}`;
-          await tx.insert(cashMovements).values({
+          const cashMovementPayload = await cashStorage.sanitizeCashMovementForInsert({
             tenantId,
             branchId: branchId ?? null,
             sessionId: openSession.id,
@@ -260,6 +261,7 @@ export function registerOrderRoutes(app: Express) {
             entityId: created.id,
             createdById: req.auth!.userId ?? null,
           });
+          await tx.insert(cashMovements).values(cashMovementPayload);
           hasCashMovement = true;
         }
 
@@ -325,6 +327,9 @@ export function registerOrderRoutes(app: Express) {
       }
 
       // Validate paidAmount if provided
+      const hasExplicitTotal = payload.totalAmount !== undefined
+        ? payload.totalAmount !== null
+        : current.totalAmount !== null;
       const newTotal = payload.totalAmount !== undefined && payload.totalAmount !== null
         ? Number(payload.totalAmount)
         : Number(current.totalAmount || 0);
@@ -332,7 +337,7 @@ export function registerOrderRoutes(app: Express) {
         ? Number(payload.paidAmount)
         : Number(current.paidAmount || 0);
       if (newPaid < 0) return res.status(400).json({ error: "El monto pagado no puede ser negativo", code: "PAID_NEGATIVE" });
-      if (newPaid > newTotal + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
+      if (hasExplicitTotal && newPaid > newTotal + 0.01) return res.status(400).json({ error: "El monto pagado no puede superar el total", code: "PAID_EXCEEDS_TOTAL" });
       const currentPaid = Number(current.paidAmount || 0);
       const diff = parseFloat((newPaid - currentPaid).toFixed(2));
 
@@ -345,7 +350,7 @@ export function registerOrderRoutes(app: Express) {
           description: payload.description !== undefined ? (payload.description || null) : current.description,
           totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
           paidAmount: String(newPaid.toFixed(2)),
-          paymentStatus: calcPaymentStatus(newPaid, newTotal),
+          paymentStatus: calcPaymentStatus(newPaid, hasExplicitTotal ? newTotal : Math.max(newPaid, 0)),
           orderPresetId: payload.orderPresetId !== undefined ? (payload.orderPresetId || null) : current.orderPresetId,
           updatedAt: new Date(),
         }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
@@ -357,7 +362,7 @@ export function registerOrderRoutes(app: Express) {
           const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
           if (openSession) {
             const orderNum = current.orderNumber;
-            await tx.insert(cashMovements).values({
+            const cashMovementPayload = await cashStorage.sanitizeCashMovementForInsert({
               tenantId,
               branchId: branchId ?? null,
               sessionId: openSession.id,
@@ -371,6 +376,7 @@ export function registerOrderRoutes(app: Express) {
               entityId: id,
               createdById: req.auth!.userId ?? null,
             });
+            await tx.insert(cashMovements).values(cashMovementPayload);
             hasCashMovement = true;
           }
         }

@@ -51,6 +51,13 @@ interface MenuItem {
   highlight?: boolean;
 }
 
+function toAddonBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true" || value === "1";
+  if (typeof value === "number") return value === 1;
+  return false;
+}
+
 const menuItems: MenuItem[] = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard, section: "operacion" },
   { title: "Pedidos", url: "/app/orders", icon: ClipboardList, section: "operacion" },
@@ -89,7 +96,15 @@ export function AppSidebar() {
   useEffect(() => {
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
-      .then((d) => setAddonStatus(d.data || {}))
+      .then((d) => {
+        const raw = d?.data || {};
+        setAddonStatus({
+          barcode_scanner: toAddonBoolean(raw.barcode_scanner),
+          delivery: toAddonBoolean(raw.delivery),
+          messaging_whatsapp: toAddonBoolean(raw.messaging_whatsapp),
+          whatsapp_inbox: toAddonBoolean(raw.whatsapp_inbox),
+        });
+      })
       .catch(() => { });
     apiRequest("GET", "/api/stock/alerts")
       .then((r) => r.json())

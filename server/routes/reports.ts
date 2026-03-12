@@ -106,6 +106,24 @@ function resolveReportRange(input: z.infer<typeof reportsOverviewQuerySchema>) {
   from.setHours(0, 0, 0, 0);
   return { from, to: today };
 }
+
+async function getSaleItemsQtyExpression() {
+  const result = await pool.query<{ data_type: string }>(
+    `
+      SELECT data_type
+      FROM information_schema.columns
+      WHERE table_schema = 'public'
+        AND table_name = 'sale_items'
+        AND column_name = 'quantity'
+      LIMIT 1
+    `,
+  );
+
+  const dataType = String(result.rows[0]?.data_type || '').toLowerCase();
+  return dataType.includes('integer')
+    ? 'COALESCE(SUM(si.quantity),0)::int'
+    : 'COALESCE(SUM(si.quantity::numeric),0)::int';
+}
 async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSchema>) {
   const { where, params } = buildWhere(filters, tenantId);
   const previousFrom = new Date(`${filters.from}T00:00:00.000Z`);
@@ -256,6 +274,8 @@ export function registerReportRoutes(app: Express) {
         branchPrevSql = ` AND s.branch_id = $${paramsPrev.length}`;
       }
 
+      const saleItemsQtyExpr = await getSaleItemsQtyExpression();
+
       const [currentSales, previousSales, ordersCount, topProducts, slowProducts, categoryRevenue, statusBreakdown, byHour, byWeekday] = await Promise.all([
         pool.query(`SELECT COALESCE(SUM(s.total_amount::numeric),0) total, COUNT(*)::int count, COALESCE(AVG(s.total_amount::numeric),0) avg_ticket FROM sales s WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}`, paramsCurrent),
         pool.query(`SELECT COALESCE(SUM(s.total_amount::numeric),0) total, COUNT(*)::int count FROM sales s WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchPrevSql}`, paramsPrev),
@@ -263,7 +283,7 @@ export function registerReportRoutes(app: Express) {
         pool.query(`
           SELECT
             COALESCE(si.product_name_snapshot, 'Sin producto') name,
-            COALESCE(SUM(si.quantity),0)::int qty_sold,
+            ${saleItemsQtyExpr} qty_sold,
             COALESCE(SUM(si.line_total::numeric),0) revenue
           FROM sale_items si
           JOIN sales s ON s.id = si.sale_id
@@ -276,7 +296,7 @@ export function registerReportRoutes(app: Express) {
           SELECT * FROM (
             SELECT
               COALESCE(si.product_name_snapshot, 'Sin producto') name,
-              COALESCE(SUM(si.quantity),0)::int qty_sold,
+              ${saleItemsQtyExpr} qty_sold,
               COALESCE(SUM(si.line_total::numeric),0) revenue
             FROM sale_items si
             JOIN sales s ON s.id = si.sale_id

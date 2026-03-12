@@ -2,6 +2,7 @@ import { db, pool } from "../db";
 import { and, count, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { calculateSaleTotals, round2, validateStock } from "../services/sales-calculation";
 import { resolveProductUnitPrice } from "../services/pricing";
+import { cashStorage } from "./cash";
 import {
   branches,
   cashMovements,
@@ -278,7 +279,8 @@ export const salesStorage = {
         saleId: sale.id,
         createdById: input.cashierUserId,
       };
-      await tx.insert(cashMovements).values(cashData);
+      const sanitizedCashData = await cashStorage.sanitizeCashMovementForInsert(cashData);
+      await tx.insert(cashMovements).values(sanitizedCashData);
 
       return { sale };
     });
