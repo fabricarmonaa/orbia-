@@ -425,7 +425,7 @@ export default function SettingsPage() {
           label: "PDFs",
           content: <PriceListPdfSettings />,
         },
-        ...(addonStatus.whatsapp_inbox || addonStatus.messaging_whatsapp ? [{
+        ...(addonStatus.whatsapp_inbox ? [{
           id: "whatsapp",
           label: "WhatsApp",
           content: <WhatsAppSettings />,

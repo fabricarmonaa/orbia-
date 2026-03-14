@@ -41,6 +41,50 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { CashSession, CashMovement, ExpenseDefinition } from "@shared/schema";
 
+type ExtraFee = {
+  name: string;
+  amount: string;
+  type: "costo" | "ingreso";
+  impactNetProfit: boolean;
+};
+
+const EXTRA_FEES_MARKER = "[EXTRA_FEES_JSON]";
+
+function normalizeFee(fee: Partial<ExtraFee>): ExtraFee {
+  return {
+    name: String(fee.name || ""),
+    amount: String(fee.amount || ""),
+    type: fee.type === "ingreso" ? "ingreso" : "costo",
+    impactNetProfit: fee.impactNetProfit !== false,
+  };
+}
+
+function extractPersistedExtraFees(description?: string | null): { cleanDescription: string; fees: ExtraFee[] } {
+  if (!description) return { cleanDescription: "", fees: [] };
+  const markerIndex = description.indexOf(EXTRA_FEES_MARKER);
+  if (markerIndex < 0) return { cleanDescription: description, fees: [] };
+  const rawJson = description.slice(markerIndex + EXTRA_FEES_MARKER.length).trim();
+  const cleanDescription = description.slice(0, markerIndex).trimEnd();
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed)) return { cleanDescription, fees: [] };
+    return { cleanDescription, fees: parsed.map((item) => normalizeFee(item)) };
+  } catch {
+    return { cleanDescription, fees: [] };
+  }
+}
+
+function withPersistedExtraFees(description: string, fees: ExtraFee[]): string {
+  const { cleanDescription } = extractPersistedExtraFees(description);
+  const persistedFees = fees
+    .map((fee) => normalizeFee(fee))
+    .filter((fee) => (parseFloat(fee.amount || "0") || 0) > 0);
+
+  if (!persistedFees.length) return cleanDescription;
+  const base = cleanDescription.trimEnd();
+  return `${base}${base ? "\n" : ""}${EXTRA_FEES_MARKER}${JSON.stringify(persistedFees)}`;
+}
+
 export default function CashPage() {
   const { user } = useAuth();
   const { hasFeature, plan } = usePlan();
@@ -73,11 +117,11 @@ export default function CashPage() {
     expenseDefinitionId: "",
   });
 
-  const [newAdditionalFees, setNewAdditionalFees] = useState<Array<{ name: string; amount: string; type: "costo" | "ingreso"; impactNetProfit: boolean }>>([]);
+  const [newAdditionalFees, setNewAdditionalFees] = useState<ExtraFee[]>([]);
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMovement, setEditingMovement] = useState<CashMovement | null>(null);
-  const [editAdditionalFees, setEditAdditionalFees] = useState<Array<{ name: string; amount: string; type: "costo" | "ingreso"; impactNetProfit: boolean }>>([]);
+  const [editAdditionalFees, setEditAdditionalFees] = useState<ExtraFee[]>([]);
 
   const [editForm, setEditForm] = useState({
     amount: "",
@@ -199,7 +243,7 @@ export default function CashPage() {
         ...newMovement,
         amount: finalAmount,
         associatedCost: finalAssociatedCost || null,
-        description: finalDescription,
+        description: withPersistedExtraFees(finalDescription, fees),
         sessionId: openSession?.id || null,
         expenseDefinitionId:
           newMovement.expenseDefinitionId && newMovement.expenseDefinitionId !== "__empty__"
@@ -263,7 +307,7 @@ export default function CashPage() {
 
       await apiRequest("PATCH", `/api/cash/movements/${editingMovement.id}`, {
         ...editForm,
-        description: finalDescription,
+        description: withPersistedExtraFees(finalDescription, fees),
         amount: finalAmount,
         associatedCost: finalAssociatedCost || null,
       });
@@ -983,6 +1027,7 @@ export default function CashPage() {
             ) : (
               <div className="space-y-2">
                 {activeMovements.map((m) => {
+                  const extracted = extractPersistedExtraFees(m.description);
                   const hasAssociatedCost = m.type === "ingreso" && parseFloat(m.associatedCost || "0") > 0;
                   const netProfit = m.type === "ingreso" ? parseFloat(m.amount) - parseFloat(m.associatedCost || "0") : 0;
                   return (
@@ -991,18 +1036,20 @@ export default function CashPage() {
                       data-testid={`card-movement-${m.id}`}
                       className="cursor-pointer hover:border-sidebar-accent transition-colors"
                       onClick={() => {
+                        const extracted = extractPersistedExtraFees(m.description);
+                        const [firstFee, ...otherFees] = extracted.fees;
                         setEditingMovement(m);
                         setEditForm({
                           amount: m.amount,
-                          associatedCost: m.associatedCost || "",
-                          associatedCostName: "",
-                          associatedCostType: "costo",
-                          impactNetProfit: parseFloat(m.associatedCost || "0") > 0,
+                          associatedCost: firstFee?.amount || m.associatedCost || "",
+                          associatedCostName: firstFee?.name || "",
+                          associatedCostType: firstFee?.type || "costo",
+                          impactNetProfit: firstFee?.impactNetProfit ?? parseFloat(m.associatedCost || "0") > 0,
                           category: m.category || "",
-                          description: m.description || "",
+                          description: extracted.cleanDescription || "",
                           method: m.method || "efectivo",
                         });
-                        setEditAdditionalFees([]);
+                        setEditAdditionalFees(otherFees);
                         setEditDialogOpen(true);
                       }}
                     >
@@ -1018,7 +1065,7 @@ export default function CashPage() {
                             </div>
                             <div>
                               <p className="text-sm font-medium">
-                                {m.expenseDefinitionName || m.description || m.category || m.type}
+                                {m.expenseDefinitionName || extracted.cleanDescription || m.category || m.type}
                               </p>
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">{m.method}</span>
