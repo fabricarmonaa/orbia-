@@ -87,20 +87,7 @@ BEGIN
       CHECK (
         field_type <> 'FILE'
         OR NOT (config ? 'allowedMime')
-        OR NOT EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements_text(config->'allowedMime') AS elem(mime)
-          WHERE elem.mime NOT IN (
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'image/jpg',
-            'image/jpeg',
-            'image/png',
-            'image/pjpeg',
-            'image/jfif'
-          )
-        )
+        OR jsonb_typeof(config->'allowedMime') = 'array'
       );
   END IF;
 END $$;
