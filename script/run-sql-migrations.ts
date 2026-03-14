@@ -22,6 +22,9 @@ const pool = new pg.Pool({ connectionString });
 async function runMigrations() {
     const client = await pool.connect();
     try {
+        // Prevent concurrent migration runners against the same DB
+        await client.query("SELECT pg_advisory_lock(84726191)");
+
         await client.query("BEGIN");
         await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -66,6 +69,9 @@ async function runMigrations() {
         console.error(`Migration failed:`, err.message);
         process.exit(1);
     } finally {
+        try {
+            await client.query("SELECT pg_advisory_unlock(84726191)");
+        } catch {}
         client.release();
         await pool.end();
     }
