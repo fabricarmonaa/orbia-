@@ -27,6 +27,7 @@ import CustomersPage from "./customers";
 import PrintTestPage from "./print-test";
 import OrderPrintPage from "./order-print";
 import SalePrintPage from "./sale-print";
+import ReportsPage from "./reports";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
 import { Button } from "@/components/ui/button";
 
@@ -120,11 +121,7 @@ export default function AppLayout() {
               {user?.role !== "CASHIER" && <Route path="/app/whatsapp/conversations" component={WhatsappConversationsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/agenda" component={AgendaPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/notes" component={NotesPage} />}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/dashboard">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/sales">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/products">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/customers">{() => { window.location.replace('/app/cash?tab=kpis'); return null; }}</Route>}
-              {user?.role !== "CASHIER" && <Route path="/app/reports/cash">{() => { window.location.replace('/app/cash?tab=movements'); return null; }}</Route>}
+              {user?.role !== "CASHIER" && <Route path="/app/reports" component={ReportsPage} />}
               {user?.role !== "CASHIER" && <Route path="/app" component={Dashboard} />}
               {user?.role === "CASHIER" && <Route path="/app" component={PosPage} />}
             </Switch>

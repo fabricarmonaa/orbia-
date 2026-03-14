@@ -43,6 +43,7 @@ type StockMode = "global" | "by_branch";
 
 type ProductRow = {
   id: number;
+  customFieldValues?: Record<string, any>;
   name: string;
   sku: string | null;
   description: string | null;
@@ -61,6 +62,18 @@ type ProductRow = {
 };
 
 type Category = { id: number; name: string };
+
+type ProductCustomFieldDefinition = {
+  id: number;
+  isActive?: boolean;
+  fieldKey: string;
+  label: string;
+  fieldType: string;
+  required: boolean;
+  isFilterable: boolean;
+  filterType: string;
+  config?: any;
+};
 
 type ProductFilters = {
   q: string;
@@ -92,6 +105,7 @@ const defaultFilters: ProductFilters = {
 
 const emptyProduct = {
   name: "",
+  customFieldValues: {} as Record<string, any>,
   description: "",
   price: "",
   sku: "",
@@ -117,6 +131,9 @@ export default function ProductsPage() {
   const [draftFilters, setDraftFilters] = useState<ProductFilters>(defaultFilters);
   const [filters, setFilters] = useState<ProductFilters>(defaultFilters);
   const [rows, setRows] = useState<ProductRow[]>([]);
+  const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ProductCustomFieldDefinition[]>([]);
+  const [customFilterFacets, setCustomFilterFacets] = useState<Record<string, Array<{ value: any; count: number }>>>({});
+  const [customFilterValues, setCustomFilterValues] = useState<Record<string, any>>({});
   const [categories, setCategories] = useState<Category[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 20, totalPages: 1, stockMode: "global" as StockMode, branchesCount: 0 });
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -170,7 +187,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     if (canAccess) void fetchProducts(filters);
-  }, [filters, canAccess]);
+  }, [filters, canAccess, customFilterValues]);
 
   function buildQuery(current: ProductFilters) {
     const params = new URLSearchParams();
@@ -185,6 +202,7 @@ export default function ProductsPage() {
     params.set("dir", current.dir);
     params.set("page", String(current.page));
     params.set("pageSize", String(current.pageSize));
+    if (Object.keys(customFilterValues).length) params.set("customFilters", JSON.stringify(customFilterValues));
     return params.toString();
   }
 
@@ -204,6 +222,8 @@ export default function ProductsPage() {
       const res = await apiRequest("GET", `/api/products?${buildQuery(current)}`);
       const data = await res.json();
       setRows(data.data || []);
+      setCustomFieldDefinitions(data.customFieldDefinitions || []);
+      setCustomFilterFacets(data.customFilterFacets || {});
       setMeta(data.meta || { total: 0, page: current.page, pageSize: current.pageSize, totalPages: 1, stockMode: "global", branchesCount: 0 });
     } catch (err: any) {
       toast({ title: "No se pudieron cargar productos", description: err.message, variant: "destructive" });
@@ -285,6 +305,7 @@ export default function ProductsPage() {
         costCurrency: newProduct.costCurrency || null,
         marginPct: newProduct.marginPct ? Number(newProduct.marginPct) : null,
         stock: meta.stockMode === "global" ? (newProduct.stock ? Number(newProduct.stock) : 0) : null,
+        customFieldValues: newProduct.customFieldValues || {},
       });
       toast({ title: "Producto creado" });
       setNewProduct(emptyProduct);
@@ -309,6 +330,7 @@ export default function ProductsPage() {
       costCurrency: product.costCurrency || "ARS",
       marginPct: product.marginPct || "",
       stock: product.stock != null ? String(product.stock) : "",
+      customFieldValues: product.customFieldValues || {},
     });
     setEditDialog(true);
   }
@@ -329,6 +351,7 @@ export default function ProductsPage() {
         costCurrency: editForm.costCurrency || null,
         marginPct: editForm.marginPct ? Number(editForm.marginPct) : null,
         stock: meta.stockMode === "global" ? (editForm.stock ? Number(editForm.stock) : 0) : null,
+        customFieldValues: editForm.customFieldValues || {},
       });
       toast({ title: "Producto actualizado" });
       setEditDialog(false);
@@ -462,6 +485,20 @@ export default function ProductsPage() {
         description: err.message?.includes("demasiados") ? "Demasiados productos. Refiná los filtros e intentá de nuevo." : err.message,
         variant: "destructive",
       });
+    }
+  }
+
+
+  async function exportSheet() {
+    if (meta.total === 0) {
+      toast({ title: "No hay productos para exportar", variant: "destructive" });
+      return;
+    }
+    try {
+      const url = `/api/products/export/sheet?${buildQuery({ ...filters, page: 1, pageSize: 200 })}`;
+      window.open(url, "_blank");
+    } catch (err: any) {
+      toast({ title: "No se pudo exportar planilla", description: err.message, variant: "destructive" });
     }
   }
 
@@ -656,6 +693,25 @@ export default function ProductsPage() {
           <CardContent className="pt-6 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
               <div className="flex items-center gap-2 flex-wrap">
+                {customFieldDefinitions.filter((f) => f.isFilterable && f.isActive !== false).map((field) => {
+                  const options = customFilterFacets[field.fieldKey] || [];
+                  const current = customFilterValues[field.fieldKey];
+                  return (
+                    <div key={field.id} className="flex items-center gap-2">
+                      <Label className="text-xs">{field.label}</Label>
+                      <Select value={current ?? "__all__"} onValueChange={(v) => setCustomFilterValues((prev) => ({ ...prev, [field.fieldKey]: v === "__all__" ? undefined : v }))}>
+                        <SelectTrigger className="h-8 min-w-[160px]"><SelectValue placeholder="Todos" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__all__">Todos</SelectItem>
+                          {options.map((opt) => <SelectItem key={String(opt.value)} value={String(opt.value)}>{String(opt.value)} ({opt.count})</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  );
+                })}
+                <Button variant="outline" size="sm" onClick={() => { setCustomFilterValues({}); setFilters({ ...filters, page: 1 }); }}>Limpiar filtros custom</Button>
+              </div>
+            <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="secondary">Mostrando {rows.length} de {meta.total}</Badge>
                 <Badge variant="outline">Seleccionados: {selectedIds.size}</Badge>
                 {selectedIds.size > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>Limpiar</Button>}
@@ -666,7 +722,9 @@ export default function ProductsPage() {
                     <Button variant="outline"><Download className="h-4 w-4 mr-2" />Exportar</Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={() => exportPdf("filtered")}>PDF (filtrado actual)</DropdownMenuItem>
                     <DropdownMenuItem disabled={selectedIds.size === 0} onClick={() => exportPdf("selected")}>PDF con seleccionados</DropdownMenuItem>
+                    <DropdownMenuItem onClick={exportSheet}>Excel (filtrado actual)</DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <Button
@@ -702,6 +760,7 @@ export default function ProductsPage() {
                           stockMode={meta.stockMode}
                           onSubmit={createProduct}
                           submitText="Crear producto"
+                          customFieldDefinitions={customFieldDefinitions}
                           scannerEnabled={Boolean(addonStatus.barcode_scanner)}
                           scanActive={scanEnabled}
                           onOpenKeyboardScan={() => setScanEnabled(true)}
@@ -734,6 +793,7 @@ export default function ProductsPage() {
                     <th className="text-left p-2">Nombre</th>
                     <th className="text-left p-2">CÓDIGO</th>
                     <th className="text-left p-2">Categoría</th>
+                    {customFieldDefinitions.filter((f) => f.config?.showInTable).map((f) => <th key={f.id} className="text-left p-2">{f.label}</th>)}
                     <th className="text-right p-2">Precio</th>
                     <th className="text-left p-2">Stock</th>
                     <th className="text-left p-2">Estado</th>
@@ -742,9 +802,9 @@ export default function ProductsPage() {
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={8} className="p-4"><Skeleton className="h-10 w-full" /></td></tr>
+                    <tr><td colSpan={8 + customFieldDefinitions.filter((f) => f.config?.showInTable).length} className="p-4"><Skeleton className="h-10 w-full" /></td></tr>
                   ) : rows.length === 0 ? (
-                    <tr><td colSpan={8} className="p-8 text-center text-muted-foreground">No hay productos con estos filtros.</td></tr>
+                    <tr><td colSpan={8 + customFieldDefinitions.filter((f) => f.config?.showInTable).length} className="p-8 text-center text-muted-foreground">No hay productos con estos filtros.</td></tr>
                   ) : rows.map((row) => (
                     <tr key={row.id} className="border-t">
                       <td className="p-2">
@@ -815,6 +875,7 @@ export default function ProductsPage() {
             stockMode={meta.stockMode}
             onSubmit={updateProduct}
             submitText="Guardar cambios"
+            customFieldDefinitions={customFieldDefinitions}
           />
         </DialogContent>
       </Dialog>
@@ -881,9 +942,10 @@ type ProductFormProps = {
   stockMode: StockMode;
   onSubmit: (e: React.FormEvent) => Promise<void> | void;
   submitText: string;
+  customFieldDefinitions: ProductCustomFieldDefinition[];
 };
 
-function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onOpenKeyboardScan, onOpenCameraScan }: ProductFormProps) {
+function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitText, scannerEnabled, scanActive, onOpenKeyboardScan, onOpenCameraScan, customFieldDefinitions }: ProductFormProps) {
   const marginMode = value.pricingMode === "MARGIN";
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
@@ -980,6 +1042,64 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
       ) : (
         <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal. Usá “Stock” del producto para ajustar por cada sucursal.</p>
       )}
+
+      {customFieldDefinitions.filter((field) => field.isActive !== false && field.config?.showInForm !== false).map((field) => {
+        const fieldValue = (value.customFieldValues || {})[field.fieldKey];
+        const options = Array.isArray(field.config?.options) ? field.config.options : [];
+        const setFieldValue = (next: any) => onChange({ ...value, customFieldValues: { ...(value.customFieldValues || {}), [field.fieldKey]: next } });
+
+        if (field.fieldType === "SELECT" || field.fieldType === "COLOR") {
+          return (
+            <div className="space-y-2" key={field.id}>
+              <Label>{field.label}</Label>
+              <Select value={fieldValue || "__none__"} onValueChange={(v) => setFieldValue(v === "__none__" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Seleccionar" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Sin valor</SelectItem>
+                  {options.map((opt: any) => <SelectItem key={opt.value} value={String(opt.value)}>{opt.label || opt.value}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+          );
+        }
+
+        if (field.fieldType === "MULTISELECT") {
+          const arr = Array.isArray(fieldValue) ? fieldValue : [];
+          return (
+            <div className="space-y-2" key={field.id}>
+              <Label>{field.label}</Label>
+              <div className="flex flex-wrap gap-2">
+                {options.map((opt: any) => {
+                  const checked = arr.includes(opt.value);
+                  return <label key={opt.value} className="text-sm flex items-center gap-1"><Checkbox checked={checked} onCheckedChange={(v) => setFieldValue(v ? [...arr, opt.value] : arr.filter((x: any) => x !== opt.value))} />{opt.label || opt.value}</label>;
+                })}
+              </div>
+            </div>
+          );
+        }
+
+        if (field.fieldType === "BOOLEAN") {
+          return <label key={field.id} className="text-sm flex items-center gap-2"><Switch checked={Boolean(fieldValue)} onCheckedChange={(v) => setFieldValue(!!v)} />{field.label}</label>;
+        }
+
+        if (field.fieldType === "TEXTAREA") {
+          return (
+            <div className="space-y-2" key={field.id}>
+              <Label>{field.label}</Label>
+              <Textarea value={fieldValue || ""} onChange={(e) => setFieldValue(e.target.value)} rows={3} />
+            </div>
+          );
+        }
+
+        const inputType = field.fieldType === "NUMBER" || field.fieldType === "DECIMAL" ? "number" : field.fieldType === "DATE" ? "date" : "text";
+        return (
+          <div className="space-y-2" key={field.id}>
+            <Label>{field.label}</Label>
+            <Input type={inputType} value={fieldValue ?? ""} onChange={(e) => setFieldValue(e.target.value)} required={field.required} />
+          </div>
+        );
+      })}
+
       <Button type="submit" className="w-full">{submitText}</Button>
     </form>
   );
