@@ -21,6 +21,9 @@ import { evaluatePassword } from "../services/password-policy";
 import { setPasswordWeakFlag } from "../services/password-weak-cache";
 import { isMailerConfigured, sendMail } from "../services/mailer/gmailMailer";
 import { buildPasswordResetUrl, consumePasswordResetToken, issuePasswordResetToken, validatePasswordResetToken } from "../services/password-recovery";
+import { randomUUID } from "crypto";
+import { userGoogleConnections } from "@shared/schema";
+import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken } from "../services/google-oauth";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -50,6 +53,11 @@ const forgotPasswordSchema = z.object({
 const resetPasswordSchema = z.object({
   token: z.string().trim().min(20).max(300),
   newPassword: z.string().min(6).max(120),
+});
+
+
+const googleStartSchema = z.object({
+  tenantCode: z.string().trim().min(2).max(40),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -490,6 +498,121 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Datos inválidos", code: "SUPERAUTH_INVALID_INPUT", details: err.errors });
       }
       res.status(500).json({ error: "No se pudo iniciar sesión", code: "SUPERAUTH_ERROR" });
+    }
+  });
+
+
+
+  app.get("/api/auth/google/start", async (req, res) => {
+    try {
+      const { tenantCode } = googleStartSchema.parse(req.query || {});
+      const tenant = await storage.getTenantByCode(tenantCode);
+      if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
+        return res.status(400).json({ error: "No encontramos un negocio activo para ese código." });
+      }
+      const authUrl = buildGoogleAuthUrl({
+        tenantId: tenant.id,
+        tenantCode: tenant.code,
+        intent: "login",
+        nonce: randomUUID(),
+      });
+      return res.json({ url: authUrl });
+    } catch (err: any) {
+      return res.status(400).json({ error: "No pudimos iniciar Google Sign-In." });
+    }
+  });
+
+  app.get("/api/auth/google/callback", async (req, res) => {
+    const emit = (payload: Record<string, unknown>) => {
+      const safe = JSON.stringify(payload).replace(/</g, "\u003c");
+      return res.status(200).send(`<!doctype html><html><body><script>
+        (function(){
+          const data = ${safe};
+          if (window.opener) {
+            window.opener.postMessage({ type: 'orbia-google-auth', ...data }, window.location.origin);
+            window.close();
+          } else {
+            document.body.innerText = data.message || 'Podés cerrar esta ventana.';
+          }
+        })();
+      </script></body></html>`);
+    };
+
+    try {
+      const code = String(req.query.code || "");
+      const state = decodeState(String(req.query.state || ""));
+      if (!code || !state) return emit({ ok: false, message: "La autorización de Google no fue válida." });
+      const tenant = await storage.getTenantById(state.tenantId);
+      if (!tenant || tenant.code !== state.tenantCode) return emit({ ok: false, message: "El negocio ya no está disponible." });
+
+      const tokenData = await exchangeGoogleCode(code);
+      const profile = await fetchGoogleProfile(tokenData.accessToken);
+
+      if (state.intent === "login") {
+        let user = await storage.getUserByEmail(profile.email, tenant.id);
+        if (!user) {
+          const password = await hashPassword(randomUUID());
+          user = await storage.createUser({
+            tenantId: tenant.id,
+            email: profile.email,
+            password,
+            fullName: profile.name || profile.email,
+            role: "admin",
+            scope: "TENANT",
+            branchId: null,
+            isActive: true,
+            isSuperAdmin: false,
+            avatarUrl: profile.picture || null,
+            avatarUpdatedAt: profile.picture ? new Date() : null,
+            tokenInvalidBefore: null,
+          });
+        }
+        const now = new Date();
+        const expires = tokenData.expiresIn > 0 ? new Date(now.getTime() + tokenData.expiresIn * 1000) : null;
+        const existing = await db.select().from(userGoogleConnections).where(eq(userGoogleConnections.userId, user.id)).limit(1);
+        const values = {
+          tenantId: tenant.id,
+          userId: user.id,
+          googleUserId: profile.sub,
+          googleEmail: profile.email,
+          encryptedRefreshToken: encryptGoogleToken(tokenData.refreshToken),
+          encryptedAccessToken: encryptGoogleToken(tokenData.accessToken),
+          accessTokenExpiresAt: expires,
+          scopes: tokenData.scope,
+          updatedAt: now,
+          isActive: true,
+        };
+        if (existing[0]) {
+          await db.update(userGoogleConnections).set(values).where(eq(userGoogleConnections.id, existing[0].id));
+        } else {
+          await db.insert(userGoogleConnections).values(values as any);
+        }
+
+        const jwt = generateToken({
+          userId: user.id,
+          email: user.email,
+          role: user.role,
+          tenantId: tenant.id,
+          isSuperAdmin: false,
+          branchId: user.branchId,
+          scope: user.scope || "TENANT",
+        });
+        return emit({ ok: true, mode: "login", token: jwt, user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          tenantId: tenant.id,
+          isSuperAdmin: false,
+          branchId: user.branchId,
+          scope: user.scope || "TENANT",
+          avatarUrl: user.avatarUrl || null,
+        }, message: "Cuenta de Google conectada correctamente." });
+      }
+
+      return emit({ ok: false, message: "Flujo no soportado en este endpoint." });
+    } catch (err: any) {
+      return emit({ ok: false, message: "No pudimos completar el acceso con Google." });
     }
   });
 

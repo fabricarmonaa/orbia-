@@ -31,7 +31,7 @@ import { registerAiRoutes } from "./ai";
 import { registerPublicRoutes } from "./public";
 import { registerAnalyticsRoutes } from "./analytics";
 import { registerProviderRoutes } from "./providers";
-import { registerAgendaRoutes } from "./agenda";
+import { registerGoogleCalendarRoutes } from "./google-calendar";
 import { registerNotesRoutes } from "./notes";
 import { registerWhatsappRoutes } from "./whatsapp";
 
@@ -71,7 +71,7 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerOrderPresetRoutes(app);
   registerAttachmentRoutes(app);
   registerProviderRoutes(app);
-  registerAgendaRoutes(app);
+  registerGoogleCalendarRoutes(app);
   registerNotesRoutes(app);
   registerWhatsappRoutes(app);
   return httpServer;
