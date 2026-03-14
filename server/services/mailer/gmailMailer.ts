@@ -12,6 +12,14 @@ function extractEmail(value?: string | null) {
   return (match?.[1] || value).trim();
 }
 
+function maskEmail(value?: string | null) {
+  const email = extractEmail(value);
+  const [name, domain] = email.split("@");
+  if (!name || !domain) return "<invalid-email>";
+  const visible = name.length <= 2 ? `${name[0] || "*"}*` : `${name.slice(0, 2)}***`;
+  return `${visible}@${domain}`;
+}
+
 function toBase64Url(input: string) {
   return Buffer.from(input, "utf-8")
     .toString("base64")
@@ -64,6 +72,19 @@ function hasGmailOauth() {
   );
 }
 
+function logMailer(level: "info" | "warn" | "error", message: string, extra: Record<string, unknown> = {}) {
+  const payload = { scope: "mailer.gmail", ...extra };
+  if (level === "error") {
+    console.error(`[mailer] ${message}`, payload);
+    return;
+  }
+  if (level === "warn") {
+    console.warn(`[mailer] ${message}`, payload);
+    return;
+  }
+  console.log(`[mailer] ${message}`, payload);
+}
+
 export function isMailerConfigured() {
   return hasGmailOauth();
 }
@@ -74,10 +95,17 @@ async function getAccessToken() {
   const refreshToken = process.env.GMAIL_OAUTH_REFRESH_TOKEN;
 
   if (!clientId || !clientSecret || !refreshToken) {
+    logMailer("warn", "OAuth2 incompleto", {
+      hasClientId: !!clientId,
+      hasClientSecret: !!clientSecret,
+      hasRefreshToken: !!refreshToken,
+    });
     const err = new Error("Mailer no configurado");
     (err as any).code = "MAILER_NOT_CONFIGURED";
     throw err;
   }
+
+  logMailer("info", "Solicitando access token OAuth2", { clientIdPrefix: `${clientId.slice(0, 10)}...` });
 
   const body = new URLSearchParams({
     client_id: clientId,
@@ -94,17 +122,30 @@ async function getAccessToken() {
 
   if (!resp.ok) {
     const details = await resp.text();
+    logMailer("error", "Error obteniendo access token OAuth2", {
+      status: resp.status,
+      details: details.slice(0, 300),
+    });
     const err = new Error(`No se pudo obtener access token Gmail: ${details.slice(0, 300)}`);
     (err as any).code = "MAILER_AUTH_ERROR";
     throw err;
   }
 
-  const data = await resp.json() as { access_token: string };
+  const data = await resp.json() as { access_token: string; expires_in?: number };
+  logMailer("info", "Access token obtenido", { expiresInSec: data.expires_in || null });
   return data.access_token;
 }
 
 export async function sendMail(input: SendMailInput) {
   if (!hasGmailOauth()) {
+    logMailer("warn", "sendMail abortado: mailer no configurado", {
+      hasClientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
+      hasClientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
+      hasRefreshToken: !!process.env.GMAIL_OAUTH_REFRESH_TOKEN,
+      hasFrom: !!process.env.GMAIL_FROM,
+      to: maskEmail(input.to),
+      subject: input.subject,
+    });
     const err = new Error("Mailer no configurado para Gmail OAuth2");
     (err as any).code = "MAILER_NOT_CONFIGURED";
     throw err;
@@ -113,6 +154,13 @@ export async function sendMail(input: SendMailInput) {
   const from = process.env.GMAIL_FROM!;
   const fromEmail = extractEmail(from);
   const replyTo = input.replyTo || process.env.GMAIL_REPLY_TO || undefined;
+
+  logMailer("info", "Iniciando envío de correo", {
+    to: maskEmail(input.to),
+    from: maskEmail(fromEmail),
+    replyTo: replyTo ? maskEmail(replyTo) : null,
+    subject: input.subject,
+  });
 
   const mime = buildMime({
     from,
@@ -135,10 +183,24 @@ export async function sendMail(input: SendMailInput) {
 
   if (!resp.ok) {
     const details = await resp.text();
+    logMailer("error", "Error enviando correo por Gmail API", {
+      status: resp.status,
+      to: maskEmail(input.to),
+      from: maskEmail(fromEmail),
+      details: details.slice(0, 500),
+    });
     const err = new Error(`Error enviando correo Gmail: ${details.slice(0, 500)}`);
     (err as any).code = "MAIL_SEND_ERROR";
     throw err;
   }
 
-  return resp.json();
+  const data = await resp.json() as { id?: string; threadId?: string };
+  logMailer("info", "Correo enviado correctamente", {
+    to: maskEmail(input.to),
+    from: maskEmail(fromEmail),
+    gmailMessageId: data.id || null,
+    gmailThreadId: data.threadId || null,
+  });
+
+  return data;
 }

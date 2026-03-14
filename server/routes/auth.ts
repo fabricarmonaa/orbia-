@@ -161,13 +161,35 @@ export function registerAuthRoutes(app: Express) {
     try {
       const { tenantCode, email } = forgotPasswordSchema.parse(req.body || {});
       const normalizedEmail = email.trim().toLowerCase();
-      const tenant = await storage.getTenantByCode(tenantCode);
+      const ip = getClientIp(req);
       const genericResponse = {
         ok: true,
         message: "Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña.",
       };
 
+      if (!isMailerConfigured()) {
+        console.error("[auth:forgot-password] mailer no configurado", {
+          requestId: req.requestId,
+          tenantCode,
+          hasClientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
+          hasClientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
+          hasRefreshToken: !!process.env.GMAIL_OAUTH_REFRESH_TOKEN,
+          hasFrom: !!process.env.GMAIL_FROM,
+        });
+        return res.status(503).json({ error: "El servicio de correo no está disponible", code: "MAILER_NOT_CONFIGURED" });
+      }
+
+      const tenant = await storage.getTenantByCode(tenantCode);
       if (!tenant || tenant.deletedAt || tenant.isBlocked || !tenant.isActive) {
+        console.warn("[auth:forgot-password] solicitud omitida por tenant inválido/inactivo", {
+          requestId: req.requestId,
+          tenantCode,
+          email: normalizedEmail,
+          tenantFound: !!tenant,
+          tenantDeleted: !!tenant?.deletedAt,
+          tenantBlocked: !!tenant?.isBlocked,
+          tenantActive: !!tenant?.isActive,
+        });
         return res.json(genericResponse);
       }
 
@@ -178,15 +200,27 @@ export function registerAuthRoutes(app: Express) {
         .limit(1);
 
       if (!user || !user.isActive) {
+        console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
+          requestId: req.requestId,
+          tenantId: tenant.id,
+          tenantCode,
+          email: normalizedEmail,
+          userFound: !!user,
+          userActive: !!user?.isActive,
+        });
         return res.json(genericResponse);
       }
 
-      if (!isMailerConfigured()) {
-        return res.json(genericResponse);
-      }
+      console.log("[auth:forgot-password] emitiendo token y enviando mail", {
+        requestId: req.requestId,
+        tenantId: tenant.id,
+        userId: user.id,
+        email: normalizedEmail,
+        ip,
+      });
 
       const { rawToken, expiresAt } = await issuePasswordResetToken(user.id, {
-        ip: getClientIp(req),
+        ip,
         userAgent: req.headers["user-agent"] || null,
       });
 
@@ -213,12 +247,33 @@ export function registerAuthRoutes(app: Express) {
         text: `Recibimos una solicitud para restablecer tu contraseña en Orbia. Si fuiste vos, abrí este enlace: ${resetUrl}. Vence en ${ttlMinutes} minutos y se puede usar una sola vez. Si no fuiste vos, ignorá este mensaje.`,
       });
 
-      return res.json(genericResponse);
+      console.log("[auth:forgot-password] correo enviado", {
+        requestId: req.requestId,
+        tenantId: tenant.id,
+        userId: user.id,
+        email: normalizedEmail,
+        expiresAt: expiresAt.toISOString(),
+      });
+
+      await storage.createAuditLog({
+        tenantId: tenant.id,
+        userId: user.id,
+        action: "forgot_password_email_sent",
+        entityType: "auth",
+        metadata: { email: normalizedEmail, expiresAt: expiresAt.toISOString() },
+      }).catch(() => undefined);
+
+      return res.json({ ...genericResponse, mailSent: true });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "AUTH_FORGOT_INVALID", details: err.errors });
       }
-      return res.status(500).json({ error: "No se pudo procesar la solicitud", code: "AUTH_FORGOT_ERROR" });
+      console.error("[auth:forgot-password] error enviando recuperación", {
+        requestId: req.requestId,
+        code: err?.code || null,
+        message: err?.message || "AUTH_FORGOT_ERROR",
+      });
+      return res.status(502).json({ error: "No se pudo enviar el correo de recuperación", code: err?.code || "AUTH_FORGOT_ERROR" });
     }
   });
 
