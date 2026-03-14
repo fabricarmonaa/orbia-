@@ -5,7 +5,7 @@ COPY package*.json ./
 RUN npm ci
 
 COPY . .
-# Keep dev deps in the image because we run drizzle-kit at container startup (db:push)
+## Build app artifacts
 RUN npm run build
 
 FROM node:20-alpine AS runtime
@@ -20,11 +20,16 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/uploads ./uploads
+COPY --from=build /app/migrations ./migrations
+COPY --from=build /app/script ./script
 
-# drizzle-kit config + schema files (needed for db:push at runtime)
+## Runtime migration scripts/files (used by npm run migrations:run at startup)
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
 COPY --from=build /app/shared ./shared
 COPY --from=build /app/script/docker-entrypoint-web.sh ./docker-entrypoint-web.sh
+
+# Normalize line endings in case host checkout used CRLF (Windows)
+RUN sed -i 's/\r$//' ./docker-entrypoint-web.sh && chmod +x ./docker-entrypoint-web.sh
 
 EXPOSE 5000
 CMD ["sh", "docker-entrypoint-web.sh"]

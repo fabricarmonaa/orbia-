@@ -46,17 +46,33 @@ CREATE TABLE IF NOT EXISTS order_field_values (
 CREATE INDEX IF NOT EXISTS idx_order_field_values_tenant_order
   ON order_field_values (tenant_id, order_id);
 
+-- Normalize legacy values before enforcing field_type constraint.
+UPDATE order_field_definitions
+SET field_type = CASE
+  WHEN field_type IS NULL OR btrim(field_type) = '' THEN 'TEXT'
+  WHEN upper(btrim(field_type)) IN ('BOOL', 'BOOLEAN', 'CHECK', 'CHECKBOX') THEN 'CHECKBOX'
+  WHEN upper(btrim(field_type)) IN ('INT', 'INTEGER', 'DECIMAL', 'FLOAT', 'DOUBLE', 'NUMERIC', 'NUMBER') THEN 'NUMBER'
+  WHEN upper(btrim(field_type)) IN ('TEXTLONG', 'LONG_TEXT', 'TEXT_LONG') THEN 'TEXT_LONG'
+  WHEN upper(btrim(field_type)) IN ('DATETIME', 'DATE_TIME') THEN 'DATETIME'
+  WHEN upper(btrim(field_type)) IN ('TEXT', 'TEXT_LONG', 'NUMBER', 'FILE', 'CHECKBOX', 'SELECT', 'DATE', 'TIME') THEN upper(btrim(field_type))
+  ELSE 'TEXT'
+END;
+
+-- Ensure the check constraint is aligned with supported types.
 DO $$
 BEGIN
-  IF NOT EXISTS (
+  IF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'ck_order_field_definitions_field_type'
       AND conrelid = 'order_field_definitions'::regclass
   ) THEN
     ALTER TABLE order_field_definitions
-      ADD CONSTRAINT ck_order_field_definitions_field_type
-      CHECK (field_type IN ('TEXT', 'NUMBER', 'FILE'));
+      DROP CONSTRAINT ck_order_field_definitions_field_type;
   END IF;
+
+  ALTER TABLE order_field_definitions
+    ADD CONSTRAINT ck_order_field_definitions_field_type
+    CHECK (field_type IN ('TEXT', 'TEXT_LONG', 'NUMBER', 'FILE', 'CHECKBOX', 'SELECT', 'DATE', 'TIME', 'DATETIME'));
 END $$;
 
 DO $$
@@ -71,20 +87,7 @@ BEGIN
       CHECK (
         field_type <> 'FILE'
         OR NOT (config ? 'allowedMime')
-        OR NOT EXISTS (
-          SELECT 1
-          FROM jsonb_array_elements_text(config->'allowedMime') AS elem(mime)
-          WHERE elem.mime NOT IN (
-            'application/pdf',
-            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            'image/jpg',
-            'image/jpeg',
-            'image/png',
-            'image/pjpeg',
-            'image/jfif'
-          )
-        )
+        OR jsonb_typeof(config->'allowedMime') = 'array'
       );
   END IF;
 END $$;

@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   generateToken,
   comparePassword,
+  hashPassword,
   verifyToken,
   isIpAllowedForSuperAdmin,
   getClientIp,
@@ -12,12 +13,14 @@ import {
 import { createRateLimiter } from "../middleware/rate-limit";
 import { strictLoginLimiter } from "../middleware/http-rate-limit";
 import { db } from "../db";
-import { superAdminAuditLogs, superAdminTotp } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { passwordResetTokens, superAdminAuditLogs, superAdminTotp, users } from "@shared/schema";
+import { and, eq, isNull } from "drizzle-orm";
 import { verify as verifyTotp } from "otplib";
 import { sanitizeShortText } from "../security/sanitize";
 import { evaluatePassword } from "../services/password-policy";
 import { setPasswordWeakFlag } from "../services/password-weak-cache";
+import { isMailerConfigured, sendMail } from "../services/mailer/gmailMailer";
+import { buildPasswordResetUrl, consumePasswordResetToken, issuePasswordResetToken, validatePasswordResetToken } from "../services/password-recovery";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -37,6 +40,16 @@ const tenantLoginSchema = z.object({
   tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
   password: z.string().min(1).max(256),
+});
+
+const forgotPasswordSchema = z.object({
+  tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
+  email: z.string().trim().email().max(120),
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().trim().min(20).max(300),
+  newPassword: z.string().min(6).max(120),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -69,6 +82,22 @@ const tenantLoginLimiter = createRateLimiter({
       metadata: { route: "/api/auth/login", ip: req.ip, retryAfterSec },
     }).catch(() => undefined);
   },
+});
+
+const forgotPasswordLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: parseInt(process.env.AUTH_FORGOT_LIMIT || "5", 10),
+  keyGenerator: (req) => `auth-forgot:${req.ip}:${String(req.body?.email || "").toLowerCase()}`,
+  errorMessage: "Demasiados intentos. Intentá nuevamente en unos minutos.",
+  code: "RATE_LIMITED",
+});
+
+const resetPasswordLimiter = createRateLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: parseInt(process.env.AUTH_RESET_LIMIT || "10", 10),
+  keyGenerator: (req) => `auth-reset:${req.ip}`,
+  errorMessage: "Demasiados intentos. Intentá nuevamente en unos minutos.",
+  code: "RATE_LIMITED",
 });
 
 function markFailure(map: Map<string, LockState>, key: string) {
@@ -128,6 +157,193 @@ async function logSuperSecurity(superAdminId: number | null, action: string, met
 
 
 export function registerAuthRoutes(app: Express) {
+  app.post("/api/auth/forgot-password", forgotPasswordLimiter, async (req, res) => {
+    try {
+      const { tenantCode, email } = forgotPasswordSchema.parse(req.body || {});
+      const normalizedEmail = email.trim().toLowerCase();
+      const ip = getClientIp(req);
+      const genericResponse = {
+        ok: true,
+        message: "Si el correo está registrado, te enviamos un enlace para restablecer tu contraseña.",
+      };
+
+      if (!isMailerConfigured()) {
+        console.error("[auth:forgot-password] mailer no configurado", {
+          requestId: req.requestId,
+          tenantCode,
+          hasClientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
+          hasClientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
+          hasRefreshToken: !!process.env.GMAIL_OAUTH_REFRESH_TOKEN,
+          hasFrom: !!process.env.GMAIL_FROM,
+        });
+        return res.status(503).json({ error: "El servicio de correo no está disponible", code: "MAILER_NOT_CONFIGURED" });
+      }
+
+      const tenant = await storage.getTenantByCode(tenantCode);
+      if (!tenant || tenant.deletedAt || tenant.isBlocked || !tenant.isActive) {
+        console.warn("[auth:forgot-password] solicitud omitida por tenant inválido/inactivo", {
+          requestId: req.requestId,
+          tenantCode,
+          email: normalizedEmail,
+          tenantFound: !!tenant,
+          tenantDeleted: !!tenant?.deletedAt,
+          tenantBlocked: !!tenant?.isBlocked,
+          tenantActive: !!tenant?.isActive,
+        });
+        return res.json(genericResponse);
+      }
+
+      const [user] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.tenantId, tenant.id), eq(users.email, normalizedEmail), isNull(users.deletedAt)))
+        .limit(1);
+
+      if (!user || !user.isActive) {
+        console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
+          requestId: req.requestId,
+          tenantId: tenant.id,
+          tenantCode,
+          email: normalizedEmail,
+          userFound: !!user,
+          userActive: !!user?.isActive,
+        });
+        return res.json(genericResponse);
+      }
+
+      console.log("[auth:forgot-password] emitiendo token y enviando mail", {
+        requestId: req.requestId,
+        tenantId: tenant.id,
+        userId: user.id,
+        email: normalizedEmail,
+        ip,
+      });
+
+      const { rawToken, expiresAt } = await issuePasswordResetToken({
+        tenantId: tenant.id,
+        userId: user.id,
+        email: user.email,
+        ip,
+        userAgent: req.headers["user-agent"] || null,
+      });
+
+      const resetUrl = buildPasswordResetUrl(rawToken);
+      const ttlMinutes = Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 60000));
+      await sendMail({
+        to: user.email,
+        subject: `Restablecer contraseña - ${tenant.name}`,
+        html: `
+          <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111;max-width:620px;margin:0 auto;padding:16px">
+            <h2 style="margin:0 0 12px">Restablecer contraseña</h2>
+            <p>Recibimos una solicitud para restablecer la contraseña de tu cuenta en <b>Orbia</b>.</p>
+            <p>Si fuiste vos, hacé clic en el siguiente botón:</p>
+            <p style="margin:22px 0">
+              <a href="${resetUrl}" style="background:#111827;color:#fff;padding:12px 16px;border-radius:8px;text-decoration:none;display:inline-block">Restablecer contraseña</a>
+            </p>
+            <p>Este enlace vence en <b>${ttlMinutes} minutos</b> y puede usarse una sola vez.</p>
+            <p>Si no solicitaste este cambio, podés ignorar este correo.</p>
+            <hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0"/>
+            <p style="font-size:12px;color:#6b7280">Enlace directo: ${resetUrl}</p>
+            <p style="font-size:12px;color:#6b7280">Generado por Orbia</p>
+          </div>
+        `,
+        text: `Recibimos una solicitud para restablecer tu contraseña en Orbia. Si fuiste vos, abrí este enlace: ${resetUrl}. Vence en ${ttlMinutes} minutos y se puede usar una sola vez. Si no fuiste vos, ignorá este mensaje.`,
+      });
+
+      console.log("[auth:forgot-password] correo enviado", {
+        requestId: req.requestId,
+        tenantId: tenant.id,
+        userId: user.id,
+        email: normalizedEmail,
+        expiresAt: expiresAt.toISOString(),
+      });
+
+      await storage.createAuditLog({
+        tenantId: tenant.id,
+        userId: user.id,
+        action: "forgot_password_email_sent",
+        entityType: "auth",
+        metadata: { email: normalizedEmail, expiresAt: expiresAt.toISOString() },
+      }).catch(() => undefined);
+
+      return res.json({ ...genericResponse, mailSent: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "AUTH_FORGOT_INVALID", details: err.errors });
+      }
+      console.error("[auth:forgot-password] error enviando recuperación", {
+        requestId: req.requestId,
+        code: err?.code || null,
+        message: err?.message || "AUTH_FORGOT_ERROR",
+      });
+      return res.status(502).json({ error: "No se pudo enviar el correo de recuperación", code: err?.code || "AUTH_FORGOT_ERROR" });
+    }
+  });
+
+  app.get("/api/auth/reset-password/validate", async (req, res) => {
+    try {
+      const token = z.string().trim().min(20).max(300).parse(req.query.token);
+      const validRow = await validatePasswordResetToken(token);
+      if (!validRow) {
+        return res.status(400).json({ valid: false, error: "El enlace es inválido o venció", code: "RESET_TOKEN_INVALID" });
+      }
+      return res.json({ valid: true });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ valid: false, error: "Token inválido", code: "RESET_TOKEN_INVALID" });
+      }
+      return res.status(500).json({ valid: false, error: "No se pudo validar el enlace", code: "RESET_TOKEN_VALIDATE_ERROR" });
+    }
+  });
+
+  app.post("/api/auth/reset-password", resetPasswordLimiter, async (req, res) => {
+    try {
+      const { token, newPassword } = resetPasswordSchema.parse(req.body || {});
+      const tokenRow = await validatePasswordResetToken(token);
+      if (!tokenRow) {
+        return res.status(400).json({ error: "El enlace es inválido o venció", code: "RESET_TOKEN_INVALID" });
+      }
+
+      const tenant = await storage.getTenantById(tokenRow.tenantId!);
+      const evaluation = evaluatePassword(newPassword, {
+        tenantCode: tenant?.code || null,
+        tenantName: tenant?.name || null,
+        email: tokenRow.email,
+      });
+      if (!evaluation.isValid) {
+        return res.status(400).json({
+          error: "La nueva contraseña no cumple los requisitos mínimos",
+          code: "RESET_PASSWORD_WEAK",
+          warnings: evaluation.warnings,
+          requirements: evaluation.requirements,
+        });
+      }
+
+      const consumed = await consumePasswordResetToken(tokenRow.tokenId);
+      if (!consumed) {
+        return res.status(400).json({ error: "El enlace ya fue utilizado o venció", code: "RESET_TOKEN_ALREADY_USED" });
+      }
+
+      const hashedPassword = await hashPassword(newPassword);
+      await storage.updateUser(tokenRow.userId, tokenRow.tenantId!, {
+        password: hashedPassword,
+        tokenInvalidBefore: new Date() as any,
+      });
+
+      await db
+        .update(passwordResetTokens)
+        .set({ usedAt: new Date() })
+        .where(and(eq(passwordResetTokens.userId, tokenRow.userId), isNull(passwordResetTokens.usedAt)));
+
+      return res.json({ ok: true, message: "Contraseña actualizada correctamente" });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) {
+        return res.status(400).json({ error: "Datos inválidos", code: "AUTH_RESET_INVALID", details: err.errors });
+      }
+      return res.status(500).json({ error: "No se pudo restablecer la contraseña", code: "AUTH_RESET_ERROR" });
+    }
+  });
+
   app.post("/api/auth/logout", async (req, res) => {
     try {
       const authHeader = req.headers.authorization;

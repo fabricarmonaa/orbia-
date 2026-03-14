@@ -24,6 +24,13 @@ export default function ReportsPage() {
   const [customFrom, setCustomFrom] = useState("");
   const [customTo, setCustomTo] = useState("");
   const [exporting, setExporting] = useState<"pdf" | "xlsx" | null>(null);
+  const [pdfSections, setPdfSections] = useState({
+    includeSummary: true,
+    includeTopProducts: true,
+    includeLowProducts: true,
+    includeCategories: true,
+    includeAnalysis: true,
+  });
 
   const query = useMemo(() => {
     const q = new URLSearchParams();
@@ -56,7 +63,7 @@ export default function ReportsPage() {
       const res = await apiRequest("POST", "/api/reports/export", {
         type: "overview",
         format,
-        params: { ...(period === "custom" && customFrom && customTo ? { from: customFrom, to: customTo } : {}), period },
+        params: { ...(period === "custom" && customFrom && customTo ? { from: customFrom, to: customTo } : {}), period, ...(format === "pdf" ? pdfSections : {}) },
       });
       const body = await res.json();
       if (body?.url) window.open(body.url, "_blank");
@@ -76,6 +83,12 @@ export default function ReportsPage() {
   const trend = overview?.movementByWeekday || [];
 
   const concentrationPct = Number(overview?.summary?.concentrationPct || 0);
+  const ordersCount = Number(overview?.summary?.ordersCount || 0);
+  const conversionRate = ordersCount > 0 ? (salesCount / ordersCount) * 100 : 0;
+  const strongestCategory = categories.length ? categories[0] : null;
+  const weakestCategory = categories.length ? categories[categories.length - 1] : null;
+  const bestDay = trend.length ? [...trend].sort((a: any, b: any) => Number(b.count || 0) - Number(a.count || 0))[0] : null;
+
 
   return (
     <div className="space-y-6">
@@ -119,16 +132,40 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader><CardTitle className="text-sm">Contenido del PDF</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+          {Object.entries({
+            includeSummary: "Resumen ejecutivo",
+            includeTopProducts: "Productos más vendidos",
+            includeLowProducts: "Productos menos vendidos",
+            includeCategories: "Categorías",
+            includeAnalysis: "Análisis",
+          }).map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={(pdfSections as any)[key]}
+                onChange={(e) => setPdfSections((prev) => ({ ...prev, [key]: e.target.checked }))}
+              />
+              {label}
+            </label>
+          ))}
+          <p className="text-xs text-muted-foreground md:col-span-2">Estas opciones aplican a la exportación PDF del reporte general.</p>
+        </CardContent>
+      </Card>
+
       {isError && <Card><CardContent className="pt-6 text-red-600 flex gap-2"><AlertCircle className="h-4 w-4" />No se pudo cargar el reporte.</CardContent></Card>}
       {isLoading && <Card><CardContent className="pt-6 text-sm text-muted-foreground">Cargando reporte...</CardContent></Card>}
 
       {!isLoading && !isError && (
         <>
-          <div className="grid gap-3 grid-cols-1 md:grid-cols-4">
+          <div className="grid gap-3 grid-cols-1 md:grid-cols-5">
             <Card><CardHeader><CardTitle className="text-sm">Ingresos</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{money(salesTotal)}</CardContent></Card>
             <Card><CardHeader><CardTitle className="text-sm">Ventas/Pedidos</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{salesCount}</CardContent></Card>
             <Card><CardHeader><CardTitle className="text-sm">Ticket promedio</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{money(avgTicket)}</CardContent></Card>
             <Card><CardHeader><CardTitle className="text-sm">Vs período anterior</CardTitle></CardHeader><CardContent className={`text-2xl font-semibold ${comparison < 0 ? "text-red-600" : "text-green-600"}`}>{comparison.toFixed(1)}%</CardContent></Card>
+            <Card><CardHeader><CardTitle className="text-sm">Conversión pedido → venta</CardTitle></CardHeader><CardContent className="text-2xl font-semibold">{ordersCount > 0 ? `${conversionRate.toFixed(1)}%` : "-"}</CardContent></Card>
           </div>
 
           <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
@@ -138,7 +175,7 @@ export default function ReportsPage() {
 
           <div className="grid gap-3 grid-cols-1 lg:grid-cols-2">
             <Card><CardHeader><CardTitle>Ingresos por categoría</CardTitle></CardHeader><CardContent className="space-y-2">{categories.length ? categories.map((c: any) => <div key={c.category} className="flex justify-between text-sm"><span>{c.category}</span><span>{money(c.revenue)}</span></div>) : <p className="text-sm text-muted-foreground">Sin categorías registradas.</p>}</CardContent></Card>
-            <Card><CardHeader><CardTitle>Evolución temporal</CardTitle></CardHeader><CardContent className="space-y-2">{trend.length ? trend.map((t: any) => <div key={t.dow} className="flex justify-between text-sm"><span>{t.dow}</span><span>{t.count} movimientos</span></div>) : <p className="text-sm text-muted-foreground">Sin evolución para el período.</p>}</CardContent></Card>
+            <Card><CardHeader><CardTitle>Comportamiento por día</CardTitle></CardHeader><CardContent className="space-y-2">{trend.length ? trend.map((t: any) => <div key={t.dow} className="flex justify-between text-sm"><span>{t.dow}</span><span>{t.count} ventas</span></div>) : <p className="text-sm text-muted-foreground">Sin evolución para el período.</p>}</CardContent></Card>
           </div>
 
           <Card>
@@ -147,6 +184,10 @@ export default function ReportsPage() {
               {comparison < 0 && <p>• Las ventas cayeron contra el período anterior ({comparison.toFixed(1)}%).</p>}
               {concentrationPct >= 60 && <p>• Hay concentración alta: el top 3 aporta {concentrationPct.toFixed(1)}% de ingresos.</p>}
               {lowProducts.length > 0 && <p>• {lowProducts.length} productos muestran baja rotación en el período.</p>}
+              {strongestCategory && <p>• Categoría más fuerte: <strong>{strongestCategory.category}</strong> ({money(strongestCategory.revenue)}).</p>}
+              {weakestCategory && categories.length > 1 && <p>• Categoría con menor aporte: <strong>{weakestCategory.category}</strong> ({money(weakestCategory.revenue)}).</p>}
+              {bestDay && <p>• Día con mayor movimiento: <strong>{bestDay.dow}</strong> ({bestDay.count} ventas).</p>}
+              {ordersCount > 0 && conversionRate < 70 && <p>• Conversión pedido → venta baja ({conversionRate.toFixed(1)}%). Revisá seguimiento de pedidos pendientes.</p>}
               {comparison >= 0 && concentrationPct < 60 && lowProducts.length === 0 && <p>Sin alertas relevantes para este período.</p>}
             </CardContent>
           </Card>

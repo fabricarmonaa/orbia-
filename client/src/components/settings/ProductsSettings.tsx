@@ -167,25 +167,35 @@ function FieldFormPanel({
   editingTypeWarning?: boolean;
 }) {
   const needsOptions = ["SELECT", "MULTISELECT", "COLOR"].includes(form.fieldType);
+
   return (
-    <form onSubmit={onSubmit} className="space-y-3">
+    <form onSubmit={onSubmit} className="space-y-5">
+      <div className="rounded-lg border bg-muted/20 p-3">
+        <p className="text-sm font-medium">1) Definí el dato que querés guardar</p>
+        <p className="text-xs text-muted-foreground mt-1">Pensá este campo como una pregunta que le vas a hacer al usuario al cargar o editar un producto.</p>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <div className="space-y-1">
-          <Label>Nombre visible</Label>
-          <Input required value={form.label} onChange={(e) => onChange({ ...form, label: e.target.value })} />
+          <Label>Nombre del dato</Label>
+          <Input required value={form.label} onChange={(e) => onChange({ ...form, label: e.target.value })} placeholder="Ej: Color principal" />
         </div>
+
         <div className="space-y-1">
-          <Label>Clave interna (slug)</Label>
+          <Label>Identificador interno</Label>
           <Input
             required
             value={form.fieldKey}
             onChange={(e) => onChange({ ...form, fieldKey: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })}
             placeholder="ej: color_principal"
           />
-          <p className="text-xs text-muted-foreground">Solo minúsculas, números y guión bajo</p>
+          <p className="text-xs text-muted-foreground">Se usa internamente. Solo minúsculas, números y guión bajo.</p>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <div className="space-y-1">
-          <Label>Tipo de campo</Label>
+          <Label>¿Qué tipo de respuesta esperás?</Label>
           <Select value={form.fieldType} onValueChange={(v) => onChange({ ...form, fieldType: v })}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
@@ -195,20 +205,10 @@ function FieldFormPanel({
             </SelectContent>
           </Select>
           {editingTypeWarning && (
-            <p className="text-xs text-amber-600">⚠ Cambiar el tipo está bloqueado si el campo ya tiene datos en productos.</p>
+            <p className="text-xs text-amber-600">Cambiar el tipo está bloqueado si el campo ya tiene datos en productos.</p>
           )}
         </div>
-        <div className="space-y-1">
-          <Label>Tipo de filtro</Label>
-          <Select value={form.filterType} onValueChange={(v) => onChange({ ...form, filterType: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {FILTER_TYPES.map((t) => (
-                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+
         <div className="space-y-1">
           <Label>Orden de aparición</Label>
           <Input
@@ -217,12 +217,26 @@ function FieldFormPanel({
             value={form.sortOrder}
             onChange={(e) => onChange({ ...form, sortOrder: Number(e.target.value) })}
           />
+          <p className="text-xs text-muted-foreground">0 aparece primero, luego 1, 2, 3...</p>
+        </div>
+
+        <div className="space-y-1">
+          <Label>¿Querés usarlo como filtro?</Label>
+          <Select value={form.filterType} onValueChange={(v) => onChange({ ...form, filterType: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {FILTER_TYPES.map((t) => (
+                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">Elegí cómo se filtra este dato en la vista de productos.</p>
         </div>
       </div>
 
       {needsOptions && (
         <div className="space-y-1">
-          <Label>Opciones (una por línea)</Label>
+          <Label>Opciones disponibles (una por línea)</Label>
           <textarea
             className="w-full min-h-[90px] rounded border p-2 text-sm bg-background"
             value={form.optionsRaw}
@@ -232,15 +246,20 @@ function FieldFormPanel({
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-y-2 gap-x-4 text-sm pt-1">
-        <label className="flex items-center gap-2"><Switch checked={form.required} onCheckedChange={(v) => onChange({ ...form, required: !!v })} />Obligatorio</label>
-        <label className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(v) => onChange({ ...form, isActive: !!v })} />Activo</label>
-        <label className="flex items-center gap-2"><Switch checked={form.isFilterable} onCheckedChange={(v) => onChange({ ...form, isFilterable: !!v })} />Usar como filtro</label>
-        <label className="flex items-center gap-2"><Switch checked={form.showInForm} onCheckedChange={(v) => onChange({ ...form, showInForm: !!v })} />En formulario</label>
-        <label className="flex items-center gap-2"><Switch checked={form.showInTable} onCheckedChange={(v) => onChange({ ...form, showInTable: !!v })} />En tabla/listado</label>
-        <label className="flex items-center gap-2"><Switch checked={form.showInDetail} onCheckedChange={(v) => onChange({ ...form, showInDetail: !!v })} />En detalle</label>
-        <label className="flex items-center gap-2"><Switch checked={form.showInExport} onCheckedChange={(v) => onChange({ ...form, showInExport: !!v })} />En exportación</label>
-        <label className="flex items-center gap-2"><Switch checked={form.showInDocument} onCheckedChange={(v) => onChange({ ...form, showInDocument: !!v })} />En documento</label>
+      <div className="rounded-lg border p-3 space-y-3">
+        <p className="text-sm font-medium">2) Elegí dónde querés mostrar este dato</p>
+        <p className="text-xs text-muted-foreground">Esto define dónde lo va a ver el equipo: al cargar, al revisar, en listados o en exportaciones.</p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-4 text-sm">
+          <label className="flex items-center gap-2"><Switch checked={form.required} onCheckedChange={(v) => onChange({ ...form, required: !!v })} />Dato obligatorio al guardar</label>
+          <label className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(v) => onChange({ ...form, isActive: !!v })} />Campo activo</label>
+          <label className="flex items-center gap-2"><Switch checked={form.isFilterable} onCheckedChange={(v) => onChange({ ...form, isFilterable: !!v })} />Disponible como filtro</label>
+          <label className="flex items-center gap-2"><Switch checked={form.showInForm} onCheckedChange={(v) => onChange({ ...form, showInForm: !!v })} />Mostrar al crear/editar producto</label>
+          <label className="flex items-center gap-2"><Switch checked={form.showInDetail} onCheckedChange={(v) => onChange({ ...form, showInDetail: !!v })} />Mostrar en la ficha de detalle</label>
+          <label className="flex items-center gap-2"><Switch checked={form.showInTable} onCheckedChange={(v) => onChange({ ...form, showInTable: !!v })} />Mostrar en el listado</label>
+          <label className="flex items-center gap-2"><Switch checked={form.showInExport} onCheckedChange={(v) => onChange({ ...form, showInExport: !!v })} />Incluir al exportar</label>
+          <label className="flex items-center gap-2"><Switch checked={form.showInDocument} onCheckedChange={(v) => onChange({ ...form, showInDocument: !!v })} />Incluir en documentos</label>
+        </div>
       </div>
 
       <Button type="submit" disabled={submitting}>
@@ -389,7 +408,7 @@ export function ProductsSettings() {
             </Button>
           </div>
           <p className="text-sm text-muted-foreground">
-            Definí campos extras para tus productos según el rubro de tu negocio (talle, color, material, etc).
+            Creá datos personalizados para adaptar Productos a tu negocio (talle, color, material, composición, etc).
           </p>
         </CardHeader>
         {createOpen && (
@@ -408,13 +427,13 @@ export function ProductsSettings() {
       {/* List of existing fields */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">Campos definidos</CardTitle>
+          <CardTitle className="text-base">Campos creados</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {loading ? (
             <p className="text-sm text-muted-foreground">Cargando...</p>
           ) : activeFields.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Sin campos personalizados. Creá el primero arriba.</p>
+            <p className="text-sm text-muted-foreground">Todavía no creaste campos personalizados. Empezá con “Nuevo campo”.</p>
           ) : (
             activeFields.map((f) => (
               <FieldRow
@@ -542,10 +561,10 @@ function FieldRow({
             {field.required && <Badge variant="outline" className="text-xs border-amber-400 text-amber-700">Obligatorio</Badge>}
           </div>
           <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
-            {field.config?.showInTable && <span>📋 Tabla</span>}
-            {field.config?.showInForm !== false && <span>📝 Formulario</span>}
-            {field.config?.showInDetail !== false && <span>🔍 Detalle</span>}
-            {field.config?.showInExport && <span>📤 Exportación</span>}
+            {field.config?.showInTable && <span>Listado</span>}
+            {field.config?.showInForm !== false && <span>Formulario</span>}
+            {field.config?.showInDetail !== false && <span>Detalle</span>}
+            {field.config?.showInExport && <span>Exportación</span>}
             {activeOpts.length > 0 && <span>{activeOpts.length} opciones</span>}
           </div>
         </div>

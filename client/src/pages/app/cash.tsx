@@ -115,6 +115,7 @@ export default function CashPage() {
     associatedCostType: "costo", // "costo" (resta) o "ingreso" (suma)
     impactNetProfit: true,
     expenseDefinitionId: "",
+    impactsCash: true,
   });
 
   const [newAdditionalFees, setNewAdditionalFees] = useState<ExtraFee[]>([]);
@@ -132,6 +133,7 @@ export default function CashPage() {
     category: "",
     description: "",
     method: "efectivo",
+    impactsCash: true,
   });
 
   const [openingAmount, setOpeningAmount] = useState("");
@@ -249,6 +251,7 @@ export default function CashPage() {
           newMovement.expenseDefinitionId && newMovement.expenseDefinitionId !== "__empty__"
             ? parseInt(newMovement.expenseDefinitionId)
             : null,
+        impactsCash: newMovement.impactsCash,
       });
       toast({ title: "Movimiento registrado" });
       setDialogOpen(false);
@@ -263,6 +266,7 @@ export default function CashPage() {
         associatedCostType: "costo",
         impactNetProfit: true,
         expenseDefinitionId: "",
+        impactsCash: true,
       });
       setNewAdditionalFees([]);
       fetchData();
@@ -310,6 +314,7 @@ export default function CashPage() {
         description: withPersistedExtraFees(finalDescription, fees),
         amount: finalAmount,
         associatedCost: finalAssociatedCost || null,
+        impactsCash: editForm.impactsCash,
       });
       toast({ title: "Movimiento actualizado" });
       setEditDialogOpen(false);
@@ -324,11 +329,13 @@ export default function CashPage() {
     ? movements.filter(m => m.sessionId === openSession.id)
     : (!canUseSessions ? movements.filter(m => m.createdAt && new Date(m.createdAt).toDateString() === new Date().toDateString()) : []);
 
-  const totalIncome = activeMovements
+  const impactingMovements = activeMovements.filter((m: any) => m.impactsCash !== false);
+
+  const totalIncome = impactingMovements
     .filter((m) => m.type === "ingreso")
     .reduce((acc, m) => acc + parseFloat(m.amount), 0);
 
-  const totalExpense = activeMovements
+  const totalExpense = impactingMovements
     .filter((m) => m.type === "egreso")
     .reduce((acc, m) => acc + parseFloat(m.amount), 0);
 
@@ -692,6 +699,19 @@ export default function CashPage() {
                           </div>
                         </div>
                         <div className="space-y-2">
+                          <Label>¿Este movimiento modifica el saldo de caja?</Label>
+                          <Select value={newMovement.impactsCash ? "yes" : "no"} onValueChange={(v) => setNewMovement({ ...newMovement, impactsCash: v === "yes" })}>
+                            <SelectTrigger>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="yes">Sí, impacta el total de caja</SelectItem>
+                              <SelectItem value="no">No, solo dejar registro administrativo</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-muted-foreground">Si elegís "No", el movimiento queda guardado pero no suma ni resta en el balance/cierre.</p>
+                        </div>
+                        <div className="space-y-2">
                           <Label>Descripción</Label>
                           <Input
                             placeholder="Ej: Pago de servicio de luz / Cobro mesa 4"
@@ -909,6 +929,18 @@ export default function CashPage() {
                   </Select>
                 </div>
                 <div className="space-y-2">
+                  <Label>¿Este movimiento modifica el saldo de caja?</Label>
+                  <Select value={editForm.impactsCash ? "yes" : "no"} onValueChange={(v) => setEditForm({ ...editForm, impactsCash: v === "yes" })}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="yes">Sí, impacta el total de caja</SelectItem>
+                      <SelectItem value="no">No, solo dejar registro administrativo</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
                   <Label>Descripción</Label>
                   <Input
                     value={editForm.description}
@@ -1048,6 +1080,7 @@ export default function CashPage() {
                           category: m.category || "",
                           description: extracted.cleanDescription || "",
                           method: m.method || "efectivo",
+                          impactsCash: (m as any).impactsCash !== false,
                         });
                         setEditAdditionalFees(otherFees);
                         setEditDialogOpen(true);
@@ -1076,6 +1109,11 @@ export default function CashPage() {
                                 )}
                                 {m.category && (
                                   <Badge variant="secondary" className="text-xs">{m.category}</Badge>
+                                )}
+                                {(m as any).impactsCash === false ? (
+                                  <Badge variant="outline" className="text-xs border-amber-500 text-amber-600">Solo registro (no impacta caja)</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="text-xs border-emerald-500 text-emerald-600">Impacta caja</Badge>
                                 )}
                                 {hasAssociatedCost && (
                                   <span className="text-[10px] bg-amber-500/10 text-amber-500 px-1.5 py-0.5 rounded ml-1 font-medium">
