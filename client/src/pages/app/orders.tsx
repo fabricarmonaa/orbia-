@@ -70,7 +70,6 @@ type OrderPresetField = {
   isSystemDefault: boolean;
   visibleInTracking: boolean;
   config?: { allowedExtensions?: string[] };
-  isActive?: boolean;
 };
 
 type OrderCustomFieldValue = {
@@ -118,13 +117,6 @@ export default function OrdersPage() {
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [presets, setPresets] = useState<OrderPreset[]>([]);
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
-  const [systemFieldVisibility, setSystemFieldVisibility] = useState<Record<string, boolean>>({
-    cliente: true,
-    telefono: true,
-    descripcion: true,
-    sena_pago: true,
-    valor_total: true,
-  });
   const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
 
@@ -193,14 +185,11 @@ export default function OrdersPage() {
         setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
         setPresetFields([]);
         setCustomFieldInputs({});
-        setSystemFieldVisibility({ cliente: true, telefono: true, descripcion: true, sena_pago: true, valor_total: true });
       }
     } catch {
       setPresets([]);
       setPresetFields([]);
       setCustomFieldInputs({});
-      setSystemFieldVisibility({ cliente: true, telefono: true, descripcion: true, sena_pago: true, valor_total: true });
-      setSystemFieldVisibility({ cliente: true, telefono: true, descripcion: true, sena_pago: true, valor_total: true });
     }
   }
 
@@ -215,15 +204,7 @@ export default function OrdersPage() {
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
       const fields = allFields.filter((f) => !f.isSystemDefault);
-      const system = allFields.filter((f) => f.isSystemDefault);
       setPresetFields(fields);
-      setSystemFieldVisibility({
-        cliente: system.find((f) => f.fieldKey === "cliente")?.isActive !== false,
-        telefono: system.find((f) => f.fieldKey === "telefono")?.isActive !== false,
-        descripcion: system.find((f) => f.fieldKey === "descripcion")?.isActive !== false,
-        sena_pago: system.find((f) => f.fieldKey === "sena_pago")?.isActive !== false,
-        valor_total: system.find((f) => f.fieldKey === "valor_total")?.isActive !== false,
-      } as any);
       setCustomFieldInputs((prev) => {
         const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
         for (const f of fields) next[f.id] = prev[f.id] || { visibleOverride: null };
@@ -571,7 +552,7 @@ export default function OrdersPage() {
                     </Select>
                   </div>
                 </div>
-                {systemFieldVisibility.cliente && (<div className="space-y-2">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Cliente</Label>
                     <button
@@ -595,8 +576,8 @@ export default function OrdersPage() {
                     }}
                   />
                   <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
-                </div>)}
-                {systemFieldVisibility.telefono && (<div className="space-y-2">
+                </div>
+                <div className="space-y-2">
                   <Label>Teléfono (Opcional)</Label>
                   <Input
                     placeholder="Ej: 11 1234-5678"
@@ -604,65 +585,57 @@ export default function OrdersPage() {
                     onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
                     data-testid="input-customer-phone"
                   />
-                </div>)}
-                {(systemFieldVisibility.sena_pago || systemFieldVisibility.valor_total) && (
-                  <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
-                    {systemFieldVisibility.sena_pago && (
-                      <div className="space-y-2">
-                        <Label>Seña o Pago</Label>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="Ej: 5000"
-                          value={newOrder.paidAmount}
-                          min={0}
-                          max={newOrder.totalAmount || undefined}
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value);
-                            const tot = parseFloat(newOrder.totalAmount);
-                            if (!isNaN(val) && !isNaN(tot) && val > tot) return;
-                            setNewOrder({ ...newOrder, paidAmount: e.target.value });
-                          }}
-                          data-testid="input-paid-amount"
-                        />
-                      </div>
-                    )}
-                    {systemFieldVisibility.valor_total && (
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <Label>Valor Total</Label>
-                          <span className="text-[10px] font-medium opacity-70">
-                            {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
-                              ? "Sin monto"
-                              : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
-                                ? "Saldado ✓"
-                                : "Deuda"}
-                          </span>
-                        </div>
-                        <Input
-                          type="number"
-                          step="0.01"
-                          placeholder="Ej: 10000"
-                          value={newOrder.totalAmount}
-                          onChange={(e) => setNewOrder({ ...newOrder, totalAmount: e.target.value })}
-                          data-testid="input-total-amount"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {systemFieldVisibility.descripcion && (
+                </div>
+                <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
                   <div className="space-y-2">
-                    <Label>Descripción (Opcional)</Label>
-                    <Textarea
-                      placeholder="Ingrese descripción..."
-                      value={newOrder.description}
-                      onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
-                      data-testid="input-description"
+                    <Label>Seña o Pago</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="Ej: 5000"
+                      value={newOrder.paidAmount}
+                      min={0}
+                      max={newOrder.totalAmount || undefined}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        const tot = parseFloat(newOrder.totalAmount);
+                        if (!isNaN(val) && !isNaN(tot) && val > tot) return;
+                        setNewOrder({ ...newOrder, paidAmount: e.target.value });
+                      }}
+                      data-testid="input-paid-amount"
                     />
                   </div>
-                )}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <Label>Valor Total</Label>
+                      <span className="text-[10px] font-medium opacity-70">
+                        {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
+                          ? "Sin monto"
+                          : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
+                            ? "Saldado ✓"
+                            : "Deuda"}
+                      </span>
+                    </div>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      placeholder="Ej: 10000"
+                      value={newOrder.totalAmount}
+                      onChange={(e) => setNewOrder({ ...newOrder, totalAmount: e.target.value })}
+                      data-testid="input-total-amount"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Descripción (Opcional)</Label>
+                  <Textarea
+                    placeholder="Ingrese descripción..."
+                    value={newOrder.description}
+                    onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
+                    data-testid="input-description"
+                  />
+                </div>
                 {presetFields.length > 0 && (
                   <div className="space-y-3 border rounded-md p-3">
                     <p className="text-sm font-medium">Campos adicionales</p>

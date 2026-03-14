@@ -71,7 +71,6 @@ export default function CashPage() {
     associatedCostType: "costo", // "costo" (resta) o "ingreso" (suma)
     impactNetProfit: true,
     expenseDefinitionId: "",
-    impactsCash: true,
   });
 
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -85,8 +84,6 @@ export default function CashPage() {
     category: "",
     description: "",
     method: "efectivo",
-    type: "ingreso",
-    impactsCash: true,
   });
 
   const [openingAmount, setOpeningAmount] = useState("");
@@ -192,7 +189,6 @@ export default function CashPage() {
         ...newMovement,
         amount: finalAmount,
         associatedCost: finalAssociatedCost || null,
-        impactsCash: newMovement.impactsCash,
         description: finalDescription,
         sessionId: openSession?.id || null,
         expenseDefinitionId:
@@ -213,7 +209,6 @@ export default function CashPage() {
         associatedCostType: "costo",
         impactNetProfit: true,
         expenseDefinitionId: "",
-        impactsCash: true,
       });
       fetchData();
     } catch (err: any) {
@@ -251,8 +246,6 @@ export default function CashPage() {
         description: finalDescription,
         amount: finalAmount,
         associatedCost: finalAssociatedCost || null,
-        type: editForm.type,
-        impactsCash: editForm.impactsCash,
       });
       toast({ title: "Movimiento actualizado" });
       setEditDialogOpen(false);
@@ -267,11 +260,11 @@ export default function CashPage() {
     : (!canUseSessions ? movements.filter(m => m.createdAt && new Date(m.createdAt).toDateString() === new Date().toDateString()) : []);
 
   const totalIncome = activeMovements
-    .filter((m) => m.type === "ingreso" && (m as any).impactsCash !== false)
+    .filter((m) => m.type === "ingreso")
     .reduce((acc, m) => acc + parseFloat(m.amount), 0);
 
   const totalExpense = activeMovements
-    .filter((m) => m.type === "egreso" && (m as any).impactsCash !== false)
+    .filter((m) => m.type === "egreso")
     .reduce((acc, m) => acc + parseFloat(m.amount), 0);
 
   const openingBalance = openSession ? parseFloat(openSession.openingAmount) : 0;
@@ -537,16 +530,7 @@ export default function CashPage() {
                                 data-testid="input-movement-description"
                               />
                             </div>
-                            <div className="flex items-center gap-2 rounded-md border p-3">
-                          <input
-                            id="impact-cash-new"
-                            type="checkbox"
-                            checked={newMovement.impactsCash}
-                            onChange={(e) => setNewMovement({ ...newMovement, impactsCash: e.target.checked })}
-                          />
-                          <Label htmlFor="impact-cash-new" className="text-sm">Impacta en caja/cierre final</Label>
-                        </div>
-                        <Button type="submit" className="w-full" data-testid="button-submit-movement">
+                            <Button type="submit" className="w-full" data-testid="button-submit-movement">
                               Registrar Movimiento
                             </Button>
                           </form>
@@ -722,14 +706,9 @@ export default function CashPage() {
                             )}
                           </div>
                         )}
-                        <div className="grid grid-cols-2 gap-2">
-                          <Button type="submit" className="w-full" data-testid="button-submit-movement">
-                            Registrar Movimiento
-                          </Button>
-                          <Button type="button" variant="outline" onClick={() => setNewMovement({ ...newMovement, amount: "", description: "", associatedCost: "" })}>
-                            + Otro
-                          </Button>
-                        </div>
+                        <Button type="submit" className="w-full" data-testid="button-submit-movement">
+                          Registrar Movimiento
+                        </Button>
                       </form>
                     </DialogContent>
                   </Dialog>
@@ -754,19 +733,7 @@ export default function CashPage() {
                     required
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label>Tipo</Label>
-                  <Select value={editForm.type} onValueChange={(v) => setEditForm({ ...editForm, type: v })}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="ingreso">Ingreso</SelectItem>
-                      <SelectItem value="egreso">Egreso</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {editForm.type === "ingreso" && (
+                {editingMovement?.type === "ingreso" && (
                   <div className="space-y-3 bg-secondary/30 p-3 rounded border">
                     <div>
                       <Label className="text-xs text-muted-foreground uppercase mb-1 block">Configurar Tarifa / Costo Adicional</Label>
@@ -828,15 +795,6 @@ export default function CashPage() {
                     )}
                   </div>
                 )}
-                <div className="flex items-center gap-2 rounded-md border p-3">
-                  <input
-                    id="impact-cash-edit"
-                    type="checkbox"
-                    checked={editForm.impactsCash}
-                    onChange={(e) => setEditForm({ ...editForm, impactsCash: e.target.checked })}
-                  />
-                  <Label htmlFor="impact-cash-edit" className="text-sm">Impacta en caja/cierre final</Label>
-                </div>
                 <div className="space-y-2">
                   <Label>Método</Label>
                   <Select value={editForm.method} onValueChange={(v) => setEditForm({ ...editForm, method: v })}>
@@ -988,8 +946,6 @@ export default function CashPage() {
                           category: m.category || "",
                           description: m.description || "",
                           method: m.method || "efectivo",
-                          type: m.type || "ingreso",
-                          impactsCash: (m as any).impactsCash !== false,
                         });
                         setEditDialogOpen(true);
                       }}
@@ -1017,9 +973,6 @@ export default function CashPage() {
                                 )}
                                 {m.category && (
                                   <Badge variant="secondary" className="text-xs">{m.category}</Badge>
-                                )}
-                                {(m as any).impactsCash === false && (
-                                  <Badge variant="outline" className="text-xs">No impacta caja</Badge>
                                 )}
                                 {hasAssociatedCost && (
                                   <span className="text-[10px] bg-amber-500/10 text-amber-500 px-1.5 py-0.5 rounded ml-1 font-medium">

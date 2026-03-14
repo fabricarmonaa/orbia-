@@ -22,9 +22,7 @@ const pool = new pg.Pool({ connectionString });
 async function runMigrations() {
     const client = await pool.connect();
     try {
-        // Serialize migration execution if multiple app replicas start simultaneously.
-        await client.query("SELECT pg_advisory_lock(hashtext('schema_migrations_lock'))");
-
+        await client.query("BEGIN");
         await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version VARCHAR(255) PRIMARY KEY,
@@ -48,38 +46,26 @@ async function runMigrations() {
                 [file]
             );
 
-            if (rows.length > 0) {
-                console.log(`Skipping applied migration: ${file}`);
-                continue;
-            }
-
-            console.log(`Running migration: ${file}`);
-            const rawSql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
-            const sql = rawSql.charCodeAt(0) === 0xfeff ? rawSql.slice(1) : rawSql;
-
-            await client.query("BEGIN");
-            try {
+            if (rows.length === 0) {
+                console.log(`Running migration: ${file}`);
+                const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
                 if (sql.trim()) {
+                    // Wrap in exception block if needed, but standard query is fine
                     await client.query(sql);
                 }
                 await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [file]);
-                await client.query("COMMIT");
-            } catch (migrationError) {
-                await client.query("ROLLBACK");
-                throw new Error(`Migration ${file} failed: ${(migrationError as Error).message}`);
+            } else {
+                console.log(`Skipping applied migration: ${file}`);
             }
         }
 
+        await client.query("COMMIT");
         console.log("All migrations applied successfully.");
     } catch (err: any) {
+        await client.query("ROLLBACK");
         console.error(`Migration failed:`, err.message);
         process.exit(1);
     } finally {
-        try {
-            await client.query("SELECT pg_advisory_unlock(hashtext('schema_migrations_lock'))");
-        } catch {
-            // no-op
-        }
         client.release();
         await pool.end();
     }

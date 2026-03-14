@@ -124,7 +124,6 @@ export const cashMovements = pgTable(
     category: varchar("category", { length: 100 }),
     description: text("description"),
     expenseDefinitionId: integer("expense_definition_id").references(() => expenseDefinitions.id),
-    impactsCash: boolean("impacts_cash").notNull().default(true),
     expenseDefinitionName: varchar("expense_definition_name", { length: 200 }),
     orderId: integer("order_id").references(() => orders.id),
     saleId: integer("sale_id").references(() => sales.id),

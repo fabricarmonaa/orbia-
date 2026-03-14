@@ -8,7 +8,6 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { getWhatsappConversationStatusLabel } from "@/lib/whatsapp-conversation-status";
-import { MessageCircleOff } from "lucide-react";
 
 const STATUS_OPTIONS = ["OPEN", "PENDING_CUSTOMER", "PENDING_BUSINESS", "WAITING_INTERNAL", "RESOLVED", "CLOSED"] as const;
 const USAGE_FILTER_OPTIONS = ["all", "greeting", "follow_up", "reengagement", "confirmation", "reminder", "quote_or_budget", "handoff_human", "error_fallback", "closing", "custom"] as const;
@@ -402,20 +401,7 @@ export default function WhatsappConversationsPage() {
   }, [addonEnabled]);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Cargando inbox de WhatsApp…</div>;
-  if (!addonEnabled) {
-    return (
-      <div className="flex flex-col items-center justify-center py-20 space-y-4 text-center">
-        <MessageCircleOff className="w-16 h-16 text-muted-foreground" />
-        <h2 className="text-xl font-semibold">Próximamente</h2>
-        <p className="text-muted-foreground max-w-md">
-          WhatsApp Inbox no está disponible para tu plan o addons actuales.
-        </p>
-        <p className="text-sm text-muted-foreground max-w-lg">
-          Si querés habilitarlo, contactá al administrador de tu cuenta o soporte.
-        </p>
-      </div>
-    );
-  }
+  if (!addonEnabled) return <div className="p-6 text-sm text-muted-foreground">El addon <code>whatsapp_inbox</code> no está habilitado para este tenant.</div>;
 
   return (
     <div className="p-6 space-y-4">

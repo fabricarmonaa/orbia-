@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, isNull, inArray, asc, sql } from "drizzle-orm";
+import { eq, and, isNull, inArray, asc } from "drizzle-orm";
 import { users, type InsertUser } from "@shared/schema";
 
 export const userStorage = {
@@ -11,22 +11,17 @@ export const userStorage = {
     return user;
   },
   async getUserByEmail(email: string, tenantId?: number | null) {
-    const normalizedEmail = String(email || "").trim().toLowerCase();
-    if (!normalizedEmail) return undefined;
-
     if (tenantId) {
       const [user] = await db
         .select()
         .from(users)
-        .where(and(sql`lower(${users.email}) = ${normalizedEmail}`, eq(users.tenantId, tenantId), isNull(users.deletedAt)))
-        .limit(1);
+        .where(and(eq(users.email, email), eq(users.tenantId, tenantId), isNull(users.deletedAt)));
       return user;
     }
     const [user] = await db
       .select()
       .from(users)
-      .where(and(sql`lower(${users.email}) = ${normalizedEmail}`, isNull(users.deletedAt)))
-      .limit(1);
+      .where(and(eq(users.email, email), isNull(users.deletedAt)));
     return user;
   },
   async getSuperAdminByEmail(email: string) {

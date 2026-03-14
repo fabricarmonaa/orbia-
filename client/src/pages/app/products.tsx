@@ -273,12 +273,6 @@ export default function ProductsPage() {
   async function createProduct(e: React.FormEvent) {
     e.preventDefault();
     try {
-      if (!newProduct.categoryId) {
-        toast({
-          title: "Producto sin categoría",
-          description: "Se recomienda asignar una categoría para mejorar filtros y reportes.",
-        });
-      }
       await apiRequest("POST", "/api/products", {
         name: newProduct.name,
         description: newProduct.description || null,
@@ -323,12 +317,6 @@ export default function ProductsPage() {
     e.preventDefault();
     if (!editProduct) return;
     try {
-      if (!editForm.categoryId) {
-        toast({
-          title: "Producto sin categoría",
-          description: "Se recomienda asignar una categoría para mejorar filtros y reportes.",
-        });
-      }
       await apiRequest("PUT", `/api/products/${editProduct.id}`, {
         name: editForm.name,
         description: editForm.description || null,
@@ -962,9 +950,6 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
               {categories.map((category) => <SelectItem key={category.id} value={String(category.id)}>{category.name}</SelectItem>)}
             </SelectContent>
           </Select>
-          {!value.categoryId ? (
-            <p className="text-xs text-amber-600">Recomendación: asigná una categoría para ordenar mejor catálogo y reportes.</p>
-          ) : null}
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">

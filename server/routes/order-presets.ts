@@ -1,7 +1,7 @@
 import type { Express, Response } from "express";
 import { z } from "zod";
 import { tenantAuth, requireTenantAdmin } from "../auth";
-import { validateBody, validateParams, validateQuery } from "../middleware/validate";
+import { validateBody, validateParams } from "../middleware/validate";
 import { orderPresetsStorage, ORDER_PRESET_ALLOWED_FILE_EXTENSIONS } from "../storage/order-presets";
 import { HttpError } from "../lib/http-errors";
 
@@ -52,10 +52,6 @@ const patchFieldSchema = z
 
 const reorderSchema = z.object({
   orderedFieldIds: z.array(z.coerce.number().int().positive()).min(1),
-});
-
-const presetFieldsQuerySchema = z.object({
-  includeInactive: z.coerce.boolean().optional(),
 });
 
 // ─────────────────────────────────────────────
@@ -168,13 +164,11 @@ export function registerOrderPresetRoutes(app: Express) {
     tenantAuth,
     ensurePresetIdParam,
     validateParams(presetIdParamSchema),
-    validateQuery(presetFieldsQuerySchema),
     async (req, res) => {
       try {
         const result = await orderPresetsStorage.listFieldsByPreset(
           req.auth!.tenantId!,
-          Number(req.params.presetId),
-          Boolean((req.query as any)?.includeInactive)
+          Number(req.params.presetId)
         );
         return res.json({ data: result.fields, preset: result.preset });
       } catch (err) {

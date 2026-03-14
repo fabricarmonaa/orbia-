@@ -1,4 +1,4 @@
--- HOTFIX: canonicalize orders.status_code (idempotent)
+﻿-- HOTFIX: canonicalize orders.status_code (idempotent)
 -- 0) Ensure at least one default ORDER status per tenant (if missing)
 WITH missing_default AS (
   SELECT tenant_id
@@ -19,25 +19,17 @@ SET is_default = true
 FROM pick_one p
 WHERE sd.id = p.id;
 
--- 1) Backfill from legacy status_id -> order_statuses.name -> canonical status_definitions.code
-WITH legacy_map AS (
-  SELECT
-    os.tenant_id,
-    os.id AS legacy_status_id,
-    LEFT(REGEXP_REPLACE(UPPER(COALESCE(os.name, '')), '[^A-Z0-9]+', '_', 'g'), 40) AS legacy_code
-  FROM order_statuses os
-)
+-- 1) Backfill from legacy status_id -> order_statuses.code -> status_definitions.code
 UPDATE orders o
 SET status_code = sd.code
-FROM legacy_map lm
+FROM order_statuses os
 JOIN status_definitions sd
-  ON sd.tenant_id = lm.tenant_id
+  ON sd.tenant_id = os.tenant_id
  AND sd.entity_type = 'ORDER'
- AND sd.code = lm.legacy_code
+ AND upper(sd.code) = upper(os.code)
 WHERE (o.status_code IS NULL OR btrim(o.status_code) = '')
   AND o.status_id IS NOT NULL
-  AND o.tenant_id = lm.tenant_id
-  AND o.status_id = lm.legacy_status_id;
+  AND os.id = o.status_id;
 
 -- 2) Fill remaining NULL/empty with tenant default ORDER status
 UPDATE orders o

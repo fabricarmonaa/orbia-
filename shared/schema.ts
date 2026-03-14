@@ -37,5 +37,3 @@ export * from './schema/providers';
 export * from './schema/agenda';
 export * from './schema/notes';
 export * from './schema/whatsapp';
-
-export * from './schema/auth-security';

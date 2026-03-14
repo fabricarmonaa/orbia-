@@ -16,12 +16,7 @@ until nc -z "$DB_HOST" "$DB_PORT"; do
 done
 
 echo "[Web Entrypoint] Running SQL migrations idempotently (safe mode)..."
-npm run migrations:run
-
-if [ "${DRIZZLE_PUSH_ON_BOOT:-false}" = "true" ]; then
-  echo "[Web Entrypoint] DRIZZLE_PUSH_ON_BOOT=true -> running drizzle push --force (non-interactive)..."
-  npm run db:push -- --force
-fi
+npm run db:push
 
 echo "[Web Entrypoint] Starting server..."
 exec node dist/index.cjs

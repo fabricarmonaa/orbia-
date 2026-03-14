@@ -206,7 +206,7 @@ export const cashStorage = {
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
     const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
-      conditions.push(eq(cashMovements.impactsCash, true));
+      conditions.push(sql`impacts_cash = true` as any);
     }
     const result = await db
       .select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` })
@@ -226,7 +226,7 @@ export const cashStorage = {
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
     const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
-      conditions.push(eq(cashMovements.impactsCash, true));
+      conditions.push(sql`impacts_cash = true` as any);
     }
     const result = await db
       .select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` })
@@ -286,7 +286,7 @@ export const cashStorage = {
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
     const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
-      conditions.push(eq(cashMovements.impactsCash, true));
+      conditions.push(sql`impacts_cash = true` as any);
     }
     const result = await db
       .select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` })
@@ -305,7 +305,7 @@ export const cashStorage = {
     if (branchId) conditions.push(eq(cashMovements.branchId, branchId));
     const supportsImpactsCash = await supportsCashMovementColumnName("impacts_cash");
     if (supportsImpactsCash) {
-      conditions.push(eq(cashMovements.impactsCash, true));
+      conditions.push(sql`impacts_cash = true` as any);
     }
     const result = await db
       .select({ total: sql<string>`COALESCE(SUM(${cashMovements.amount}), 0)` })

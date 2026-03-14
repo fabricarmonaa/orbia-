@@ -30,7 +30,6 @@ import {
   FileSpreadsheet,
   CalendarDays,
   NotebookPen,
-  BarChart3,
 } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { usePlan } from "@/lib/plan";
@@ -51,13 +50,6 @@ interface MenuItem {
   highlight?: boolean;
 }
 
-function toAddonBoolean(value: unknown) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") return value.toLowerCase() === "true" || value === "1";
-  if (typeof value === "number") return value === 1;
-  return false;
-}
-
 const menuItems: MenuItem[] = [
   { title: "Dashboard", url: "/app", icon: LayoutDashboard, section: "operacion" },
   { title: "Pedidos", url: "/app/orders", icon: ClipboardList, section: "operacion" },
@@ -74,7 +66,6 @@ const menuItems: MenuItem[] = [
   { title: "WhatsApp Inbox (Addon)", url: "/app/whatsapp/conversations", icon: MessageCircle, addon: "whatsapp_inbox", section: "operacion", highlight: true },
   { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad" },
   { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad" },
-  { title: "Reportes", url: "/app/reports", icon: BarChart3, adminOnly: true, section: "productividad" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true, section: "configuracion" },
 ];
 
@@ -96,15 +87,7 @@ export function AppSidebar() {
   useEffect(() => {
     apiRequest("GET", "/api/addons/status")
       .then((r) => r.json())
-      .then((d) => {
-        const raw = d?.data || {};
-        setAddonStatus({
-          barcode_scanner: toAddonBoolean(raw.barcode_scanner),
-          delivery: toAddonBoolean(raw.delivery),
-          messaging_whatsapp: toAddonBoolean(raw.messaging_whatsapp),
-          whatsapp_inbox: toAddonBoolean(raw.whatsapp_inbox),
-        });
-      })
+      .then((d) => setAddonStatus(d.data || {}))
       .catch(() => { });
     apiRequest("GET", "/api/stock/alerts")
       .then((r) => r.json())

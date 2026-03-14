@@ -15,22 +15,6 @@ CREATE TABLE IF NOT EXISTS status_definitions (
   CONSTRAINT uq_status_definitions_tenant_entity_code UNIQUE (tenant_id, entity_type, code)
 );
 
-WITH existing_defaults_ranked AS (
-  SELECT
-    id,
-    ROW_NUMBER() OVER (
-      PARTITION BY tenant_id, entity_type
-      ORDER BY sort_order ASC, id ASC
-    ) AS rn
-  FROM status_definitions
-  WHERE is_default = true
-)
-UPDATE status_definitions sd
-SET is_default = false
-FROM existing_defaults_ranked ranked
-WHERE sd.id = ranked.id
-  AND ranked.rn > 1;
-
 CREATE UNIQUE INDEX IF NOT EXISTS uq_status_definitions_default_per_entity
   ON status_definitions(tenant_id, entity_type)
   WHERE is_default = true;
@@ -59,27 +43,8 @@ WITH defaults AS (
   ) AS d(entity_type, code, label, color, sort_order, is_default, is_final)
 )
 INSERT INTO status_definitions (tenant_id, entity_type, code, label, color, sort_order, is_default, is_final, is_active)
-SELECT
-  d.tenant_id,
-  d.entity_type,
-  d.code,
-  d.label,
-  d.color,
-  d.sort_order,
-  CASE
-    WHEN d.is_default = true
-      AND NOT EXISTS (
-        SELECT 1
-        FROM status_definitions sd
-        WHERE sd.tenant_id = d.tenant_id
-          AND sd.entity_type = d.entity_type
-          AND sd.is_default = true
-      ) THEN true
-    ELSE false
-  END,
-  d.is_final,
-  true
-FROM defaults d
+SELECT tenant_id, entity_type, code, label, color, sort_order, is_default, is_final, true
+FROM defaults
 ON CONFLICT (tenant_id, entity_type, code) DO NOTHING;
 
 INSERT INTO status_definitions (tenant_id, entity_type, code, label, color, sort_order, is_default, is_final, is_active)

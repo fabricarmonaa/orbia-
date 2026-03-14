@@ -1,7 +1,7 @@
 import { and, eq, isNull, or } from "drizzle-orm";
 import { db } from "../db";
 import { hashPassword } from "../auth";
-import { orderTypeDefinitions, orderTypePresets, plans, statusDefinitions, tenantConfig, tenantSubscriptions, tenants, users } from "@shared/schema";
+import { branches, orderTypeDefinitions, orderTypePresets, plans, statusDefinitions, tenantAddons, tenantConfig, tenantSubscriptions, tenants, users } from "@shared/schema";
 
 export type PublicSignupInput = {
   tenantName: string;
@@ -89,9 +89,18 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       })
       .returning({ id: tenants.id });
 
+    const [branch] = await tx
+      .insert(branches)
+      .values({
+        tenantId: tenant.id,
+        name: "Casa Central",
+        isActive: true,
+      })
+      .returning({ id: branches.id });
+
     await tx.insert(users).values({
       tenantId: tenant.id,
-      branchId: null,
+      branchId: branch.id,
       email: input.email.trim().toLowerCase(),
       password: passwordHash,
       fullName: input.adminName,
@@ -109,6 +118,24 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       expiresAt: trialEnd,
       updatedAt: now,
     });
+
+    await tx
+      .insert(tenantAddons)
+      .values({
+        tenantId: tenant.id,
+        addonKey: "messaging_whatsapp",
+        enabled: true,
+        enabledAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [tenantAddons.tenantId, tenantAddons.addonKey],
+        set: {
+          enabled: true,
+          enabledAt: now,
+          updatedAt: now,
+        },
+      });
 
     await tx.insert(tenantConfig).values({
       tenantId: tenant.id,

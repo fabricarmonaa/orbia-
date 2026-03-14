@@ -122,14 +122,6 @@ const transferInfoSchema = z.object({
   whatsapp_contact: z.string().trim().max(50),
 });
 
-const mailerConfigSchema = z.object({
-  from: z.string().trim().min(3).max(255),
-  replyTo: z.string().trim().max(255).optional().or(z.literal("")),
-  clientId: z.string().trim().min(10).max(255),
-  clientSecret: z.string().trim().min(10).max(255),
-  refreshToken: z.string().trim().min(10).max(512),
-});
-
 const legalConfigSchema = z.object({
   slug: z.string().trim().min(2).max(80).regex(/^[a-z0-9-]+$/, "Slug inválido"),
   termsText: z.string().trim().min(1).max(200000),
@@ -282,40 +274,6 @@ export function registerSuperRoutes(app: Express) {
     }
   });
 
-  app.get("/api/super/settings/mailer", superAuth, async (_req, res) => {
-    try {
-      const row = await storage.getSystemSetting("gmail_oauth_config");
-      const parsed = row?.value ? JSON.parse(row.value) : {};
-      const data = {
-        from: parsed?.from || "",
-        replyTo: parsed?.replyTo || "",
-        clientId: parsed?.clientId ? "********" : "",
-        clientSecret: parsed?.clientSecret ? "********" : "",
-        refreshToken: parsed?.refreshToken ? "********" : "",
-      };
-      res.json({ data });
-    } catch {
-      res.status(500).json({ error: "No se pudo obtener configuración de correo", code: "SUPER_MAILER_CONFIG_READ_ERROR" });
-    }
-  });
-
-  app.put("/api/super/settings/mailer", superAuth, async (req, res) => {
-    try {
-      const payload = mailerConfigSchema.parse(req.body || {});
-      await storage.upsertSystemSetting("gmail_oauth_config", JSON.stringify({
-        from: payload.from,
-        replyTo: payload.replyTo || null,
-        clientId: payload.clientId,
-        clientSecret: payload.clientSecret,
-        refreshToken: payload.refreshToken,
-      }));
-      res.json({ ok: true });
-    } catch (err: any) {
-      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "SUPER_MAILER_CONFIG_INVALID", details: err.errors });
-      res.status(500).json({ error: "No se pudo guardar configuración de correo", code: "SUPER_MAILER_CONFIG_SAVE_ERROR" });
-    }
-  });
-
   app.get("/api/super/transfer-info", superAuth, async (_req, res) => {
     try {
       const row = await storage.getSystemSetting("transfer_info");
@@ -355,7 +313,7 @@ export function registerSuperRoutes(app: Express) {
       const data = await buildTenantSummary(tenant);
       return res.json({ data });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -657,9 +615,9 @@ export function registerSuperRoutes(app: Express) {
       const hashedPassword = await hashPassword(tempPassword);
       await storage.updateUser(admin.id, tenantId, { password: hashedPassword });
 
-      const configured = await isMailerConfigured();
+      const isProd = process.env.NODE_ENV === "production";
+      const configured = isMailerConfigured();
       let mailSent = false;
-      let mailError: string | null = null;
       if (configured) {
         try {
           await sendMail({
@@ -670,8 +628,7 @@ export function registerSuperRoutes(app: Express) {
           });
           mailSent = true;
         } catch (mailErr: any) {
-          mailError = String(mailErr?.message || "MAIL_ERROR");
-          console.error("[super/reset-password] mail send failed", { tenantId, adminId: admin.id, mailError });
+          return res.status(500).json({ error: `No se pudo enviar mail: ${mailErr?.message || "MAIL_ERROR"}` });
         }
       }
 
@@ -681,18 +638,16 @@ export function registerSuperRoutes(app: Express) {
         action: "TENANT_ADMIN_PASSWORD_RESET",
         entityType: "USER",
         entityId: admin.id,
-        metadata: { adminEmail: admin.email, mailSent, mailError },
+        metadata: { adminEmail: admin.email, mailSent },
       });
 
-      return res.json({
-        ok: true,
-        tempPassword: tempPassword,
-        mailSent,
-        warning: !mailSent ? "No se pudo enviar el correo automáticamente. Compartí la contraseña temporal de forma segura." : undefined,
-      });
+      if (isProd && !mailSent) {
+        return res.status(500).json({ error: "Mailer no configurado en producción" });
+      }
+
+      return res.json({ ok: true, tempPassword: isProd ? undefined : tempPassword, mailSent });
     } catch (err: any) {
-      console.error("[super/reset-password] unexpected error", err);
-      return res.status(500).json({ error: err.message, code: "TENANT_ADMIN_PASSWORD_RESET_ERROR" });
+      return res.status(500).json({ error: err.message });
     }
   });
 
@@ -1070,7 +1025,7 @@ export function registerSuperRoutes(app: Express) {
         })
         .returning();
 
-      const configured = await isMailerConfigured();
+      const configured = isMailerConfigured();
       let sent = 0;
       let failed = 0;
       let skipped = 0;

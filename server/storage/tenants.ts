@@ -1,5 +1,5 @@
 import { db } from "../db";
-import { eq, and, desc, sql } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { tenants, tenantAddons, type InsertTenant, type InsertTenantAddon } from "@shared/schema";
 
 export const tenantStorage = {
@@ -11,14 +11,7 @@ export const tenantStorage = {
     return tenant;
   },
   async getTenantByCode(code: string) {
-    const normalizedCode = String(code || "").trim();
-    if (!normalizedCode) return undefined;
-
-    const [tenant] = await db
-      .select()
-      .from(tenants)
-      .where(sql`lower(${tenants.code}) = lower(${normalizedCode})`)
-      .limit(1);
+    const [tenant] = await db.select().from(tenants).where(eq(tenants.code, code));
     return tenant;
   },
   async createTenant(data: InsertTenant) {

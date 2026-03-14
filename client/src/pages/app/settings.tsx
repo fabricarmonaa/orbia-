@@ -42,14 +42,6 @@ interface Config {
   trackingTosText: string;
 }
 
-
-function toAddonBoolean(value: unknown) {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") return value.toLowerCase() === "true" || value === "1";
-  if (typeof value === "number") return value === 1;
-  return false;
-}
-
 const layoutPresets = [
   {
     value: "classic",
@@ -107,8 +99,6 @@ export default function SettingsPage() {
   const [tosUpdatedAt, setTosUpdatedAt] = useState<string | null>(null);
   const [tosSaving, setTosSaving] = useState(false);
   const [slugSaving, setSlugSaving] = useState(false);
-  const [addonStatus, setAddonStatus] = useState<Record<string, boolean> | null>(null);
-  const [addonsLoading, setAddonsLoading] = useState(true);
 
   const minTrackingHours = getLimit("tracking_retention_min_hours") || 1;
   const maxTrackingHours = getLimit("tracking_retention_max_hours") || 24;
@@ -159,46 +149,6 @@ export default function SettingsPage() {
       });
     }
   }, [tenantBranding]);
-  useEffect(() => {
-    let cancelled = false;
-    async function fetchAddonsStatus() {
-      if (user?.role !== "admin") {
-        setAddonStatus(null);
-        setAddonsLoading(false);
-        return;
-      }
-
-      setAddonsLoading(true);
-      try {
-        const res = await apiRequest("GET", "/api/addons/status");
-        const json = await res.json();
-        if (!cancelled) {
-          const raw = json?.data || {};
-          setAddonStatus({
-            whatsapp_inbox: toAddonBoolean((raw as any).whatsapp_inbox),
-            messaging_whatsapp: toAddonBoolean((raw as any).messaging_whatsapp),
-            barcode_scanner: toAddonBoolean((raw as any).barcode_scanner),
-            delivery: toAddonBoolean((raw as any).delivery),
-          });
-        }
-      } catch (err: any) {
-        if (!cancelled) {
-          setAddonStatus({});
-          toast({ title: "Aviso", description: "No se pudo validar addons. Algunas secciones pueden ocultarse temporalmente." });
-        }
-      } finally {
-        if (!cancelled) {
-          setAddonsLoading(false);
-        }
-      }
-    }
-
-    fetchAddonsStatus();
-    return () => {
-      cancelled = true;
-    };
-  }, [user?.role]);
-
 
   async function fetchConfig() {
     try {
@@ -370,7 +320,7 @@ export default function SettingsPage() {
   const slugPreview = `${window.location.origin}/t/${tenantSlug || "mi-negocio"}/tos`;
   const slugValid = /^[a-z0-9-]{1,120}$/.test(tenantSlug || "");
 
-  if (loading || planLoading || (user?.role === "admin" && addonsLoading)) {
+  if (loading || planLoading) {
     return (
       <div className="space-y-6">
         <Skeleton className="h-8 w-48" />
@@ -383,7 +333,6 @@ export default function SettingsPage() {
   const planCode = (plan?.planCode || "").toUpperCase();
   const isEconomic = planCode === "ECONOMICO";
   const isEscala = planCode === "ESCALA";
-  const whatsappEnabled = Boolean(addonStatus?.whatsapp_inbox || addonStatus?.messaging_whatsapp);
   const sections = [
     {
       id: "account",
@@ -465,15 +414,11 @@ export default function SettingsPage() {
           label: "PDFs",
           content: <PriceListPdfSettings />,
         },
-        ...(whatsappEnabled
-          ? [
-            {
-              id: "whatsapp",
-              label: "WhatsApp",
-              content: <WhatsAppSettings />,
-            },
-          ]
-          : []),
+        {
+          id: "whatsapp",
+          label: "WhatsApp",
+          content: <WhatsAppSettings />,
+        },
       ]
       : []),
     {
