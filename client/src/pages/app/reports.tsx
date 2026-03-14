@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/auth";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AlertCircle, Download } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { AlertCircle, Download, FileText } from "lucide-react";
 
 type Period = "today" | "week" | "month" | "year" | "custom";
 
@@ -97,14 +98,6 @@ export default function ReportsPage() {
           <h1 className="text-2xl font-bold">Reportes de ventas</h1>
           <p className="text-sm text-muted-foreground">Datos reales para ingresos, rotación y rendimiento del período.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => exportReport("pdf")} disabled={!!exporting}>
-            <Download className="h-4 w-4 mr-1" /> {exporting === "pdf" ? "Exportando..." : "Exportar PDF"}
-          </Button>
-          <Button variant="outline" onClick={() => exportReport("xlsx")} disabled={!!exporting}>
-            <Download className="h-4 w-4 mr-1" /> {exporting === "xlsx" ? "Exportando..." : "Exportar Excel"}
-          </Button>
-        </div>
       </div>
 
       <Card>
@@ -132,28 +125,50 @@ export default function ReportsPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-sm">Contenido del PDF</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-          {Object.entries({
-            includeSummary: "Resumen ejecutivo",
-            includeTopProducts: "Productos más vendidos",
-            includeLowProducts: "Productos menos vendidos",
-            includeCategories: "Categorías",
-            includeAnalysis: "Análisis",
-          }).map(([key, label]) => (
-            <label key={key} className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={(pdfSections as any)[key]}
-                onChange={(e) => setPdfSections((prev) => ({ ...prev, [key]: e.target.checked }))}
-              />
-              {label}
-            </label>
-          ))}
-          <p className="text-xs text-muted-foreground md:col-span-2">Estas opciones aplican a la exportación PDF del reporte general.</p>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <Card className="lg:col-span-2 shadow-sm">
+          <CardHeader className="border-b bg-muted/20 pb-4">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FileText className="w-5 h-5 text-primary" /> Exportar Reporte PDF
+            </CardTitle>
+            <CardDescription>Seleccioná qué información querés incluir en el documento.</CardDescription>
+          </CardHeader>
+          <CardContent className="pt-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-6">
+              {[
+                { key: "includeSummary", label: "Resumen ejecutivo", desc: "Totales de ingresos, tickets y crecimiento" },
+                { key: "includeTopProducts", label: "Productos más vendidos", desc: "Top de los productos estrella del período" },
+                { key: "includeLowProducts", label: "Productos menos vendidos", desc: "Los de más difícil salida y rotación" },
+                { key: "includeCategories", label: "Desempeño por Categorías", desc: "Qué rubros generaron más dinero" },
+                { key: "includeAnalysis", label: "Análisis e Insights", desc: "Conclusiones automáticas sobre tus ventas" },
+              ].map(({ key, label, desc }) => (
+                <div key={key} className="flex flex-row items-center justify-between rounded-lg border p-3 hover:bg-muted/10 transition-colors">
+                  <div className="space-y-0.5 min-w-0 mr-4">
+                    <Label className="text-sm font-medium cursor-pointer" htmlFor={key}>{label}</Label>
+                    <p className="text-[12px] text-muted-foreground truncate">{desc}</p>
+                  </div>
+                  <Switch
+                    id={key}
+                    checked={(pdfSections as any)[key]}
+                    onCheckedChange={(checked) => setPdfSections((prev) => ({ ...prev, [key]: checked }))}
+                  />
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-6 flex flex-col sm:flex-row gap-3 pt-4 border-t">
+              <Button onClick={() => exportReport("pdf")} disabled={!!exporting} className="w-full sm:w-auto">
+                <Download className="h-4 w-4 mr-2" />
+                {exporting === "pdf" ? "Generando PDF..." : "Generar Reporte PDF"}
+              </Button>
+              <Button variant="outline" onClick={() => exportReport("xlsx")} disabled={!!exporting} className="w-full sm:w-auto">
+                <Download className="h-4 w-4 mr-2 text-emerald-600" />
+                {exporting === "xlsx" ? "Generando Excel..." : "Bajar datos crudos (Excel)"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {isError && <Card><CardContent className="pt-6 text-red-600 flex gap-2"><AlertCircle className="h-4 w-4" />No se pudo cargar el reporte.</CardContent></Card>}
       {isLoading && <Card><CardContent className="pt-6 text-sm text-muted-foreground">Cargando reporte...</CardContent></Card>}

@@ -140,46 +140,46 @@ export default function NotesPage() {
       ) : (
         <div className="columns-1 sm:columns-2 lg:columns-3 gap-6 space-y-6 pt-2">
           {filteredNotes.map((n) => (
-            <Card key={n.id} className="break-inside-avoid shadow-sm hover:shadow-md transition-shadow border-border/60 group flex flex-col h-fit">
-              <CardHeader className="p-5 pb-3">
+            <Card key={n.id} className="break-inside-avoid shadow-sm hover:shadow-md transition-shadow border-amber-100/50 bg-[#FFFCF2] group flex flex-col h-fit">
+              <CardHeader className="p-4 pb-2">
                 <div className="flex items-start justify-between gap-3">
-                  <CardTitle className="text-lg font-semibold leading-tight break-words">{n.title}</CardTitle>
-                  <div className="flex items-center gap-1">
-                    {n.showInAgenda && <div title="Visible en Agenda" className="shrink-0"><CalendarDays className="w-4 h-4 text-primary" /></div>}
+                  <CardTitle className="text-base font-medium leading-tight break-words text-slate-800">{n.title}</CardTitle>
+                  <div className="flex items-center gap-1 mt-0.5">
+                    {n.showInAgenda && <div title="Visible en Agenda" className="shrink-0"><CalendarDays className="w-3.5 h-3.5 text-amber-500" /></div>}
                   </div>
                 </div>
               </CardHeader>
-              <CardContent className="p-5 pt-0 flex-grow space-y-4">
+              <CardContent className="p-4 pt-0 flex-grow space-y-3">
                 {n.content && (
-                  <p className="text-sm text-slate-700 whitespace-pre-wrap break-words">{n.content}</p>
+                  <p className="text-[13px] text-slate-600 whitespace-pre-wrap break-words">{n.content}</p>
                 )}
 
                 {n.remindAt && (
-                  <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border ${isOverdue(n.remindAt) && n.status === 'ACTIVA' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                    <Clock className="w-3.5 h-3.5" />
+                  <div className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-medium border ${isOverdue(n.remindAt) && n.status === 'ACTIVA' ? 'bg-red-50 text-red-700 border-red-200' : 'bg-amber-100/50 text-amber-800 border-amber-200'}`}>
+                    <Clock className="w-3 h-3" />
                     {new Date(n.remindAt).toLocaleString("es-AR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                     {isOverdue(n.remindAt) && n.status === 'ACTIVA' && " (Vencido)"}
                   </div>
                 )}
               </CardContent>
-              <CardFooter className="p-4 pt-0 border-t mt-auto flex justify-end gap-2 bg-muted/20 opacity-0 group-hover:opacity-100 transition-opacity">
+              <CardFooter className="p-2 border-t border-amber-100 mt-auto flex justify-end gap-1 bg-amber-50/50 opacity-0 group-hover:opacity-100 transition-opacity">
                 {n.status !== 'HECHA' && (
-                  <Button size="sm" variant="ghost" className="h-8 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" onClick={() => setStatus(n.id, "HECHA")}>
-                    <CheckCircle2 className="w-4 h-4 mr-1.5" /> Completar
+                  <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700" onClick={() => setStatus(n.id, "HECHA")}>
+                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Lista
                   </Button>
                 )}
                 {n.status !== 'ARCHIVADA' && (
-                  <Button size="sm" variant="ghost" className="h-8 text-slate-600 hover:bg-slate-100" onClick={() => setStatus(n.id, "ARCHIVADA")}>
-                    <Archive className="w-4 h-4 mr-1.5" /> Archivar
+                  <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-slate-600 hover:bg-slate-100" onClick={() => setStatus(n.id, "ARCHIVADA")}>
+                    <Archive className="w-3.5 h-3.5 mr-1" /> Archivar
                   </Button>
                 )}
                 {n.status !== 'ACTIVA' && (
-                  <Button size="sm" variant="ghost" className="h-8 text-blue-600 hover:bg-blue-50" onClick={() => setStatus(n.id, "ACTIVA")}>
+                  <Button size="sm" variant="ghost" className="h-7 text-xs px-2 text-blue-600 hover:bg-blue-50" onClick={() => setStatus(n.id, "ACTIVA")}>
                     Restaurar
                   </Button>
                 )}
-                <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-red-600 hover:bg-red-50 shrink-0 ml-auto" onClick={() => deleteNote(n.id)}>
-                  <Trash2 className="w-4 h-4" />
+                <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-600 hover:bg-red-50 shrink-0 ml-auto" onClick={() => deleteNote(n.id)}>
+                  <Trash2 className="w-3.5 h-3.5" />
                 </Button>
               </CardFooter>
             </Card>
@@ -188,82 +188,76 @@ export default function NotesPage() {
       )}
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="sm:max-w-[480px]">
+        <DialogContent className="sm:max-w-[500px] border-amber-200/60 bg-[#FFFCF2]/95 backdrop-blur-sm">
           <DialogHeader>
-            <DialogTitle className="text-xl">Nueva nota</DialogTitle>
+            <DialogTitle className="text-xl text-slate-800">Escribir una nota</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-4">
-            <div className="space-y-1.5 flex flex-col">
-              <Label htmlFor="title" className="flex items-center gap-2">
-                <Tag className="w-3.5 h-3.5" /> Título
-              </Label>
+          <div className="space-y-5 py-4">
+            <div className="space-y-2 flex flex-col">
               <Input
                 id="title"
-                placeholder="Ej. Recordar llamar a proveedor"
+                placeholder="Título de la nota (ej: Llamar al proveedor)"
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
+                className="text-lg font-medium border-0 border-b rounded-none px-0 bg-transparent focus-visible:ring-0 focus-visible:border-amber-400 placeholder:text-slate-400"
                 autoFocus
               />
             </div>
 
-            <div className="space-y-1.5 flex flex-col">
-              <Label htmlFor="content" className="flex items-center gap-2">
-                <AlignLeft className="w-3.5 h-3.5" /> Contenido (opcional)
-              </Label>
+            <div className="space-y-2 flex flex-col">
               <Textarea
                 id="content"
-                placeholder="Escribe los detalles de la nota aquí..."
+                placeholder="Detalles, ideas, recordatorios..."
                 value={form.content}
                 onChange={(e) => setForm({ ...form, content: e.target.value })}
-                className="resize-none min-h-[120px]"
+                className="resize-none min-h-[160px] border-0 bg-white/50 focus-visible:ring-1 focus-visible:ring-amber-200 shadow-inner text-sm"
               />
             </div>
 
-            <div className="bg-muted/40 p-4 rounded-lg border space-y-4">
+            <div className="pt-2 border-t border-amber-100 space-y-4">
+              <p className="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-2">Avisos y Agenda</p>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-1.5 flex flex-col">
-                  <Label htmlFor="date" className="flex items-center gap-2">
-                    <CalendarIcon className="w-3.5 h-3.5" /> Fecha (opcional)
-                  </Label>
+                  <Label htmlFor="date" className="text-xs text-slate-600">Fecha del recordatorio</Label>
                   <Input
                     id="date"
                     type="date"
                     value={form.date}
                     onChange={(e) => setForm({ ...form, date: e.target.value })}
+                    className="h-8 text-xs bg-white/60 border-amber-200"
                   />
                 </div>
                 {form.date && !form.allDay && (
                   <div className="space-y-1.5 flex flex-col animate-in fade-in">
-                    <Label htmlFor="time" className="flex items-center gap-2">
-                      <Clock className="w-3.5 h-3.5" /> Hora
-                    </Label>
+                    <Label htmlFor="time" className="text-xs text-slate-600">Hora</Label>
                     <Input
                       id="time"
                       type="time"
                       value={form.time}
                       onChange={(e) => setForm({ ...form, time: e.target.value })}
+                      className="h-8 text-xs bg-white/60 border-amber-200"
                     />
                   </div>
                 )}
               </div>
 
               {form.date && (
-                <div className="pt-2 flex flex-col gap-3">
+                <div className="pt-1 flex flex-col gap-2.5">
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="all-day" className="font-normal cursor-pointer">Es de todo el día</Label>
+                    <Label htmlFor="all-day" className="text-sm font-normal text-slate-700 cursor-pointer">Es de todo el día</Label>
                     <Switch id="all-day" checked={form.allDay} onCheckedChange={(checked) => setForm({ ...form, allDay: checked, time: checked ? "09:00" : form.time })} />
                   </div>
                   <div className="flex items-center justify-between">
-                    <Label htmlFor="agenda" className="font-medium cursor-pointer text-primary">Mostrar automáticante en la Agenda</Label>
+                    <Label htmlFor="agenda" className="text-sm font-medium text-amber-900 cursor-pointer">Mostrar en mi Agenda dashboard</Label>
                     <Switch id="agenda" checked={form.showInAgenda} onCheckedChange={(checked) => setForm({ ...form, showInAgenda: checked })} />
                   </div>
                 </div>
               )}
             </div>
           </div>
-          <DialogFooter className="sm:justify-between w-full">
-            <Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button>
-            <Button onClick={createNote} disabled={!form.title.trim()}>Crear nota</Button>
+          <DialogFooter className="sm:justify-between w-full border-t border-amber-100 pt-4 mt-2">
+            <Button variant="ghost" className="text-slate-500 hover:text-slate-800" onClick={() => setOpen(false)}>Cancelar</Button>
+            <Button onClick={createNote} disabled={!form.title.trim()} className="bg-amber-500 hover:bg-amber-600 text-white shadow-sm">Guardar nota</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

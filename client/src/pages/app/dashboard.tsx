@@ -219,112 +219,114 @@ export default function Dashboard() {
           </CardContent>
         </Card>
       </div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Agenda Hoy */}
-        <Card className="shadow-sm border-border/60">
-          <CardHeader className="pb-3 border-b bg-muted/10">
-            <CardTitle className="text-base flex items-center gap-2">
-              <CalendarDays className="w-5 h-5 text-primary" />
-              Hoy en la Agenda
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {(summary.agenda?.today || []).length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
-                <CalendarDays className="w-10 h-10 mb-2 opacity-20" />
-                <p className="text-sm">Sin eventos para hoy</p>
+      <Card className="border-border/60 shadow-sm overflow-hidden">
+        <CardHeader className="bg-muted/30 border-b pb-4">
+          <CardTitle className="text-xl flex items-center gap-2">
+            <NotebookPen className="w-6 h-6 text-primary" />
+            Centro de Organización
+          </CardTitle>
+          <p className="text-sm text-muted-foreground mt-1">Tu agenda, próximos recordatorios y notas activas en un solo lugar.</p>
+        </CardHeader>
+        <CardContent className="p-0">
+          <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x">
+            {/* Agenda Hoy */}
+            <div className="flex flex-col">
+              <div className="p-4 bg-muted/10 border-b flex items-center gap-2 font-medium text-sm text-foreground">
+                <CalendarDays className="w-4 h-4 text-primary" /> Hoy en la Agenda
               </div>
-            ) : (
-              <div className="divide-y">
-                {(summary.agenda?.today || []).slice(0, 5).map((ev: any) => (
-                  <div key={`today-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
-                    <div className="w-1.5 h-full self-stretch rounded-full bg-primary/20 shrink-0"></div>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                        <Clock className="w-3.5 h-3.5" />
-                        <span>{ev.allDay ? "Todo el día" : new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span>
-                        <span className="font-medium text-[10px] uppercase px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground ml-auto">{ev.eventType}</span>
-                      </div>
-                    </div>
+              <div className="flex-1">
+                {(summary.agenda?.today || []).length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                    <CalendarDays className="w-8 h-8 mb-2 opacity-20" />
+                    <p className="text-sm">Sin eventos para hoy</p>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Próximos Recordatorios */}
-        <Card className="shadow-sm border-border/60">
-          <CardHeader className="pb-3 border-b bg-muted/10">
-            <CardTitle className="text-base flex items-center gap-2 text-orange-600">
-              <Clock className="w-5 h-5" />
-              Próximos Recordatorios
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {(summary.agenda?.upcoming || []).length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
-                <Clock className="w-10 h-10 mb-2 opacity-20" />
-                <p className="text-sm">Sin próximos eventos</p>
-              </div>
-            ) : (
-              <div className="divide-y">
-                {(summary.agenda?.upcoming || []).slice(0, 5).map((ev: any) => (
-                  <div key={`up-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
-                    <div className="w-10 h-10 rounded-md bg-orange-50 border border-orange-100 flex flex-col items-center justify-center shrink-0">
-                      <span className="text-[10px] font-bold text-orange-600 uppercase leading-none">{new Date(ev.startsAt).toLocaleString("es-AR", { month: "short" })}</span>
-                      <span className="text-sm font-bold text-orange-800 leading-none mt-0.5">{new Date(ev.startsAt).getDate()}</span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
-                      <p className="text-xs text-muted-foreground mt-0.5">{new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Notas Activas */}
-        <Card className="shadow-sm border-border/60">
-          <CardHeader className="pb-3 border-b bg-muted/10">
-            <CardTitle className="text-base flex items-center gap-2 text-indigo-600">
-              <NotebookPen className="w-5 h-5" />
-              Notas Activas
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            {(summary.notes?.active || []).length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
-                <NotebookPen className="w-10 h-10 mb-2 opacity-20" />
-                <p className="text-sm">Sin notas activas</p>
-              </div>
-            ) : (
-              <div className="divide-y">
-                {(summary.notes?.active || []).slice(0, 5).map((n: any) => {
-                  const isOverdue = n.remind_at && new Date(n.remind_at) < new Date();
-                  return (
-                    <div key={`note-${n.id}`} className={`p-4 hover:bg-muted/30 transition-colors ${isOverdue ? "bg-red-50/30" : ""}`}>
-                      <div className="flex items-start justify-between gap-2">
-                        <p className="font-semibold text-sm truncate text-foreground">{n.title}</p>
-                        {isOverdue && <div title="Vencida" className="shrink-0"><AlertCircle className="w-4 h-4 text-red-500" /></div>}
+                ) : (
+                  <div className="divide-y">
+                    {(summary.agenda?.today || []).slice(0, 5).map((ev: any) => (
+                      <div key={`today-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
+                        <div className="w-1.5 h-full self-stretch rounded-full bg-primary/20 shrink-0"></div>
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
+                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{ev.allDay ? "Todo el día" : new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</span>
+                            <span className="font-medium text-[10px] uppercase px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground ml-auto">{ev.eventType}</span>
+                          </div>
+                        </div>
                       </div>
-                      {n.remind_at && (
-                        <p className={`text-xs mt-1.5 flex items-center gap-1 font-medium ${isOverdue ? "text-red-600" : "text-indigo-600"}`}>
-                          <Clock className="w-3.5 h-3.5" />
-                          {new Date(n.remind_at).toLocaleString("es-AR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        </p>
-                      )}
-                    </div>
-                  );
-                })}
+                    ))}
+                  </div>
+                )}
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            </div>
+
+            {/* Próximos Recordatorios */}
+            <div className="flex flex-col">
+              <div className="p-4 bg-muted/10 border-b flex items-center gap-2 font-medium text-sm text-foreground">
+                <Clock className="w-4 h-4 text-orange-600" /> Próximos Recordatorios
+              </div>
+              <div className="flex-1">
+                {(summary.agenda?.upcoming || []).length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                    <Clock className="w-8 h-8 mb-2 opacity-20" />
+                    <p className="text-sm">Sin próximos eventos</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {(summary.agenda?.upcoming || []).slice(0, 5).map((ev: any) => (
+                      <div key={`up-${ev.id}`} className="p-4 hover:bg-muted/30 transition-colors flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-md bg-orange-50 border border-orange-100 flex flex-col items-center justify-center shrink-0">
+                          <span className="text-[10px] font-bold text-orange-600 uppercase leading-none">{new Date(ev.startsAt).toLocaleString("es-AR", { month: "short" })}</span>
+                          <span className="text-sm font-bold text-orange-800 leading-none mt-0.5">{new Date(ev.startsAt).getDate()}</span>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-semibold text-sm truncate text-foreground">{ev.title}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">{new Date(ev.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Notas Activas */}
+            <div className="flex flex-col">
+              <div className="p-4 bg-muted/10 border-b flex items-center gap-2 font-medium text-sm text-foreground">
+                <NotebookPen className="w-4 h-4 text-indigo-600" /> Notas Activas
+              </div>
+              <div className="flex-1">
+                {(summary.notes?.active || []).length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground flex flex-col items-center">
+                    <NotebookPen className="w-8 h-8 mb-2 opacity-20" />
+                    <p className="text-sm">Sin notas activas</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {(summary.notes?.active || []).slice(0, 5).map((n: any) => {
+                      const isOverdue = n.remind_at && new Date(n.remind_at) < new Date();
+                      return (
+                        <div key={`note-${n.id}`} className={`p-4 hover:bg-muted/30 transition-colors ${isOverdue ? "bg-red-50/30" : ""}`}>
+                          <div className="flex items-start justify-between gap-2">
+                            <p className="font-semibold text-sm truncate text-foreground">{n.title}</p>
+                            {isOverdue && <div title="Vencida" className="shrink-0"><AlertCircle className="w-4 h-4 text-red-500" /></div>}
+                          </div>
+                          {n.remind_at && (
+                            <p className={`text-xs mt-1.5 flex items-center gap-1 font-medium ${isOverdue ? "text-red-600" : "text-indigo-600"}`}>
+                              <Clock className="w-3.5 h-3.5" />
+                              {new Date(n.remind_at).toLocaleString("es-AR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
     </div>
   );

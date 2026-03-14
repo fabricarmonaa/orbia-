@@ -25,7 +25,7 @@ async function runMigrations() {
         // Prevent concurrent migration runners against the same DB
         await client.query("SELECT pg_advisory_lock(84726191)");
 
-        await client.query("BEGIN");
+        // Ensure the tracking table exists (outside any per-migration tx)
         await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
         version VARCHAR(255) PRIMARY KEY,
@@ -49,25 +49,34 @@ async function runMigrations() {
                 [file]
             );
 
-            if (rows.length === 0) {
-                console.log(`Running migration: ${file}`);
-                const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+            if (rows.length > 0) {
+                console.log(`Skipping applied migration: ${file}`);
+                continue;
+            }
+
+            console.log(`Running migration: ${file}`);
+            const sql = fs.readFileSync(path.join(migrationsDir, file), "utf8");
+
+            // Each migration runs in its own transaction so that on failure
+            // previously-committed migrations stay recorded and won't re-run.
+            try {
+                await client.query("BEGIN");
                 if (sql.trim()) {
-                    // Wrap in exception block if needed, but standard query is fine
                     await client.query(sql);
                 }
-                await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [file]);
-            } else {
-                console.log(`Skipping applied migration: ${file}`);
+                await client.query(
+                    "INSERT INTO schema_migrations (version) VALUES ($1)",
+                    [file]
+                );
+                await client.query("COMMIT");
+            } catch (err: any) {
+                await client.query("ROLLBACK");
+                console.error(`Migration failed: ${file}:`, err.message);
+                process.exit(1);
             }
         }
 
-        await client.query("COMMIT");
         console.log("All migrations applied successfully.");
-    } catch (err: any) {
-        await client.query("ROLLBACK");
-        console.error(`Migration failed:`, err.message);
-        process.exit(1);
     } finally {
         try {
             await client.query("SELECT pg_advisory_unlock(84726191)");

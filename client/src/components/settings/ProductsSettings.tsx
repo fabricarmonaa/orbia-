@@ -169,102 +169,140 @@ function FieldFormPanel({
   const needsOptions = ["SELECT", "MULTISELECT", "COLOR"].includes(form.fieldType);
 
   return (
-    <form onSubmit={onSubmit} className="space-y-5">
-      <div className="rounded-lg border bg-muted/20 p-3">
-        <p className="text-sm font-medium">1) Definí el dato que querés guardar</p>
-        <p className="text-xs text-muted-foreground mt-1">Pensá este campo como una pregunta que le vas a hacer al usuario al cargar o editar un producto.</p>
+    <form onSubmit={onSubmit} className="space-y-6">
+      <div className="bg-muted/30 border rounded-lg p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">1. Configuración básica</h3>
+          <p className="text-[13px] text-muted-foreground mt-0.5">Definí el nombre y qué tipo de información querés guardar.</p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label>Nombre del campo</Label>
+            <Input required value={form.label} onChange={(e) => onChange({ ...form, label: e.target.value })} placeholder="Ej: Material, Talle, Marca..." />
+          </div>
+
+          <div className="space-y-2">
+            <Label>¿Qué tipo de respuesta esperás?</Label>
+            <Select value={form.fieldType} onValueChange={(v) => onChange({ ...form, fieldType: v })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {FIELD_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {editingTypeWarning && (
+              <p className="text-[11px] text-amber-600 mt-1">El tipo está bloqueado porque ya hay productos usando este campo.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="space-y-2 flex flex-col justify-center">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Switch checked={form.required} onCheckedChange={(v) => onChange({ ...form, required: !!v })} />
+              <div>
+                <span className="text-sm font-medium">Hacer obligatorio</span>
+                <p className="text-[11px] text-muted-foreground">No se podrá guardar el producto sin este dato.</p>
+              </div>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer mt-3">
+              <Switch checked={form.isActive} onCheckedChange={(v) => onChange({ ...form, isActive: !!v })} />
+              <div>
+                <span className="text-sm font-medium">Campo activo</span>
+                <p className="text-[11px] text-muted-foreground">Ocultalo si dejás de usarlo temporalmente.</p>
+              </div>
+            </label>
+          </div>
+          
+          <div className="space-y-2">
+            <Label>Identificador interno del sistema</Label>
+            <Input
+              required
+              value={form.fieldKey}
+              onChange={(e) => onChange({ ...form, fieldKey: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })}
+              placeholder="ej: material_principal"
+              className="font-mono text-sm bg-muted/50"
+            />
+            <p className="text-[11px] text-muted-foreground">Se autocompleta. Solo caracteres permitidos.</p>
+          </div>
+        </div>
+
+        {needsOptions && (
+          <div className="space-y-2 pt-2 border-t">
+            <Label>Opciones posibles para elegir</Label>
+            <p className="text-[12px] text-muted-foreground mb-2">Escribí una opción por línea. Presioná Enter para separar.</p>
+            <textarea
+              className="w-full min-h-[120px] rounded-md border p-3 text-sm bg-background focus:ring-1 focus:ring-ring outline-none"
+              value={form.optionsRaw}
+              onChange={(e) => onChange({ ...form, optionsRaw: e.target.value })}
+              placeholder={"Algodón\nCuero\nSintético"}
+            />
+          </div>
+        )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="space-y-1">
-          <Label>Nombre del dato</Label>
-          <Input required value={form.label} onChange={(e) => onChange({ ...form, label: e.target.value })} placeholder="Ej: Color principal" />
+      <div className="bg-muted/10 border rounded-lg p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">2. Comportamiento especial</h3>
+          <p className="text-[13px] text-muted-foreground mt-0.5">Controlá cómo se comporta este campo al filtrar y visualizar datos.</p>
         </div>
 
-        <div className="space-y-1">
-          <Label>Identificador interno</Label>
-          <Input
-            required
-            value={form.fieldKey}
-            onChange={(e) => onChange({ ...form, fieldKey: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_") })}
-            placeholder="ej: color_principal"
-          />
-          <p className="text-xs text-muted-foreground">Se usa internamente. Solo minúsculas, números y guión bajo.</p>
-        </div>
-      </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 gap-y-5">
+          <div className="space-y-3">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <Switch checked={form.isFilterable} onCheckedChange={(v) => onChange({ ...form, isFilterable: !!v })} />
+              <span className="text-sm font-medium text-primary">Permitir filtrar por este campo</span>
+            </label>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <div className="space-y-1">
-          <Label>¿Qué tipo de respuesta esperás?</Label>
-          <Select value={form.fieldType} onValueChange={(v) => onChange({ ...form, fieldType: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {FIELD_TYPES.map((t) => (
-                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {editingTypeWarning && (
-            <p className="text-xs text-amber-600">Cambiar el tipo está bloqueado si el campo ya tiene datos en productos.</p>
-          )}
-        </div>
+            <div className={`space-y-1.5 transition-opacity ${form.isFilterable ? "opacity-100" : "opacity-40 pointer-events-none"}`}>
+              <Label className="text-[12px]">Formato del filtro en la lista</Label>
+              <Select value={form.filterType} onValueChange={(v) => onChange({ ...form, filterType: v })}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {FILTER_TYPES.map((t) => (
+                    <SelectItem key={t.value} value={t.value} className="text-xs">{t.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
 
-        <div className="space-y-1">
-          <Label>Orden de aparición</Label>
-          <Input
-            type="number"
-            min={0}
-            value={form.sortOrder}
-            onChange={(e) => onChange({ ...form, sortOrder: Number(e.target.value) })}
-          />
-          <p className="text-xs text-muted-foreground">0 aparece primero, luego 1, 2, 3...</p>
-        </div>
-
-        <div className="space-y-1">
-          <Label>¿Querés usarlo como filtro?</Label>
-          <Select value={form.filterType} onValueChange={(v) => onChange({ ...form, filterType: v })}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {FILTER_TYPES.map((t) => (
-                <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-muted-foreground">Elegí cómo se filtra este dato en la vista de productos.</p>
+          <div className="space-y-2">
+            <Label>Orden visual</Label>
+            <Input
+              type="number"
+              min={0}
+              value={form.sortOrder}
+              onChange={(e) => onChange({ ...form, sortOrder: Number(e.target.value) })}
+              className="w-24"
+            />
+            <p className="text-[11px] text-muted-foreground">Los números más bajos aparecen primero.</p>
+          </div>
         </div>
       </div>
 
-      {needsOptions && (
-        <div className="space-y-1">
-          <Label>Opciones disponibles (una por línea)</Label>
-          <textarea
-            className="w-full min-h-[90px] rounded border p-2 text-sm bg-background"
-            value={form.optionsRaw}
-            onChange={(e) => onChange({ ...form, optionsRaw: e.target.value })}
-            placeholder={"Negro\nBlanco\nRojo\nAzul"}
-          />
+      <div className="border rounded-lg p-4 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">3. Lugares donde se muestra</h3>
+          <p className="text-[13px] text-muted-foreground mt-0.5">Desmarcá lo que no quieras ver para evitar saturar las grillas.</p>
         </div>
-      )}
 
-      <div className="rounded-lg border p-3 space-y-3">
-        <p className="text-sm font-medium">2) Elegí dónde querés mostrar este dato</p>
-        <p className="text-xs text-muted-foreground">Esto define dónde lo va a ver el equipo: al cargar, al revisar, en listados o en exportaciones.</p>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-2 gap-x-4 text-sm">
-          <label className="flex items-center gap-2"><Switch checked={form.required} onCheckedChange={(v) => onChange({ ...form, required: !!v })} />Dato obligatorio al guardar</label>
-          <label className="flex items-center gap-2"><Switch checked={form.isActive} onCheckedChange={(v) => onChange({ ...form, isActive: !!v })} />Campo activo</label>
-          <label className="flex items-center gap-2"><Switch checked={form.isFilterable} onCheckedChange={(v) => onChange({ ...form, isFilterable: !!v })} />Disponible como filtro</label>
-          <label className="flex items-center gap-2"><Switch checked={form.showInForm} onCheckedChange={(v) => onChange({ ...form, showInForm: !!v })} />Mostrar al crear/editar producto</label>
-          <label className="flex items-center gap-2"><Switch checked={form.showInDetail} onCheckedChange={(v) => onChange({ ...form, showInDetail: !!v })} />Mostrar en la ficha de detalle</label>
-          <label className="flex items-center gap-2"><Switch checked={form.showInTable} onCheckedChange={(v) => onChange({ ...form, showInTable: !!v })} />Mostrar en el listado</label>
-          <label className="flex items-center gap-2"><Switch checked={form.showInExport} onCheckedChange={(v) => onChange({ ...form, showInExport: !!v })} />Incluir al exportar</label>
-          <label className="flex items-center gap-2"><Switch checked={form.showInDocument} onCheckedChange={(v) => onChange({ ...form, showInDocument: !!v })} />Incluir en documentos</label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-y-3 gap-x-6 text-[13.5px] bg-muted/5 p-3 rounded-md">
+          <label className="flex items-center gap-2 cursor-pointer"><Switch checked={form.showInForm} onCheckedChange={(v) => onChange({ ...form, showInForm: !!v })} /> En los formularios (crear/editar)</label>
+          <label className="flex items-center gap-2 cursor-pointer"><Switch checked={form.showInDetail} onCheckedChange={(v) => onChange({ ...form, showInDetail: !!v })} /> En la ficha de detalle (lectura)</label>
+          <label className="flex items-center gap-2 cursor-pointer"><Switch checked={form.showInTable} onCheckedChange={(v) => onChange({ ...form, showInTable: !!v })} /> En las tablas / listados generales</label>
+          <label className="flex items-center gap-2 cursor-pointer"><Switch checked={form.showInExport} onCheckedChange={(v) => onChange({ ...form, showInExport: !!v })} /> En exportaciones de Excel</label>
+          <label className="flex items-center gap-2 cursor-pointer"><Switch checked={form.showInDocument} onCheckedChange={(v) => onChange({ ...form, showInDocument: !!v })} /> En documentos (remitos, presupuestos)</label>
         </div>
       </div>
 
-      <Button type="submit" disabled={submitting}>
-        {submitting ? "Guardando..." : submitText}
-      </Button>
+      <div className="flex justify-end pt-2">
+        <Button type="submit" disabled={submitting} className="min-w-[150px]">
+          {submitting ? "Guardando..." : submitText}
+        </Button>
+      </div>
     </form>
   );
 }

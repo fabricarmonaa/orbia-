@@ -19,14 +19,16 @@ SET is_default = true
 FROM pick_one p
 WHERE sd.id = p.id;
 
--- 1) Backfill from legacy status_id -> order_statuses.code -> status_definitions.code
+-- 1) Backfill from legacy status_id -> order_statuses.name -> status_definitions.code
+-- NOTE: order_statuses has no 'code' column; derive code from 'name' via REGEXP_REPLACE,
+--       consistent with all other migrations that use this table.
 UPDATE orders o
 SET status_code = sd.code
 FROM order_statuses os
 JOIN status_definitions sd
   ON sd.tenant_id = os.tenant_id
  AND sd.entity_type = 'ORDER'
- AND upper(sd.code) = upper(os.code)
+ AND sd.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(os.name, '')), '[^A-Z0-9]+', '_', 'g'), 40)
 WHERE (o.status_code IS NULL OR btrim(o.status_code) = '')
   AND o.status_id IS NOT NULL
   AND os.id = o.status_id;

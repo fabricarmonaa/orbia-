@@ -1,5 +1,5 @@
 #!/bin/sh
-set -e
+set -eu
 
 echo "[Web Entrypoint] Waiting for postgres..."
 DB_HOST="${POSTGRES_HOST:-postgres}"
