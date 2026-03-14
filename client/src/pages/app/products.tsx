@@ -169,6 +169,8 @@ export default function ProductsPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any>(null);
   const [importMapping, setImportMapping] = useState<Record<string, string>>({});
+  const [importDuplicatePolicy, setImportDuplicatePolicy] = useState<"skip_row" | "keep_existing" | "update_existing">("update_existing");
+  const [importSelectedExtraColumns, setImportSelectedExtraColumns] = useState<string[]>([]);
   const [quoteOpen, setQuoteOpen] = useState(false);
 
   const selectionStorageKey = `orbia:products:selected:${user?.tenantId ?? "anon"}`;
@@ -256,6 +258,8 @@ export default function ProductsPage() {
       if (!res.ok) throw new Error(json?.error || "No se pudo previsualizar");
       setImportPreview(json);
       setImportMapping(json.suggestedMapping || {});
+      const suggested = Array.isArray(json.customFieldCandidates) ? json.customFieldCandidates.map((c: any) => c.matchedHeader).filter(Boolean) : [];
+      setImportSelectedExtraColumns(suggested);
     } catch (err: any) {
       toast({ title: "Error de importación", description: err?.message || "No se pudo previsualizar", variant: "destructive" });
     }
@@ -267,10 +271,13 @@ export default function ProductsPage() {
       const fd = new FormData();
       fd.append("file", importFile);
       fd.append("mapping", JSON.stringify(importMapping));
+      fd.append("onDuplicate", importDuplicatePolicy);
+      fd.append("includeExtraColumns", "true");
+      fd.append("selectedExtraColumns", JSON.stringify(importSelectedExtraColumns));
       const res = await apiRequest("POST", "/api/products/import/commit", fd);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "No se pudo importar");
-      toast({ title: "Productos importados", description: `Procesados: ${json?.summary?.imported_count || 0}` });
+      toast({ title: "Productos importados", description: `OK: ${json?.summary?.imported_count || 0} · Duplicados: ${json?.summary?.duplicated_count || 0} · Errores: ${json?.summary?.errors_count || 0}` });
       setImportPreview(null);
       setImportFile(null);
       await fetchProducts(filters);
@@ -551,10 +558,30 @@ export default function ProductsPage() {
             <Button variant="outline" onClick={previewProductImport}>Previsualizar</Button>
             <Button onClick={commitProductImport} disabled={!importPreview}>Importar</Button>
           </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 border rounded-md p-3 bg-muted/20">
+            <div className="space-y-1">
+              <Label>Si se detecta un producto duplicado</Label>
+              <Select value={importDuplicatePolicy} onValueChange={(v: any) => setImportDuplicatePolicy(v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="update_existing">Actualizar con los datos del archivo</SelectItem>
+                  <SelectItem value="keep_existing">Conservar el producto actual</SelectItem>
+                  <SelectItem value="skip_row">Omitir la fila duplicada</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Campos personalizados detectados</Label>
+              <p className="text-xs text-muted-foreground">Si hay columnas extra que coinciden con campos personalizados, se intentan importar también.</p>
+            </div>
+          </div>
           {importPreview ? (
             <div className="space-y-3">
-              <div className="text-sm bg-muted/40 p-2 rounded border">
-                <strong>Columnas detectadas:</strong> {importPreview.detectedHeaders?.join(", ") || "-"}
+              <div className="text-sm bg-muted/40 p-2 rounded border space-y-1">
+                <div><strong>Columnas detectadas:</strong> {importPreview.detectedHeaders?.join(", ") || "-"}</div>
+                {importPreview.extraColumns?.length ? <div><strong>Columnas no reconocidas:</strong> {importPreview.extraColumns.join(", ")}</div> : null}
+                {Array.isArray(importPreview.warnings) && importPreview.warnings.length ? <ul className="list-disc ml-5 text-amber-700">{importPreview.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}</ul> : null}
               </div>
               <div className="border rounded-md overflow-hidden">
                 <table className="w-full text-sm">
@@ -659,7 +686,7 @@ export default function ProductsPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Stock</Label>
+              <Label>Stock inicial</Label>
               <div className="flex flex-wrap gap-2">
                 {(["all", "in", "out", "low"] as const).map((stock) => (
                   <Button key={stock} size="sm" variant={draftFilters.stock === stock ? "default" : "outline"} onClick={() => setDraftFilters((p) => ({ ...p, stock }))}>
@@ -811,8 +838,8 @@ export default function ProductsPage() {
 
                     <Dialog open={productDialog} onOpenChange={setProductDialog}>
                       <DialogTrigger asChild><Button><Plus className="h-4 w-4 mr-2" />Nuevo producto</Button></DialogTrigger>
-                      <DialogContent>
-                        <DialogHeader><DialogTitle>Nuevo producto</DialogTitle></DialogHeader>
+                      <DialogContent className="w-[95vw] max-w-3xl max-h-[88vh] overflow-y-auto p-0">
+                        <DialogHeader className="px-6 pt-6 pb-2 border-b sticky top-0 bg-background z-10"><DialogTitle>Nuevo producto</DialogTitle></DialogHeader>
                         <ProductForm
                           value={newProduct}
                           onChange={setNewProduct}
@@ -931,8 +958,8 @@ export default function ProductsPage() {
       </div>
 
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Editar producto</DialogTitle></DialogHeader>
+        <DialogContent className="w-[95vw] max-w-3xl max-h-[88vh] overflow-y-auto p-0">
+          <DialogHeader className="px-6 pt-6 pb-2 border-b sticky top-0 bg-background z-10"><DialogTitle>Editar producto</DialogTitle></DialogHeader>
           <ProductForm
             value={editForm}
             onChange={setEditForm}
@@ -1015,9 +1042,14 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
   const costPreview = Number(value.costAmount || 0);
   const marginPreview = Number(value.marginPct || 0);
   const estimated = costPreview * (1 + marginPreview / 100);
+  const visibleCustomFields = customFieldDefinitions.filter((field) => field.isActive !== false && field.config?.showInForm !== false);
 
   return (
-    <form className="space-y-3" onSubmit={onSubmit}>
+    <form className="space-y-5 px-6 py-4" onSubmit={onSubmit}>
+      <div className="rounded-md border p-3 bg-muted/20">
+        <p className="text-sm font-medium">Completá los datos principales del producto</p>
+        <p className="text-xs text-muted-foreground">Si tenés muchos campos personalizados, podés desplazarte dentro de este formulario sin perder el botón de guardado.</p>
+      </div>
       <div className="space-y-2">
         <Label>Nombre</Label>
         <Input required value={value.name} onChange={(e) => onChange({ ...value, name: e.target.value })} placeholder="Nombre del producto" />
@@ -1027,7 +1059,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         <Textarea value={value.description} onChange={(e) => onChange({ ...value, description: e.target.value })} rows={3} placeholder="Detalles del producto o servicio" />
       </div>
       <div className="space-y-2">
-        <Label>Modo de precio</Label>
+        <Label>Cómo definís el precio</Label>
         <Select value={value.pricingMode || "MANUAL"} onValueChange={(v: any) => onChange({ ...value, pricingMode: v })}>
           <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -1080,7 +1112,7 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
         </div>
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <Label>CÓDIGO</Label>
+            <Label>Código interno / SKU</Label>
             {scannerEnabled && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -1101,14 +1133,19 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
       </div>
       {stockMode === "global" ? (
         <div className="space-y-2">
-          <Label>Stock</Label>
+          <Label>Stock inicial</Label>
           <Input type="number" min={0} value={value.stock} onChange={(e) => onChange({ ...value, stock: e.target.value })} placeholder="0" />
         </div>
       ) : (
         <p className="text-xs text-muted-foreground">El stock se gestiona por sucursal. Usá “Stock” del producto para ajustar por cada sucursal.</p>
       )}
 
-      {customFieldDefinitions.filter((field) => field.isActive !== false && field.config?.showInForm !== false).map((field) => {
+      {visibleCustomFields.length > 0 && (
+        <div className="rounded-md border p-3">
+          <p className="text-sm font-medium mb-1">Datos personalizados</p>
+          <p className="text-xs text-muted-foreground mb-3">Estos campos los definiste en Configuración → Productos.</p>
+          <div className="space-y-3">
+            {visibleCustomFields.map((field) => {
         const fieldValue = (value.customFieldValues || {})[field.fieldKey];
         const options = Array.isArray(field.config?.options) ? field.config.options : [];
         const setFieldValue = (next: any) => onChange({ ...value, customFieldValues: { ...(value.customFieldValues || {}), [field.fieldKey]: next } });
@@ -1163,9 +1200,14 @@ function ProductForm({ value, onChange, categories, stockMode, onSubmit, submitT
             <Input type={inputType} value={fieldValue ?? ""} onChange={(e) => setFieldValue(e.target.value)} required={field.required} />
           </div>
         );
-      })}
+            })}
+          </div>
+        </div>
+      )}
 
-      <Button type="submit" className="w-full">{submitText}</Button>
+      <div className="sticky bottom-0 bg-background/95 backdrop-blur py-3 border-t">
+        <Button type="submit" className="w-full">{submitText}</Button>
+      </div>
     </form>
   );
 }

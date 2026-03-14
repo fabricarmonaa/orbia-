@@ -7,7 +7,7 @@ import { z } from "zod";
 import { enforceBranchScope, requireRoleAny, tenantAuth } from "../auth";
 import { validateBody } from "../middleware/validate";
 import { db } from "../db";
-import { branches, customers, importJobs, productStockByBranch, products, purchaseItems, purchases, stockLevels, stockMovements } from "@shared/schema";
+import { branches, customers, importJobs, productCustomFieldDefinitions, productCustomFieldValues, productStockByBranch, products, purchaseItems, purchases, stockLevels, stockMovements } from "@shared/schema";
 import { buildPreview, normalizeRowsForCommit } from "../services/excel-import";
 import { sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
@@ -43,12 +43,14 @@ const commitCustomerBody = z.object({
   mapping: z.record(z.string()),
   includeExtraColumns: z.coerce.boolean().optional().default(false),
   selectedExtraColumns: z.array(z.string()).optional().default([]),
+  onDuplicate: z.enum(["skip_row", "keep_existing", "update_existing"]).optional().default("skip_row"),
 });
 
 const commitProductBody = z.object({
   mapping: z.record(z.string()),
   includeExtraColumns: z.coerce.boolean().optional().default(false),
   selectedExtraColumns: z.array(z.string()).optional().default([]),
+  onDuplicate: z.enum(["skip_row", "keep_existing", "update_existing"]).optional().default("update_existing"),
 });
 
 function parseJsonField(value: unknown, fallback: any) {
@@ -62,6 +64,16 @@ function parseJsonField(value: unknown, fallback: any) {
 
 function cleanupUploadedFile(req: any) {
   if (req.file?.path) fs.promises.unlink(req.file.path).catch(() => { });
+}
+
+function normalizeImportHeader(value: string) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^a-z0-9_]/g, "");
 }
 
 export function registerImportRoutes(app: Express) {
@@ -96,8 +108,39 @@ export function registerImportRoutes(app: Express) {
   app.post("/api/products/import/preview", tenantAuth, requireRoleAny(["admin", "staff"]), enforceBranchScope, excelUpload.single("file"), async (req, res) => {
     try {
       if (!req.file?.path) return res.status(400).json({ error: "Falta archivo .xlsx en field file", code: "MISSING_FILE_FIELD" });
+      const tenantId = req.auth!.tenantId!;
       const data = buildPreview("products", req.file.path);
-      return res.json({ status: data.warnings.length ? "NEEDS_MAPPING" : "OK", ...data });
+
+      const defs = await db
+        .select({ id: productCustomFieldDefinitions.id, label: productCustomFieldDefinitions.label, fieldKey: productCustomFieldDefinitions.fieldKey })
+        .from(productCustomFieldDefinitions)
+        .where(and(eq(productCustomFieldDefinitions.tenantId, tenantId), eq(productCustomFieldDefinitions.isActive, true)));
+
+      const headerSet = new Set((data.detectedHeaders || []).map(normalizeImportHeader));
+      const usedHeaders = new Set(Object.values(data.suggestedMapping || {}).map(normalizeImportHeader));
+      const customFieldCandidates = defs
+        .map((d) => ({
+          id: d.id,
+          label: d.label,
+          fieldKey: d.fieldKey,
+          matchedHeader: [normalizeImportHeader(d.label), normalizeImportHeader(d.fieldKey)].find((k) => headerSet.has(k)) || null,
+        }))
+        .filter((d) => d.matchedHeader && !usedHeaders.has(d.matchedHeader));
+
+      const warnings = [...(data.warnings || [])];
+      if (data.extraColumns?.length) {
+        warnings.push(`Estas columnas no están mapeadas y podrían omitirse: ${data.extraColumns.join(", ")}`);
+      }
+      if (customFieldCandidates.length) {
+        warnings.push(`Se detectaron columnas que pueden mapearse a campos personalizados: ${customFieldCandidates.map((c) => c.label).join(", ")}`);
+      }
+
+      return res.json({
+        status: warnings.length ? "NEEDS_MAPPING" : "OK",
+        ...data,
+        warnings,
+        customFieldCandidates,
+      });
     } catch (err: any) {
       return res.status(400).json({ error: err?.message || "No se pudo leer el archivo", code: "IMPORT_PREVIEW_ERROR" });
     } finally {
@@ -300,10 +343,25 @@ export function registerImportRoutes(app: Express) {
         imported_count: 0,
         created_count: 0,
         updated_count: 0,
+        duplicated_count: 0,
         skipped_count: 0,
         errors_count: 0,
+        custom_field_updates: 0,
       };
       const rowErrors: Array<{ rowNumber: number; errors: string[] }> = [];
+
+      const activeCustomDefs = await db
+        .select({ id: productCustomFieldDefinitions.id, fieldKey: productCustomFieldDefinitions.fieldKey, label: productCustomFieldDefinitions.label })
+        .from(productCustomFieldDefinitions)
+        .where(and(eq(productCustomFieldDefinitions.tenantId, tenantId), eq(productCustomFieldDefinitions.isActive, true)));
+      const customDefsByHeader = new Map<string, { id: number; fieldKey: string; label: string }>();
+      for (const def of activeCustomDefs) {
+        customDefsByHeader.set(normalizeImportHeader(def.fieldKey), def);
+        customDefsByHeader.set(normalizeImportHeader(def.label), def);
+      }
+
+      const extraHeadersToUse = payload.includeExtraColumns ? payload.selectedExtraColumns.map((h) => normalizeImportHeader(h)) : [];
+      const selectedCustomDefs = extraHeadersToUse.map((h) => customDefsByHeader.get(h)).filter(Boolean) as Array<{ id: number; fieldKey: string; label: string }>;
 
       await db.transaction(async (tx) => {
         for (const row of rows) {
@@ -329,18 +387,31 @@ export function registerImportRoutes(app: Express) {
             [existing] = await tx.select().from(products).where(and(eq(products.tenantId, tenantId), ilike(products.name, name))).limit(1);
           }
 
+          let productId: number | null = null;
           if (existing) {
-            await tx.update(products).set({
-              name,
-              description,
-              price: String(price.toFixed(2)),
-              sku: sku || existing.sku,
-              stock: stockValue === null ? existing.stock : Math.max(0, Math.round(stockValue)),
-              isActive: true,
-            }).where(eq(products.id, existing.id));
-            summary.updated_count += 1;
+            summary.duplicated_count += 1;
+            if (payload.onDuplicate === "skip_row") {
+              summary.skipped_count += 1;
+              summary.errors_count += 1;
+              rowErrors.push({ rowNumber: row.rowNumber, errors: ["Se detectó un producto duplicado (SKU o nombre). Configurá si querés conservar o actualizar."] });
+              continue;
+            }
+            if (payload.onDuplicate === "keep_existing") {
+              productId = existing.id;
+            } else {
+              await tx.update(products).set({
+                name,
+                description,
+                price: String(price.toFixed(2)),
+                sku: sku || existing.sku,
+                stock: stockValue === null ? existing.stock : Math.max(0, Math.round(stockValue)),
+                isActive: true,
+              }).where(eq(products.id, existing.id));
+              summary.updated_count += 1;
+              productId = existing.id;
+            }
           } else {
-            await tx.insert(products).values({
+            const inserted = await tx.insert(products).values({
               tenantId,
               name,
               description,
@@ -354,9 +425,25 @@ export function registerImportRoutes(app: Express) {
               sku: sku || null,
               categoryId: null,
               isActive: true,
-            });
+            }).returning({ id: products.id });
+            productId = inserted[0]?.id || null;
             summary.created_count += 1;
           }
+
+          if (productId && selectedCustomDefs.length) {
+            for (const def of selectedCustomDefs) {
+              const rawVal = String((row.raw as any)[normalizeImportHeader(def.label)] || (row.raw as any)[normalizeImportHeader(def.fieldKey)] || "").trim();
+              if (!rawVal) continue;
+              const existingValue = await tx.select({ id: productCustomFieldValues.id }).from(productCustomFieldValues).where(and(eq(productCustomFieldValues.tenantId, tenantId), eq(productCustomFieldValues.productId, productId), eq(productCustomFieldValues.fieldDefinitionId, def.id))).limit(1);
+              if (existingValue[0]) {
+                await tx.update(productCustomFieldValues).set({ valueText: rawVal }).where(eq(productCustomFieldValues.id, existingValue[0].id));
+              } else {
+                await tx.insert(productCustomFieldValues).values({ tenantId, productId, fieldDefinitionId: def.id, valueText: rawVal });
+              }
+              summary.custom_field_updates += 1;
+            }
+          }
+
           summary.imported_count += 1;
         }
 
@@ -375,7 +462,7 @@ export function registerImportRoutes(app: Express) {
         });
       });
 
-      return res.json({ summary, errors: rowErrors });
+      return res.json({ summary, errors: rowErrors, duplicatePolicy: payload.onDuplicate });
     } catch (err: any) {
       if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
         return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });
@@ -403,6 +490,8 @@ export function registerImportRoutes(app: Express) {
 
       const summary = {
         imported_count: 0,
+        duplicated_count: 0,
+        updated_count: 0,
         skipped_count: 0,
         errors_count: 0,
       };
@@ -433,8 +522,26 @@ export function registerImportRoutes(app: Express) {
           }
 
           if (duplicate) {
-            summary.skipped_count += 1;
-            rowErrors.push({ rowNumber: row.rowNumber, errors: ["Duplicado por doc/email/teléfono"] });
+            summary.duplicated_count += 1;
+            if (payload.onDuplicate === "skip_row") {
+              summary.skipped_count += 1;
+              summary.errors_count += 1;
+              rowErrors.push({ rowNumber: row.rowNumber, errors: ["Se detectó un cliente duplicado (doc/email/teléfono)."] });
+              continue;
+            }
+            if (payload.onDuplicate === "update_existing") {
+              await tx.update(customers).set({
+                name: sanitizeShortText(String(normalized.name || duplicate.name || ""), 200),
+                phone: phone || duplicate.phone || null,
+                email: email || duplicate.email || null,
+                doc: doc || duplicate.doc || null,
+                address: normalizeNullable(normalized.address || duplicate.address, 250),
+                notes: normalizeNullable(normalized.notes || duplicate.notes, 500),
+                updatedAt: new Date(),
+              }).where(eq(customers.id, duplicate.id));
+              summary.updated_count += 1;
+            }
+            summary.imported_count += 1;
             continue;
           }
 
@@ -465,7 +572,7 @@ export function registerImportRoutes(app: Express) {
         });
       });
 
-      return res.json({ summary, errors: rowErrors });
+      return res.json({ summary, errors: rowErrors, duplicatePolicy: payload.onDuplicate });
     } catch (err: any) {
       if (err?.message?.startsWith("EXCEL_IMPORT_MISSING_COLUMNS|")) {
         return res.status(400).json({ error: err.message.split("|")[1], code: "EXCEL_IMPORT_ERROR" });

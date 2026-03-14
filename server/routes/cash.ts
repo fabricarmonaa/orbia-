@@ -23,6 +23,7 @@ const cashMovementSchema = z.object({
   sessionId: z.coerce.number().int().positive().optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
   associatedCost: z.coerce.number().min(0).optional().default(0),
+  impactsCash: z.coerce.boolean().optional().default(true),
 });
 
 const editCashMovementSchema = z.object({
@@ -32,6 +33,7 @@ const editCashMovementSchema = z.object({
   method: sanitizeOptionalShort(40),
   category: sanitizeOptionalShort(80).nullable(),
   description: sanitizeOptionalLong(200).nullable(),
+  impactsCash: z.coerce.boolean().optional(),
 });
 
 export function registerCashRoutes(app: Express) {
@@ -61,7 +63,7 @@ export function registerCashRoutes(app: Express) {
         userId: req.auth!.userId,
         openingAmount: String(req.body.openingAmount || 0),
         status: "open",
-      });
+      } as any);
       await refreshMetricsForDate(tenantId, new Date());
       res.status(201).json({ data });
     } catch {
@@ -200,7 +202,8 @@ export function registerCashRoutes(app: Express) {
         branchId,
         associatedCost: String(payload.associatedCost || 0),
         createdById: userId,
-      });
+        impactsCash: payload.impactsCash !== false,
+      } as any);
 
       await refreshMetricsForDate(tenantId, new Date());
       const responseBody = { data };
@@ -242,7 +245,8 @@ export function registerCashRoutes(app: Express) {
         method: payload.method || existing.method,
         category: payload.category !== undefined ? payload.category : existing.category,
         description: payload.description !== undefined ? payload.description : existing.description,
-      });
+        impactsCash: payload.impactsCash !== undefined ? payload.impactsCash : (existing as any).impactsCash,
+      } as any);
 
       await refreshMetricsForDate(tenantId, new Date());
       res.json({ data: updated });

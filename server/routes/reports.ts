@@ -78,6 +78,90 @@ function validateExportToken(token: string) {
   return { tenantId: Number(tid), fileName };
 }
 
+const money = (value: unknown) => `$${Number(value || 0).toLocaleString("es-AR", { maximumFractionDigits: 2 })}`;
+const fmtDate = (value: Date | string | null | undefined) => {
+  if (!value) return "-";
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("es-AR", { day: "2-digit", month: "2-digit", year: "numeric" });
+};
+
+function ensurePdfPage(doc: PDFKit.PDFDocument, minBottom = 90) {
+  if (doc.y > doc.page.height - minBottom) doc.addPage();
+}
+
+function pdfHeader(doc: PDFKit.PDFDocument, opts: { title: string; tenantName: string; subtitle?: string; period?: string }) {
+  doc.fillColor("#111827").font("Helvetica-Bold").fontSize(18).text(opts.title, { align: "left" });
+  doc.moveDown(0.2);
+  doc.fillColor("#374151").font("Helvetica").fontSize(10).text(`Negocio: ${opts.tenantName}`);
+  doc.text(`Fecha de emisión: ${fmtDate(new Date())}`);
+  if (opts.period) doc.text(`Período analizado: ${opts.period}`);
+  if (opts.subtitle) doc.text(opts.subtitle);
+  doc.moveDown(0.8);
+  doc.strokeColor("#E5E7EB").lineWidth(1).moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).stroke();
+  doc.moveDown(0.6);
+}
+
+function pdfSectionTitle(doc: PDFKit.PDFDocument, title: string) {
+  ensurePdfPage(doc);
+  doc.fillColor("#111827").font("Helvetica-Bold").fontSize(12).text(title);
+  doc.moveDown(0.35);
+}
+
+function pdfKvRow(doc: PDFKit.PDFDocument, label: string, value: string) {
+  ensurePdfPage(doc);
+  doc.font("Helvetica-Bold").fontSize(10).fillColor("#1F2937").text(`${label}: `, { continued: true });
+  doc.font("Helvetica").fillColor("#111827").text(value);
+}
+
+function pdfSimpleTable(doc: PDFKit.PDFDocument, columns: Array<{ key: string; label: string; width: number; align?: "left" | "right" }>, rows: Array<Record<string, unknown>>) {
+  const left = doc.page.margins.left;
+  const usableWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const totalWidth = columns.reduce((acc, c) => acc + c.width, 0);
+  const scale = usableWidth / totalWidth;
+  const widths = columns.map((c) => c.width * scale);
+
+  const drawHeader = () => {
+    ensurePdfPage(doc, 120);
+    let x = left;
+    const y = doc.y;
+    doc.rect(left, y - 2, usableWidth, 18).fill("#F3F4F6");
+    columns.forEach((c, i) => {
+      doc.fillColor("#111827").font("Helvetica-Bold").fontSize(9).text(c.label, x + 4, y + 2, { width: widths[i] - 8, align: c.align || "left" });
+      x += widths[i];
+    });
+    doc.moveDown(1.1);
+  };
+
+  drawHeader();
+  rows.forEach((row) => {
+    ensurePdfPage(doc, 95);
+    let x = left;
+    const y = doc.y;
+    columns.forEach((c, i) => {
+      const raw = row[c.key];
+      const text = typeof raw === "number" ? raw.toLocaleString("es-AR") : String(raw ?? "-");
+      doc.fillColor("#111827").font("Helvetica").fontSize(9).text(text, x + 4, y, { width: widths[i] - 8, align: c.align || "left" });
+      x += widths[i];
+    });
+    doc.moveDown(1);
+    doc.strokeColor("#F3F4F6").lineWidth(0.8).moveTo(left, doc.y - 3).lineTo(left + usableWidth, doc.y - 3).stroke();
+    if (doc.y > doc.page.height - 120) drawHeader();
+  });
+}
+
+function pdfFooter(doc: PDFKit.PDFDocument) {
+  const range = doc.bufferedPageRange();
+  for (let i = range.start; i < range.start + range.count; i += 1) {
+    doc.switchToPage(i);
+    const text = `Generado por Orbia · Página ${i + 1} de ${range.count}`;
+    doc.font("Helvetica").fontSize(8).fillColor("#6B7280").text(text, doc.page.margins.left, doc.page.height - 35, {
+      width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+      align: "center",
+    });
+  }
+}
+
 function resolveReportRange(input: z.infer<typeof reportsOverviewQuerySchema>) {
   const today = new Date();
   today.setHours(23, 59, 59, 999);
@@ -170,11 +254,12 @@ async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSc
     WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime < $3`,
     [tenantId, prevStart, prevEnd]
   );
+  const hasImpactsCash = await hasTableColumn("cash_movements", "impacts_cash");
   const cash = await pool.query(`
     SELECT COALESCE(SUM(CASE WHEN type='ingreso' THEN amount::numeric ELSE 0 END),0) cash_in,
            COALESCE(SUM(CASE WHEN type='egreso' THEN amount::numeric ELSE 0 END),0) cash_out
     FROM cash_movements
-    WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3${filters.branchId ? " AND branch_id = $4" : ""}`,
+    WHERE tenant_id = $1 AND created_at >= $2 AND created_at < $3${filters.branchId ? " AND branch_id = $4" : ""}${hasImpactsCash ? " AND impacts_cash = true" : ""}`,
     filters.branchId ? [tenantId, new Date(`${filters.from}T00:00:00.000Z`), new Date(`${filters.to}T23:59:59.999Z`), filters.branchId] : [tenantId, new Date(`${filters.from}T00:00:00.000Z`), new Date(`${filters.to}T23:59:59.999Z`)]
   );
   const top = await pool.query(`
@@ -481,8 +566,10 @@ export function registerReportRoutes(app: Express) {
     try {
       const filters = reportFiltersSchema.parse(req.query);
       const params: any[] = [req.auth!.tenantId!, new Date(`${filters.from}T00:00:00.000Z`), new Date(`${filters.to}T23:59:59.999Z`)];
+      const hasImpactsCash = await hasTableColumn("cash_movements", "impacts_cash");
       let where = "tenant_id = $1 AND created_at >= $2 AND created_at < $3";
       if (filters.branchId) { params.push(filters.branchId); where += ` AND branch_id = $${params.length}`; }
+      if (hasImpactsCash) where += " AND impacts_cash = true";
       const byType = await pool.query(`SELECT type, COALESCE(SUM(amount::numeric),0) amount FROM cash_movements WHERE ${where} GROUP BY type`, params);
       const daily = await pool.query(`SELECT DATE(created_at) date, COALESCE(SUM(CASE WHEN type='ingreso' THEN amount::numeric ELSE 0 END),0) cash_in, COALESCE(SUM(CASE WHEN type='egreso' THEN amount::numeric ELSE 0 END),0) cash_out FROM cash_movements WHERE ${where} GROUP BY DATE(created_at) ORDER BY DATE(created_at)`, params);
       const cashIn = Number((byType.rows.find((r: any) => r.type === "ingreso")?.amount) || 0);
@@ -505,19 +592,23 @@ export function registerReportRoutes(app: Express) {
       const tenant = await db.select({ name: tenants.name }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
       let rows: Record<string, unknown>[] = [];
+      let overviewPayload: any = null;
+      const includeSections = {
+        summary: body.params?.includeSummary !== false,
+        topProducts: body.params?.includeTopProducts !== false,
+        lowProducts: body.params?.includeLowProducts !== false,
+        categories: body.params?.includeCategories !== false,
+        analysis: body.params?.includeAnalysis !== false,
+      };
+
       if (body.type === "kpis") {
         const data = await kpiData(tenantId, reportFiltersSchema.parse(body.params));
         rows = [data.kpis as any];
       } else if (body.type === "overview") {
         const query = reportsOverviewQuerySchema.parse(body.params || {});
         const range = resolveReportRange(query);
-        const querystring = new URLSearchParams({
-          period: query.period,
-          ...(query.from ? { from: query.from } : {}),
-          ...(query.to ? { to: query.to } : {}),
-          ...(query.branchId ? { branchId: String(query.branchId) } : {}),
-        }).toString();
-        const [summary, productsTop, productsLow, categories] = await Promise.all([
+
+        const [summary, productsTop, productsLow, categories, previous] = await Promise.all([
           pool.query(`
             SELECT COALESCE(SUM(total_amount::numeric),0) sales_total,
                    COUNT(*)::int sales_count,
@@ -560,29 +651,47 @@ export function registerReportRoutes(app: Express) {
             ORDER BY revenue DESC
             LIMIT 10
           `, [tenantId, range.from, range.to]),
+          pool.query(`
+            SELECT COALESCE(SUM(total_amount::numeric),0) previous_total
+            FROM sales
+            WHERE tenant_id = $1 AND sale_datetime >= $2 AND sale_datetime <= $3
+          `, [tenantId, new Date(range.from.getTime() - (range.to.getTime() - range.from.getTime())), range.from]),
         ]);
+
+        const summaryData = {
+          salesTotal: Number((summary.rows[0] as any)?.sales_total || 0),
+          salesCount: Number((summary.rows[0] as any)?.sales_count || 0),
+          avgTicket: Number((summary.rows[0] as any)?.avg_ticket || 0),
+          previousTotal: Number((previous.rows[0] as any)?.previous_total || 0),
+        };
+        const growthPct = summaryData.previousTotal > 0 ? ((summaryData.salesTotal - summaryData.previousTotal) / summaryData.previousTotal) * 100 : null;
+
+        overviewPayload = {
+          periodLabel: `${fmtDate(range.from)} a ${fmtDate(range.to)}`,
+          includeSections,
+          summary: { ...summaryData, growthPct },
+          topProducts: productsTop.rows.map((r: any) => ({ name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
+          lowProducts: productsLow.rows.map((r: any) => ({ name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
+          categories: categories.rows.map((r: any) => ({ category: r.category, revenue: Number(r.revenue || 0) })),
+        };
 
         rows = [
           {
-            period_from: range.from.toISOString(),
-            period_to: range.to.toISOString(),
-            sales_total: Number((summary.rows[0] as any)?.sales_total || 0),
-            sales_count: Number((summary.rows[0] as any)?.sales_count || 0),
-            avg_ticket: Number((summary.rows[0] as any)?.avg_ticket || 0),
+            periodo: overviewPayload.periodLabel,
+            ingresos_totales: summaryData.salesTotal,
+            ventas: summaryData.salesCount,
+            ticket_promedio: summaryData.avgTicket,
+            variacion_pct: growthPct,
           },
-          ...productsTop.rows.map((r: any) => ({ section: "top_products", name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
-          ...productsLow.rows.map((r: any) => ({ section: "low_products", name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
-          ...categories.rows.map((r: any) => ({ section: "category_revenue", category: r.category, revenue: Number(r.revenue || 0) })),
-          { section: "source", notes: `/api/reports/overview?${querystring}` },
+          ...(includeSections.topProducts ? overviewPayload.topProducts.map((r: any) => ({ seccion: "Más vendidos", producto: r.name, cantidad: r.qty, ingresos: r.revenue })) : []),
+          ...(includeSections.lowProducts ? overviewPayload.lowProducts.map((r: any) => ({ seccion: "Menos vendidos", producto: r.name, cantidad: r.qty, ingresos: r.revenue })) : []),
+          ...(includeSections.categories ? overviewPayload.categories.map((r: any) => ({ seccion: "Categorías", categoria: r.category, ingresos: r.revenue })) : []),
         ];
       } else {
-        const queryPath = body.type === "sales" ? "/api/reports/sales" : body.type === "products" ? "/api/reports/products" : body.type === "customers" ? "/api/reports/customers" : "/api/reports/cash";
-        // internal fetch-less path: rerun query logic
-        if (body.type === "sales") rows = (await pool.query(`SELECT * FROM sales WHERE tenant_id=$1 ORDER BY sale_datetime DESC LIMIT 300`, [tenantId])).rows;
-        if (body.type === "products") rows = (await pool.query(`SELECT * FROM products WHERE tenant_id=$1 ORDER BY id DESC LIMIT 300`, [tenantId])).rows;
-        if (body.type === "customers") rows = (await pool.query(`SELECT * FROM customers WHERE tenant_id=$1 ORDER BY id DESC LIMIT 300`, [tenantId])).rows;
-        if (body.type === "cash") rows = (await pool.query(`SELECT * FROM cash_movements WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 300`, [tenantId])).rows;
-        void queryPath;
+        if (body.type === "sales") rows = (await pool.query(`SELECT id, sale_datetime, total_amount, payment_method FROM sales WHERE tenant_id=$1 ORDER BY sale_datetime DESC LIMIT 300`, [tenantId])).rows;
+        if (body.type === "products") rows = (await pool.query(`SELECT id, name, sku, price, stock, is_active FROM products WHERE tenant_id=$1 ORDER BY id DESC LIMIT 300`, [tenantId])).rows;
+        if (body.type === "customers") rows = (await pool.query(`SELECT id, name, email, phone, doc, created_at FROM customers WHERE tenant_id=$1 ORDER BY id DESC LIMIT 300`, [tenantId])).rows;
+        if (body.type === "cash") rows = (await pool.query(`SELECT id, type, amount, method, category, created_at FROM cash_movements WHERE tenant_id=$1 ORDER BY created_at DESC LIMIT 300`, [tenantId])).rows;
       }
 
       if (body.format === "csv") {
@@ -593,13 +702,81 @@ export function registerReportRoutes(app: Express) {
         XLSX.utils.book_append_sheet(wb, ws, "Reporte");
         XLSX.writeFile(wb, filePath);
       } else {
-        const doc = new PDFDocument({ margin: 40, size: "A4" });
+        const doc = new PDFDocument({ margin: 40, size: "A4", bufferPages: true });
         const stream = fs.createWriteStream(filePath);
         doc.pipe(stream);
-        doc.fontSize(16).text(`Reporte ${body.type.toUpperCase()}`);
-        doc.fontSize(10).text(`Tenant: ${tenant[0]?.name || tenantId}`);
-        doc.moveDown();
-        rows.slice(0, 80).forEach((row, idx) => doc.fontSize(9).text(`${idx + 1}. ${JSON.stringify(row)}`));
+
+        if (body.type === "overview" && overviewPayload) {
+          pdfHeader(doc as any, {
+            title: "Reporte de Ventas",
+            tenantName: tenant[0]?.name || String(tenantId),
+            subtitle: "Resumen ejecutivo de desempeño comercial.",
+            period: overviewPayload.periodLabel,
+          });
+
+          if (overviewPayload.includeSections.summary) {
+            pdfSectionTitle(doc as any, "Resumen ejecutivo");
+            pdfKvRow(doc as any, "Ingresos totales", money(overviewPayload.summary.salesTotal));
+            pdfKvRow(doc as any, "Cantidad de ventas", String(overviewPayload.summary.salesCount));
+            pdfKvRow(doc as any, "Ticket promedio", money(overviewPayload.summary.avgTicket));
+            pdfKvRow(doc as any, "Variación vs período anterior", overviewPayload.summary.growthPct == null ? "-" : `${Number(overviewPayload.summary.growthPct).toFixed(1)}%`);
+            doc.moveDown(0.6);
+          }
+
+          if (overviewPayload.includeSections.topProducts && overviewPayload.topProducts.length) {
+            pdfSectionTitle(doc as any, "Productos más vendidos");
+            pdfSimpleTable(doc as any, [
+              { key: "name", label: "Producto", width: 260 },
+              { key: "qty", label: "Unidades", width: 90, align: "right" },
+              { key: "revenue", label: "Ingresos", width: 120, align: "right" },
+            ], overviewPayload.topProducts.map((r: any) => ({ ...r, revenue: money(r.revenue) })));
+            doc.moveDown(0.5);
+          }
+
+          if (overviewPayload.includeSections.lowProducts && overviewPayload.lowProducts.length) {
+            pdfSectionTitle(doc as any, "Productos de menor rotación");
+            pdfSimpleTable(doc as any, [
+              { key: "name", label: "Producto", width: 260 },
+              { key: "qty", label: "Unidades", width: 90, align: "right" },
+              { key: "revenue", label: "Ingresos", width: 120, align: "right" },
+            ], overviewPayload.lowProducts.map((r: any) => ({ ...r, revenue: money(r.revenue) })));
+            doc.moveDown(0.5);
+          }
+
+          if (overviewPayload.includeSections.categories && overviewPayload.categories.length) {
+            pdfSectionTitle(doc as any, "Categorías destacadas");
+            pdfSimpleTable(doc as any, [
+              { key: "category", label: "Categoría", width: 280 },
+              { key: "revenue", label: "Ingresos", width: 180, align: "right" },
+            ], overviewPayload.categories.map((r: any) => ({ ...r, revenue: money(r.revenue) })));
+          }
+
+          if (overviewPayload.includeSections.analysis) {
+            pdfSectionTitle(doc as any, "Análisis y observaciones");
+            const top = overviewPayload.topProducts[0];
+            const cat = overviewPayload.categories[0];
+            doc.font("Helvetica").fontSize(10).fillColor("#111827");
+            doc.text(`• ${top ? `El producto con mejor desempeño fue "${top.name}".` : "No hay ventas suficientes para identificar producto líder."}`);
+            doc.text(`• ${cat ? `La categoría más fuerte fue "${cat.category}" con ${money(cat.revenue)}.` : "No hay categorías con ventas para analizar."}`);
+            if (overviewPayload.summary.growthPct != null) {
+              doc.text(`• La variación del período fue ${Number(overviewPayload.summary.growthPct).toFixed(1)}% respecto al período previo.`);
+            }
+          }
+        } else {
+          pdfHeader(doc as any, {
+            title: `Reporte ${String(body.type).toUpperCase()}`,
+            tenantName: tenant[0]?.name || String(tenantId),
+            subtitle: "Exportación tabular",
+          });
+          if (!rows.length) {
+            doc.font("Helvetica").fontSize(10).text("No hay datos para este período.");
+          } else {
+            const cols = Object.keys(rows[0]).slice(0, 6).map((key) => ({ key, label: key.replace(/_/g, " "), width: 90 }));
+            pdfSimpleTable(doc as any, cols, rows.slice(0, 120));
+          }
+        }
+
+        pdfFooter(doc as any);
         doc.end();
         await new Promise<void>((resolve) => stream.on("finish", () => resolve()));
       }

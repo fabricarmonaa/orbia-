@@ -380,8 +380,10 @@ export default function PurchasesPage() {
               <Button onClick={previewImport}>Preview</Button>
               {preview && (
                 <div className="space-y-3 mt-4">
-                  <div className="text-sm bg-muted/40 p-2 rounded border">
-                    <strong>Columnas detectadas:</strong> {preview.detectedHeaders?.join(", ") || "-"}
+                  <div className="text-sm bg-muted/40 p-2 rounded border space-y-1">
+                    <div><strong>Columnas detectadas:</strong> {preview.detectedHeaders?.join(", ") || "-"}</div>
+                    {preview.extraColumns?.length ? <div><strong>Columnas no reconocidas:</strong> {preview.extraColumns.join(", ")}</div> : null}
+                    {Array.isArray(preview.warnings) && preview.warnings.length ? <ul className="list-disc ml-5 text-amber-700">{preview.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}</ul> : null}
                   </div>
                   <div className="border rounded-md overflow-hidden">
                     <table className="w-full text-sm">

@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { isValidEmail, isValidPhone } from "@shared/validation/contact";
 
@@ -48,6 +49,7 @@ export default function CustomersPage() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importPreview, setImportPreview] = useState<any>(null);
   const [importMapping, setImportMapping] = useState<Record<string, string>>({});
+  const [importDuplicatePolicy, setImportDuplicatePolicy] = useState<"skip_row" | "keep_existing" | "update_existing">("skip_row");
 
   const selected = useMemo(() => list.find((c) => c.id === selectedId) || null, [list, selectedId]);
 
@@ -231,10 +233,11 @@ export default function CustomersPage() {
       const fd = new FormData();
       fd.append("file", importFile);
       fd.append("mapping", JSON.stringify(importMapping));
+      fd.append("onDuplicate", importDuplicatePolicy);
       const res = await apiRequest("POST", "/api/customers/import/commit", fd);
       const json = await res.json();
       if (!res.ok) throw new Error(json?.error || "No se pudo importar");
-      toast({ title: "Clientes importados", description: `Procesados: ${json?.summary?.imported_count || 0}` });
+      toast({ title: "Clientes importados", description: `OK: ${json?.summary?.imported_count || 0} · Duplicados: ${json?.summary?.duplicated_count || 0} · Errores: ${json?.summary?.errors_count || 0}` });
       setImportPreview(null);
       setImportFile(null);
       await load();
@@ -270,10 +273,23 @@ export default function CustomersPage() {
             <Button variant="outline" onClick={previewExcelImport}>Previsualizar</Button>
             <Button onClick={commitExcelImport} disabled={!importPreview}>Importar</Button>
           </div>
+          <div className="border rounded-md p-3 bg-muted/20 space-y-1">
+            <Label>Si se detecta un cliente duplicado</Label>
+            <Select value={importDuplicatePolicy} onValueChange={(v: any) => setImportDuplicatePolicy(v)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="skip_row">Omitir fila duplicada</SelectItem>
+                <SelectItem value="keep_existing">Conservar cliente existente</SelectItem>
+                <SelectItem value="update_existing">Actualizar cliente existente</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {importPreview ? (
             <div className="space-y-3">
-              <div className="text-sm bg-muted/40 p-2 rounded border">
-                <strong>Columnas detectadas:</strong> {importPreview.detectedHeaders?.join(", ") || "-"}
+              <div className="text-sm bg-muted/40 p-2 rounded border space-y-1">
+                <div><strong>Columnas detectadas:</strong> {importPreview.detectedHeaders?.join(", ") || "-"}</div>
+                {importPreview.extraColumns?.length ? <div><strong>Columnas no reconocidas:</strong> {importPreview.extraColumns.join(", ")}</div> : null}
+                {Array.isArray(importPreview.warnings) && importPreview.warnings.length ? <ul className="list-disc ml-5 text-amber-700">{importPreview.warnings.map((w: string, i: number) => <li key={i}>{w}</li>)}</ul> : null}
               </div>
               <div className="border rounded-md overflow-hidden">
                 <table className="w-full text-sm">
