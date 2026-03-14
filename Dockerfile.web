@@ -20,6 +20,8 @@ COPY --from=build /app/package*.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/uploads ./uploads
+COPY --from=build /app/migrations ./migrations
+COPY --from=build /app/script ./script
 
 ## Runtime migration scripts/files (used by npm run migrations:run at startup)
 COPY --from=build /app/drizzle.config.ts ./drizzle.config.ts
