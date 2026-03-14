@@ -82,6 +82,13 @@ const lookupQuerySchema = z.object({
   code: z.string().transform((value) => normalizeProductCode(sanitizeShortText(value, 120))).refine((value) => value.length > 0, "Código requerido"),
 });
 
+
+function isProductCustomFieldsSchemaMissing(err: any) {
+  const code = String(err?.code || "");
+  const message = String(err?.message || "").toLowerCase();
+  return code === "42P01" || message.includes("product_custom_field_definitions") || message.includes("product_custom_field_values") || message.includes("relation \"product_custom_field");
+}
+
 function toNumber(value: string | number | null | undefined) {
   if (value === null || value === undefined) return 0;
   return Number(value);
@@ -423,6 +430,10 @@ export function registerProductRoutes(app: Express) {
       const data = await getCustomFieldDefinitions(tenantId);
       res.json({ data });
     } catch (err: any) {
+      if (isProductCustomFieldsSchemaMissing(err)) {
+        return res.json({ data: [] });
+      }
+      console.error("[products] PRODUCT_CUSTOM_FIELDS_LIST_ERROR", { code: err?.code, message: err?.message });
       res.status(500).json({ error: err.message || "No se pudieron listar campos personalizados" });
     }
   });
@@ -452,6 +463,8 @@ export function registerProductRoutes(app: Express) {
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Campo personalizado inválido", code: "PRODUCT_CUSTOM_FIELD_INVALID", details: err.errors });
       if (err?.code === "23505") return res.status(409).json({ error: "La clave interna ya existe", code: "PRODUCT_CUSTOM_FIELD_DUPLICATE" });
+      if (isProductCustomFieldsSchemaMissing(err)) return res.status(503).json({ error: "Custom fields no disponibles: aplicar migraciones de productos", code: "PRODUCT_CUSTOM_FIELDS_SCHEMA_MISSING" });
+      console.error("[products] PRODUCT_CUSTOM_FIELD_CREATE_ERROR", { code: err?.code, message: err?.message });
       res.status(500).json({ error: err.message || "No se pudo crear el campo" });
     }
   });
@@ -486,6 +499,8 @@ export function registerProductRoutes(app: Express) {
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Campo personalizado inválido", code: "PRODUCT_CUSTOM_FIELD_INVALID", details: err.errors });
       if (err?.code === "23505") return res.status(409).json({ error: "La clave interna ya existe", code: "PRODUCT_CUSTOM_FIELD_DUPLICATE" });
+      if (isProductCustomFieldsSchemaMissing(err)) return res.status(503).json({ error: "Custom fields no disponibles: aplicar migraciones de productos", code: "PRODUCT_CUSTOM_FIELDS_SCHEMA_MISSING" });
+      console.error("[products] PRODUCT_CUSTOM_FIELD_UPDATE_ERROR", { code: err?.code, message: err?.message });
       res.status(500).json({ error: err.message || "No se pudo actualizar el campo" });
     }
   });
@@ -518,14 +533,23 @@ export function registerProductRoutes(app: Express) {
         }
       }
 
-      const [statuses, fieldDefs, customValuesRows, customFilterFacets] = await Promise.all([
-        getStatuses(tenantId, "PRODUCT", true),
-        getCustomFieldDefinitions(tenantId),
-        productIds.length
-          ? db.select().from(productCustomFieldValues).where(and(eq(productCustomFieldValues.tenantId, tenantId), inArray(productCustomFieldValues.productId, productIds)))
-          : Promise.resolve([] as any[]),
-        buildCustomFilterFacets(tenantId, filteredIds),
-      ]);
+      let fieldDefs: any[] = [];
+      let customValuesRows: any[] = [];
+      let customFilterFacets: Record<string, any[]> = {};
+
+      const statuses = await getStatuses(tenantId, "PRODUCT", true);
+      try {
+        fieldDefs = await getCustomFieldDefinitions(tenantId);
+        customValuesRows = productIds.length
+          ? await db.select().from(productCustomFieldValues).where(and(eq(productCustomFieldValues.tenantId, tenantId), inArray(productCustomFieldValues.productId, productIds)))
+          : [];
+        customFilterFacets = await buildCustomFilterFacets(tenantId, filteredIds);
+      } catch (err: any) {
+        if (!isProductCustomFieldsSchemaMissing(err)) throw err;
+        fieldDefs = [];
+        customValuesRows = [];
+        customFilterFacets = {};
+      }
 
       const statusMap = new Map(statuses.map((s) => [s.code, s]));
       const defsById = new Map(fieldDefs.map((d) => [d.id, d]));
