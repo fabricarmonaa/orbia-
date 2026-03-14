@@ -64,6 +64,37 @@ export default function TenantLogin() {
     }
   }
 
+
+
+  async function handleGoogleLogin() {
+    if (!tenantCode.trim()) {
+      toast({ title: "Ingresá tu código de negocio", description: "Para continuar con Google necesitamos el código del negocio.", variant: "destructive" });
+      return;
+    }
+    try {
+      const res = await fetch(`/api/auth/google/start?tenantCode=${encodeURIComponent(tenantCode.trim())}`);
+      const data = await res.json();
+      if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google");
+      const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
+      if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente de Google.");
+      const listener = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        if (event.data?.type !== "orbia-google-auth") return;
+        window.removeEventListener("message", listener);
+        if (!event.data?.ok) {
+          toast({ title: "No se pudo ingresar con Google", description: event.data?.message || "Intentá nuevamente.", variant: "destructive" });
+          return;
+        }
+        login(event.data.token, event.data.user);
+        toast({ title: "Sesión iniciada", description: "Ingresaste con Google correctamente." });
+        setLocation("/app");
+      };
+      window.addEventListener("message", listener);
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message || "No se pudo iniciar Google Sign-In", variant: "destructive" });
+    }
+  }
+
   async function handleForgotPassword(e: React.FormEvent) {
     e.preventDefault();
     if (!tenantCode.trim()) {
@@ -175,6 +206,11 @@ export default function TenantLogin() {
               >
                 {loading ? "Ingresando..." : "Ingresar"}
               </Button>
+              {mode === "admin" && (
+                <Button type="button" variant="outline" className="w-full" onClick={handleGoogleLogin}>
+                  Ingresar con Google
+                </Button>
+              )}
             </form>
           </CardContent>
         </Card>

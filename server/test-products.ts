@@ -8,7 +8,7 @@ async function test() {
   
   try {
     console.log('Testing queryProductsByFilters (no pagination)...');
-    const res = await queryProductsByFilters(tenantId, false, { status: 'all' }, { noPagination: true });
+    const res = await queryProductsByFilters(tenantId, false, { status: 'all' } as any, { noPagination: true });
     console.log('queryProductsByFilters OK');
   } catch(e:any) {
     console.error('queryProductsByFilters FAILED:', e.message);

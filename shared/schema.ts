@@ -39,3 +39,4 @@ export * from './schema/notes';
 export * from './schema/whatsapp';
 
 export * from './schema/password-resets';
+export * from './schema/google';
