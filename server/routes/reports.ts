@@ -33,7 +33,7 @@ const salesQuerySchema = reportFiltersSchema.extend({
 });
 
 const reportsOverviewQuerySchema = z.object({
-  period: z.enum(["today", "week", "month", "custom"]).optional().default("month"),
+  period: z.enum(["today", "week", "month", "year", "custom"]).optional().default("month"),
   from: z.string().date().optional(),
   to: z.string().date().optional(),
   branchId: z.coerce.number().int().positive().optional(),
@@ -98,6 +98,13 @@ function resolveReportRange(input: z.infer<typeof reportsOverviewQuerySchema>) {
   if (input.period === "week") {
     const from = new Date();
     from.setDate(from.getDate() - 6);
+    from.setHours(0, 0, 0, 0);
+    return { from, to: today };
+  }
+
+  if (input.period === "year") {
+    const from = new Date();
+    from.setMonth(0, 1);
     from.setHours(0, 0, 0, 0);
     return { from, to: today };
   }
@@ -349,11 +356,11 @@ export function registerReportRoutes(app: Express) {
           ORDER BY count DESC
         `, [tenantId, range.from, range.to]),
         pool.query(`
-          SELECT EXTRACT(HOUR FROM s.sale_datetime)::int hour, COUNT(*)::int count
+          SELECT EXTRACT(HOUR FROM s.sale_datetime)::int AS hour_of_day, COUNT(*)::int count
           FROM sales s
           WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}
           GROUP BY EXTRACT(HOUR FROM s.sale_datetime)
-          ORDER BY hour
+          ORDER BY hour_of_day
         `, paramsCurrent),
         pool.query(`
           SELECT EXTRACT(DOW FROM s.sale_datetime)::int dow, COUNT(*)::int count
@@ -374,7 +381,7 @@ export function registerReportRoutes(app: Express) {
         ? (topProducts.rows.slice(0, 3).reduce((acc: number, row: any) => acc + Number(row.revenue || 0), 0) / salesTotal) * 100
         : 0;
 
-      const hourMap = new Map<number, number>((byHour.rows as any[]).map((r) => [Number(r.hour), Number(r.count)]));
+      const hourMap = new Map<number, number>((byHour.rows as any[]).map((r) => [Number(r.hour_of_day), Number(r.count)]));
       const byHourSeries = Array.from({ length: 24 }).map((_, hour) => ({ hour, count: hourMap.get(hour) || 0 }));
 
       const dowNames = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
