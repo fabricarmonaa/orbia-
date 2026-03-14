@@ -9,6 +9,7 @@ import { login, getToken, getUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useBranding } from "@/context/BrandingContext";
 import { BrandLogo } from "@/components/branding/BrandLogo";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 export default function TenantLogin() {
   const [, setLocation] = useLocation();
@@ -19,6 +20,9 @@ export default function TenantLogin() {
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<"admin" | "cashier">("admin");
   const [pin, setPin] = useState("");
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotLoading, setForgotLoading] = useState(false);
   const { toast } = useToast();
   const { appBranding } = useBranding();
 
@@ -57,6 +61,38 @@ export default function TenantLogin() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function handleForgotPassword(e: React.FormEvent) {
+    e.preventDefault();
+    if (!tenantCode.trim()) {
+      toast({
+        title: "Ingresá tu código de negocio",
+        description: "Necesitamos el código de negocio para ubicar tu cuenta.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setForgotLoading(true);
+    try {
+      const res = await fetch("/api/auth/forgot-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tenantCode, email: forgotEmail }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "No se pudo procesar la solicitud");
+      toast({
+        title: "Revisá tu correo",
+        description: data.message || "Si el correo está registrado, te enviamos un enlace de recuperación.",
+      });
+      setForgotOpen(false);
+      setForgotEmail("");
+    } catch (err: any) {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setForgotLoading(false);
     }
   }
 
@@ -116,6 +152,13 @@ export default function TenantLogin() {
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </Button>
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => setForgotOpen(true)}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      Olvidé mi contraseña
+                    </button>
                   </div>
                 </>
               ) : (
@@ -138,6 +181,43 @@ export default function TenantLogin() {
         <p className="text-center text-xs text-muted-foreground mt-6">
           {appBranding.orbiaName || "ORBIA"} Platform v1.0
         </p>
+
+        <Dialog open={forgotOpen} onOpenChange={setForgotOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Recuperar contraseña</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Ingresá tu correo y te enviaremos un enlace para restablecer tu contraseña.
+              </p>
+              <div className="space-y-2">
+                <Label htmlFor="forgot-tenant">Código de negocio</Label>
+                <Input
+                  id="forgot-tenant"
+                  value={tenantCode}
+                  onChange={(e) => setTenantCode(e.target.value)}
+                  placeholder="Código del negocio"
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="forgot-email">Correo</Label>
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  placeholder="tu-correo@empresa.com"
+                  required
+                />
+              </div>
+              <Button type="submit" className="w-full" disabled={forgotLoading}>
+                {forgotLoading ? "Enviando..." : "Enviar enlace de recuperación"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

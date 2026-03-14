@@ -8,6 +8,7 @@ import { BrandingProvider } from "@/context/BrandingContext";
 import NotFound from "@/pages/not-found";
 import SuperLogin from "@/pages/super-login";
 import TenantLogin from "@/pages/tenant-login";
+import ResetPasswordPage from "@/pages/reset-password";
 import OwnerDashboard from "@/pages/owner/index";
 import AppLayout from "@/pages/app/layout";
 import PublicTracking from "@/pages/public-tracking";
@@ -27,6 +28,7 @@ function Router() {
         <Redirect to="/login" />
       </Route>
       <Route path="/login" component={TenantLogin} />
+      <Route path="/reset-password" component={ResetPasswordPage} />
       <Route path="/owner/login" component={SuperLogin} />
       <Route path="/owner" component={OwnerDashboard} />
       <Route path="/super" component={OwnerDashboard} />
