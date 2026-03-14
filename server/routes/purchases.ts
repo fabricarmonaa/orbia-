@@ -3,8 +3,9 @@ import { z } from "zod";
 import { and, count, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
+import { cashStorage } from "../storage/cash";
 import { tenantAuth, requireRoleAny, enforceBranchScope } from "../auth";
-import { purchases, purchaseItems, products, stockLevels, stockMovements, cashMovements } from "@shared/schema";
+import { purchases, purchaseItems, products, stockLevels, stockMovements } from "@shared/schema";
 import { validateBody, validateQuery, validateParams } from "../middleware/validate";
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 
@@ -124,7 +125,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
         // Objetivo A: registrar egreso de caja atomicamente dentro del mismo tx
         const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
         if (openSession) {
-          await tx.insert(cashMovements).values({
+          await cashStorage.insertCashMovementWithTx(tx as any, {
             tenantId,
             branchId: branchId ?? null,
             sessionId: openSession.id,
@@ -255,7 +256,7 @@ export function registerPurchaseCrudRoutes(app: Express) {
         // Objetivo A: registrar egreso de caja atomicamente dentro del mismo tx
         const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
         if (openSession) {
-          await tx.insert(cashMovements).values({
+          await cashStorage.insertCashMovementWithTx(tx as any, {
             tenantId,
             branchId: branchId ?? null,
             sessionId: openSession.id,
