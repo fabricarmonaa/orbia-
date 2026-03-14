@@ -90,7 +90,8 @@ export const productCustomFieldDefinitions = pgTable(
     config: jsonb("config").notNull().default({}), // Ej: { options: ["Rojo", "Azul"] }
     isActive: boolean("is_active").notNull().default(true),
     isFilterable: boolean("is_filterable").notNull().default(false), // Si aparece como filtro en UI
-    filterType: varchar("filter_type", { length: 40 }).default("EXACT"), // EXACT, RANGE
+    filterType: varchar("filter_type", { length: 40 }).default("EXACT"), // EXACT, RANGE, FACET
+    archivedAt: timestamp("archived_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [

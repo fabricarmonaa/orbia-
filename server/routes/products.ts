@@ -246,17 +246,32 @@ async function upsertProductCustomFieldValues(tenantId: number, productId: numbe
   }
 }
 
-async function getCustomFieldDefinitions(tenantId: number) {
+async function getCustomFieldDefinitions(tenantId: number, includeArchived = false) {
+  const conditions: any[] = [eq(productCustomFieldDefinitions.tenantId, tenantId)];
+  if (!includeArchived) {
+    conditions.push(sql`${productCustomFieldDefinitions.archivedAt} IS NULL`);
+  }
   const defs = await db
     .select()
     .from(productCustomFieldDefinitions)
-    .where(eq(productCustomFieldDefinitions.tenantId, tenantId))
+    .where(and(...conditions))
     .orderBy(asc(productCustomFieldDefinitions.sortOrder), asc(productCustomFieldDefinitions.id));
   return defs.map((d) => ({ ...d, config: normalizeCustomFieldConfig(d.config) }));
 }
 
+async function countFieldValues(tenantId: number, fieldDefinitionId: number): Promise<number> {
+  const [row] = await db
+    .select({ count: sql<number>`COUNT(*)::int` })
+    .from(productCustomFieldValues)
+    .where(and(
+      eq(productCustomFieldValues.tenantId, tenantId),
+      eq(productCustomFieldValues.fieldDefinitionId, fieldDefinitionId),
+    ));
+  return Number(row?.count ?? 0);
+}
+
 async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number[], customFilters: Record<string, any>) {
-  if (!baseIds.length || !customFilters || Object.keys(customFilters).length === 0) return baseIds;
+  if (!baseIds || !baseIds.length || !customFilters || Object.keys(customFilters).length === 0) return baseIds;
   const defs = await db
     .select()
     .from(productCustomFieldDefinitions)
@@ -278,7 +293,7 @@ async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number
         FROM product_custom_field_values
         WHERE tenant_id = ${tenantId}
           AND field_definition_id = ${def.id}
-          AND product_id = ANY(${ids})
+          AND product_id = ANY(ARRAY[${sql.raw(ids.join(','))}]::int[])
           AND (${Number.isFinite(min) ? sql`value_number >= ${String(min)}` : sql`1=1`})
           AND (${Number.isFinite(max) ? sql`value_number <= ${String(max)}` : sql`1=1`})
       `)).rows as any;
@@ -289,7 +304,7 @@ async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number
         FROM product_custom_field_values
         WHERE tenant_id = ${tenantId}
           AND field_definition_id = ${def.id}
-          AND product_id = ANY(${ids})
+          AND product_id = ANY(ARRAY[${sql.raw(ids.join(','))}]::int[])
           AND value_boolean = ${boolValue}
       `)).rows as any;
     } else if (def.fieldType === "MULTISELECT") {
@@ -299,10 +314,10 @@ async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number
         FROM product_custom_field_values
         WHERE tenant_id = ${tenantId}
           AND field_definition_id = ${def.id}
-          AND product_id = ANY(${ids})
+          AND product_id = ANY(ARRAY[${sql.raw(ids.join(','))}]::int[])
           AND EXISTS (
             SELECT 1 FROM jsonb_array_elements_text(COALESCE(value_text::jsonb, '[]'::jsonb)) AS j(v)
-            WHERE j.v = ANY(${arr.map(String)})
+            WHERE j.v = ANY(ARRAY[${sql.raw(arr.map(v => `'${String(v).replace(/'/g, "''")}'`).join(','))}]::text[])
           )
       `)).rows as any;
     } else {
@@ -312,8 +327,8 @@ async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number
         FROM product_custom_field_values
         WHERE tenant_id = ${tenantId}
           AND field_definition_id = ${def.id}
-          AND product_id = ANY(${ids})
-          AND value_text = ANY(${arr.map(String)})
+          AND product_id = ANY(ARRAY[${sql.raw(ids.join(','))}]::int[])
+          AND value_text = ANY(ARRAY[${sql.raw(arr.map(v => `'${String(v).replace(/'/g, "''")}'`).join(','))}]::text[])
       `)).rows as any;
     }
     current = new Set(rows.map((r) => Number(r.productId)));
@@ -322,7 +337,7 @@ async function filterProductIdsByCustomFilters(tenantId: number, baseIds: number
 }
 
 async function buildCustomFilterFacets(tenantId: number, productIds: number[]) {
-  if (!productIds.length) return {};
+  if (!productIds || !productIds.length) return {};
   const defs = await db
     .select()
     .from(productCustomFieldDefinitions)
@@ -336,7 +351,7 @@ async function buildCustomFilterFacets(tenantId: number, productIds: number[]) {
         FROM product_custom_field_values
         WHERE tenant_id = ${tenantId}
           AND field_definition_id = ${def.id}
-          AND product_id = ANY(${productIds})
+          AND product_id = ANY(ARRAY[${sql.raw(productIds.join(','))}]::int[])
         GROUP BY COALESCE(value_boolean, false)
       `)).rows as any[];
       result[def.fieldKey] = rows.map((r) => ({ value: Boolean(r.value), count: Number(r.count) }));
@@ -350,7 +365,7 @@ async function buildCustomFilterFacets(tenantId: number, productIds: number[]) {
              LATERAL jsonb_array_elements_text(COALESCE(f.value_text::jsonb, '[]'::jsonb)) v(value)
         WHERE f.tenant_id = ${tenantId}
           AND f.field_definition_id = ${def.id}
-          AND f.product_id = ANY(${productIds})
+          AND f.product_id = ANY(ARRAY[${sql.raw(productIds.join(','))}]::int[])
         GROUP BY v.value
         ORDER BY count DESC
       `)).rows as any[];
@@ -363,7 +378,7 @@ async function buildCustomFilterFacets(tenantId: number, productIds: number[]) {
       FROM product_custom_field_values
       WHERE tenant_id = ${tenantId}
         AND field_definition_id = ${def.id}
-        AND product_id = ANY(${productIds})
+        AND product_id = ANY(ARRAY[${sql.raw(productIds.join(','))}]::int[])
         AND value_text IS NOT NULL
       GROUP BY value_text
       ORDER BY count DESC
@@ -469,6 +484,25 @@ export function registerProductRoutes(app: Express) {
     }
   });
 
+  app.get("/api/products/custom-fields/:id/usage", tenantAuth, requireTenantAdmin, requireFeature("products"), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+      const [def] = await db
+        .select()
+        .from(productCustomFieldDefinitions)
+        .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)))
+        .limit(1);
+      if (!def) return res.status(404).json({ error: "Campo no encontrado" });
+      const count = await countFieldValues(tenantId, id);
+      res.json({ data: { count } });
+    } catch (err: any) {
+      if (isProductCustomFieldsSchemaMissing(err)) return res.json({ data: { count: 0 } });
+      console.error("[products] CUSTOM_FIELD_USAGE_ERROR", { message: err?.message });
+      res.status(500).json({ error: err.message || "No se pudo obtener uso del campo" });
+    }
+  });
+
   app.put("/api/products/custom-fields/:id", tenantAuth, requireTenantAdmin, requireFeature("products"), blockBranchScope, async (req, res) => {
     try {
       const tenantId = req.auth!.tenantId!;
@@ -479,6 +513,26 @@ export function registerProductRoutes(app: Express) {
         ...(bodyRaw.label !== undefined ? { label: sanitizeShortText(bodyRaw.label, 160) } : {}),
         ...(bodyRaw.fieldKey !== undefined ? { fieldKey: sanitizeShortText(bodyRaw.fieldKey.toLowerCase().replace(/\s+/g, "_"), 80) } : {}),
       };
+
+      // Guard: block field type changes if the field already has stored values
+      if (body.fieldType !== undefined) {
+        const [existing] = await db
+          .select()
+          .from(productCustomFieldDefinitions)
+          .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)))
+          .limit(1);
+        if (existing && existing.fieldType !== body.fieldType) {
+          const valueCount = await countFieldValues(tenantId, id);
+          if (valueCount > 0) {
+            return res.status(409).json({
+              error: `No se puede cambiar el tipo del campo porque ya tiene ${valueCount} producto(s) con datos. Archivá el campo y creá uno nuevo.`,
+              code: "FIELD_TYPE_CHANGE_NOT_ALLOWED",
+              valuesCount: valueCount,
+            });
+          }
+        }
+      }
+
       const [updated] = await db
         .update(productCustomFieldDefinitions)
         .set({
@@ -492,9 +546,9 @@ export function registerProductRoutes(app: Express) {
           ...(body.isFilterable !== undefined ? { isFilterable: body.isFilterable } : {}),
           ...(body.filterType !== undefined ? { filterType: body.filterType } : {}),
         })
-        .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)))
+        .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId), sql`${productCustomFieldDefinitions.archivedAt} IS NULL`))
         .returning();
-      if (!updated) return res.status(404).json({ error: "Campo no encontrado" });
+      if (!updated) return res.status(404).json({ error: "Campo no encontrado o archivado" });
       res.json({ data: { ...updated, config: normalizeCustomFieldConfig(updated.config) } });
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Campo personalizado inválido", code: "PRODUCT_CUSTOM_FIELD_INVALID", details: err.errors });
@@ -502,6 +556,51 @@ export function registerProductRoutes(app: Express) {
       if (isProductCustomFieldsSchemaMissing(err)) return res.status(503).json({ error: "Custom fields no disponibles: aplicar migraciones de productos", code: "PRODUCT_CUSTOM_FIELDS_SCHEMA_MISSING" });
       console.error("[products] PRODUCT_CUSTOM_FIELD_UPDATE_ERROR", { code: err?.code, message: err?.message });
       res.status(500).json({ error: err.message || "No se pudo actualizar el campo" });
+    }
+  });
+
+  app.delete("/api/products/custom-fields/:id", tenantAuth, requireTenantAdmin, requireFeature("products"), blockBranchScope, async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const id = Number(req.params.id);
+
+      const [def] = await db
+        .select()
+        .from(productCustomFieldDefinitions)
+        .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)))
+        .limit(1);
+      if (!def) return res.status(404).json({ error: "Campo no encontrado", code: "PRODUCT_CUSTOM_FIELD_NOT_FOUND" });
+      if (def.archivedAt) return res.status(409).json({ error: "El campo ya está archivado", code: "PRODUCT_CUSTOM_FIELD_ALREADY_ARCHIVED" });
+
+      const valueCount = await countFieldValues(tenantId, id);
+
+      if (valueCount === 0) {
+        // Hard delete: no data associated — completely safe
+        await db
+          .delete(productCustomFieldDefinitions)
+          .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)));
+        return res.json({ data: { deleted: true, archived: false, valuesCount: 0 } });
+      }
+
+      // Soft delete: field has values — archive it to preserve data integrity
+      const [archived] = await db
+        .update(productCustomFieldDefinitions)
+        .set({ isActive: false, archivedAt: new Date() })
+        .where(and(eq(productCustomFieldDefinitions.id, id), eq(productCustomFieldDefinitions.tenantId, tenantId)))
+        .returning();
+      return res.json({
+        data: {
+          deleted: false,
+          archived: true,
+          valuesCount: valueCount,
+          message: `El campo fue archivado. Se preservaron los valores de ${valueCount} producto(s).`,
+          field: { ...archived, config: normalizeCustomFieldConfig(archived.config) },
+        },
+      });
+    } catch (err: any) {
+      if (isProductCustomFieldsSchemaMissing(err)) return res.status(503).json({ error: "Custom fields no disponibles: aplicar migraciones de productos", code: "PRODUCT_CUSTOM_FIELDS_SCHEMA_MISSING" });
+      console.error("[products] PRODUCT_CUSTOM_FIELD_DELETE_ERROR", { code: err?.code, message: err?.message });
+      res.status(500).json({ error: err.message || "No se pudo eliminar el campo", code: "PRODUCT_CUSTOM_FIELD_DELETE_ERROR" });
     }
   });
 
@@ -597,6 +696,7 @@ export function registerProductRoutes(app: Express) {
       if ((err as any)?.name === 'SyntaxError') {
         return res.status(400).json({ error: "customFilters inválido", code: "PRODUCT_CUSTOM_FILTERS_INVALID" });
       }
+      console.error("[products] GET /api/products 500 ERROR:", err.stack || err);
       res.status(500).json({ error: err.message });
     }
   });

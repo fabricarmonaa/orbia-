@@ -118,6 +118,17 @@ const emptyProduct = {
   stock: "",
 };
 
+function formatCustomFieldValue(val: any, field: ProductCustomFieldDefinition): string {
+  if (val === undefined || val === null || val === "") return "-";
+  if (field.fieldType === "BOOLEAN") return val ? "Sí" : "No";
+  if (field.fieldType === "MULTISELECT" && Array.isArray(val)) return val.join(", ") || "-";
+  if (field.fieldType === "NUMBER" || field.fieldType === "DECIMAL") return Number(val).toLocaleString("es-AR");
+  if (field.fieldType === "DATE") {
+    try { return new Date(val).toLocaleDateString("es-AR"); } catch { return String(val); }
+  }
+  return String(val);
+}
+
 export default function ProductsPage() {
   const { hasFeature, loading: planLoading } = usePlan();
   const { user } = useAuth();
@@ -133,6 +144,7 @@ export default function ProductsPage() {
   const [rows, setRows] = useState<ProductRow[]>([]);
   const [customFieldDefinitions, setCustomFieldDefinitions] = useState<ProductCustomFieldDefinition[]>([]);
   const [customFilterFacets, setCustomFilterFacets] = useState<Record<string, Array<{ value: any; count: number }>>>({});
+  const [draftCustomFilterValues, setDraftCustomFilterValues] = useState<Record<string, any>>({});
   const [customFilterValues, setCustomFilterValues] = useState<Record<string, any>>({});
   const [categories, setCategories] = useState<Category[]>([]);
   const [meta, setMeta] = useState({ total: 0, page: 1, pageSize: 20, totalPages: 1, stockMode: "global" as StockMode, branchesCount: 0 });
@@ -512,7 +524,7 @@ export default function ProductsPage() {
     filters.maxPrice,
     filters.stock !== "all",
     filters.sort !== "createdAt" || filters.dir !== "desc",
-  ].filter(Boolean).length;
+  ].filter(Boolean).length + Object.keys(customFilterValues).filter(k => customFilterValues[k] !== undefined && customFilterValues[k] !== null && customFilterValues[k] !== "").length;
 
   if (planLoading) {
     return (
@@ -681,9 +693,76 @@ export default function ProductsPage() {
               </Select>
             </div>
 
+            {/* PRODUCT CUSTOM FILTERS */}
+            {customFieldDefinitions.filter((f) => f.isFilterable && f.isActive !== false).map((field) => {
+              const current = draftCustomFilterValues[field.fieldKey];
+
+              if (field.fieldType === "BOOLEAN") {
+                return (
+                  <div key={field.id} className="space-y-2">
+                    <Label>{field.label}</Label>
+                    <Select
+                      value={current === true ? "true" : current === false ? "false" : "__all__"}
+                      onValueChange={(v) => setDraftCustomFilterValues((prev) => ({ ...prev, [field.fieldKey]: v === "__all__" ? undefined : v === "true" }))}
+                    >
+                      <SelectTrigger className="w-full"><SelectValue placeholder="Todos" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__all__">Todos</SelectItem>
+                        <SelectItem value="true">Sí</SelectItem>
+                        <SelectItem value="false">No</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                );
+              }
+
+              if (field.fieldType === "NUMBER" || field.fieldType === "DECIMAL") {
+                const range = typeof current === "object" && current ? current : {};
+                return (
+                  <div key={field.id} className="space-y-2">
+                    <Label>{field.label}</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="number"
+                        placeholder="Mín"
+                        value={range.min ?? ""}
+                        onChange={(e) => setDraftCustomFilterValues((prev) => ({
+                          ...prev,
+                          [field.fieldKey]: { ...range, min: e.target.value === "" ? undefined : Number(e.target.value) }
+                        }))}
+                      />
+                      <Input
+                        type="number"
+                        placeholder="Máx"
+                        value={range.max ?? ""}
+                        onChange={(e) => setDraftCustomFilterValues((prev) => ({
+                          ...prev,
+                          [field.fieldKey]: { ...range, max: e.target.value === "" ? undefined : Number(e.target.value) }
+                        }))}
+                      />
+                    </div>
+                  </div>
+                );
+              }
+
+              const options = customFilterFacets[field.fieldKey] || [];
+              return (
+                <div key={field.id} className="space-y-2">
+                  <Label>{field.label}</Label>
+                  <Select value={current ?? "__all__"} onValueChange={(v) => setDraftCustomFilterValues((prev) => ({ ...prev, [field.fieldKey]: v === "__all__" ? undefined : v }))}>
+                    <SelectTrigger className="w-full"><SelectValue placeholder="Todos" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__all__">Todos</SelectItem>
+                      {options.map((opt) => <SelectItem key={String(opt.value)} value={String(opt.value)}>{String(opt.value)} ({opt.count})</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              );
+            })}
+
             <div className="space-y-2 pt-2">
-              <Button className="w-full" onClick={() => setFilters({ ...draftFilters, page: 1 })}>Aplicar</Button>
-              <Button className="w-full" variant="outline" onClick={() => { setDraftFilters(defaultFilters); setFilters(defaultFilters); }}>Limpiar</Button>
+              <Button className="w-full" onClick={() => { setFilters({ ...draftFilters, page: 1 }); setCustomFilterValues(draftCustomFilterValues); }}>Aplicar</Button>
+              <Button className="w-full" variant="outline" onClick={() => { setDraftFilters(defaultFilters); setFilters(defaultFilters); setDraftCustomFilterValues({}); setCustomFilterValues({}); }}>Limpiar</Button>
               <Button className="w-full" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpiar selección</Button>
             </div>
           </CardContent>
@@ -693,25 +772,6 @@ export default function ProductsPage() {
           <CardContent className="pt-6 space-y-4">
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3">
               <div className="flex items-center gap-2 flex-wrap">
-                {customFieldDefinitions.filter((f) => f.isFilterable && f.isActive !== false).map((field) => {
-                  const options = customFilterFacets[field.fieldKey] || [];
-                  const current = customFilterValues[field.fieldKey];
-                  return (
-                    <div key={field.id} className="flex items-center gap-2">
-                      <Label className="text-xs">{field.label}</Label>
-                      <Select value={current ?? "__all__"} onValueChange={(v) => setCustomFilterValues((prev) => ({ ...prev, [field.fieldKey]: v === "__all__" ? undefined : v }))}>
-                        <SelectTrigger className="h-8 min-w-[160px]"><SelectValue placeholder="Todos" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="__all__">Todos</SelectItem>
-                          {options.map((opt) => <SelectItem key={String(opt.value)} value={String(opt.value)}>{String(opt.value)} ({opt.count})</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  );
-                })}
-                <Button variant="outline" size="sm" onClick={() => { setCustomFilterValues({}); setFilters({ ...filters, page: 1 }); }}>Limpiar filtros custom</Button>
-              </div>
-            <div className="flex items-center gap-2 flex-wrap">
                 <Badge variant="secondary">Mostrando {rows.length} de {meta.total}</Badge>
                 <Badge variant="outline">Seleccionados: {selectedIds.size}</Badge>
                 {selectedIds.size > 0 && <Button variant="ghost" size="sm" onClick={() => setSelectedIds(new Set())}>Limpiar</Button>}
@@ -823,6 +883,11 @@ export default function ProductsPage() {
                       </td>
                       <td className="p-2 text-muted-foreground">{row.sku || "-"}</td>
                       <td className="p-2 text-muted-foreground">{categories.find((c) => c.id === row.categoryId)?.name || "Sin categoría"}</td>
+                      {customFieldDefinitions.filter((f) => f.config?.showInTable).map((f) => (
+                        <td key={f.id} className="p-2 text-sm">
+                          {formatCustomFieldValue((row.customFieldValues || {})[f.fieldKey], f)}
+                        </td>
+                      ))}
                       <td className="p-2 text-right">${Number(row.estimatedSalePrice ?? row.price).toLocaleString("es-AR")} {row.pricingMode === "MARGIN" ? <span className="text-xs text-muted-foreground">(auto)</span> : null}</td>
                       <td className="p-2">
                         {meta.stockMode === "global" ? (
