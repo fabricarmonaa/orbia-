@@ -3,6 +3,7 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import PDFDocument from "pdfkit";
+import * as XLSX from "xlsx";
 import { z } from "zod";
 import { and, eq, sql } from "drizzle-orm";
 import { tenantAuth, requireTenantAdmin, requireNotPlanCodes } from "../auth";
@@ -39,9 +40,9 @@ const reportsOverviewQuerySchema = z.object({
 });
 
 const exportSchema = z.object({
-  type: z.enum(["sales", "products", "customers", "cash", "kpis"]),
+  type: z.enum(["sales", "products", "customers", "cash", "kpis", "overview"]),
   params: z.record(z.any()).default({}),
-  format: z.enum(["csv", "pdf"]),
+  format: z.enum(["csv", "pdf", "xlsx"]),
 });
 
 const summaryLimiter = createRateLimiter({ windowMs: 60_000, max: parseInt(process.env.REPORTS_LIMIT_PER_MIN || "4", 10), keyGenerator: (req) => `monthly-summary:${req.auth?.tenantId || req.ip}`, errorMessage: "Demasiadas solicitudes.", code: "REPORT_RATE_LIMIT" });
@@ -491,7 +492,8 @@ export function registerReportRoutes(app: Express) {
       ensureExportDir();
       const body = exportSchema.parse(req.body);
       const tenantId = req.auth!.tenantId!;
-      const fileName = `report-${body.type}-${Date.now()}.${body.format === "csv" ? "csv" : "pdf"}`;
+      const extension = body.format === "xlsx" ? "xlsx" : body.format === "csv" ? "csv" : "pdf";
+      const fileName = `report-${body.type}-${Date.now()}.${extension}`;
       const filePath = path.join(EXPORT_DIR, fileName);
       const tenant = await db.select({ name: tenants.name }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
 
@@ -499,6 +501,73 @@ export function registerReportRoutes(app: Express) {
       if (body.type === "kpis") {
         const data = await kpiData(tenantId, reportFiltersSchema.parse(body.params));
         rows = [data.kpis as any];
+      } else if (body.type === "overview") {
+        const query = reportsOverviewQuerySchema.parse(body.params || {});
+        const range = resolveReportRange(query);
+        const querystring = new URLSearchParams({
+          period: query.period,
+          ...(query.from ? { from: query.from } : {}),
+          ...(query.to ? { to: query.to } : {}),
+          ...(query.branchId ? { branchId: String(query.branchId) } : {}),
+        }).toString();
+        const [summary, productsTop, productsLow, categories] = await Promise.all([
+          pool.query(`
+            SELECT COALESCE(SUM(total_amount::numeric),0) sales_total,
+                   COUNT(*)::int sales_count,
+                   COALESCE(AVG(total_amount::numeric),0) avg_ticket
+            FROM sales
+            WHERE tenant_id = $1 AND sale_datetime >= $2 AND sale_datetime <= $3
+          `, [tenantId, range.from, range.to]),
+          pool.query(`
+            SELECT COALESCE(si.product_name_snapshot,'Sin producto') name,
+                   COALESCE(SUM(si.quantity::numeric),0)::int qty,
+                   COALESCE(SUM(si.line_total::numeric),0) revenue
+            FROM sale_items si
+            JOIN sales s ON s.id = si.sale_id
+            WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3
+            GROUP BY COALESCE(si.product_name_snapshot,'Sin producto')
+            ORDER BY qty DESC, revenue DESC
+            LIMIT 10
+          `, [tenantId, range.from, range.to]),
+          pool.query(`
+            SELECT COALESCE(si.product_name_snapshot,'Sin producto') name,
+                   COALESCE(SUM(si.quantity::numeric),0)::int qty,
+                   COALESCE(SUM(si.line_total::numeric),0) revenue
+            FROM sale_items si
+            JOIN sales s ON s.id = si.sale_id
+            WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3
+            GROUP BY COALESCE(si.product_name_snapshot,'Sin producto')
+            HAVING COALESCE(SUM(si.quantity::numeric),0) > 0
+            ORDER BY qty ASC, revenue ASC
+            LIMIT 10
+          `, [tenantId, range.from, range.to]),
+          pool.query(`
+            SELECT COALESCE(pc.name,'Sin categoría') category,
+                   COALESCE(SUM(si.line_total::numeric),0) revenue
+            FROM sale_items si
+            JOIN sales s ON s.id = si.sale_id
+            LEFT JOIN products p ON p.id = si.product_id AND p.tenant_id = s.tenant_id
+            LEFT JOIN product_categories pc ON pc.id = p.category_id AND pc.tenant_id = s.tenant_id
+            WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3
+            GROUP BY COALESCE(pc.name,'Sin categoría')
+            ORDER BY revenue DESC
+            LIMIT 10
+          `, [tenantId, range.from, range.to]),
+        ]);
+
+        rows = [
+          {
+            period_from: range.from.toISOString(),
+            period_to: range.to.toISOString(),
+            sales_total: Number((summary.rows[0] as any)?.sales_total || 0),
+            sales_count: Number((summary.rows[0] as any)?.sales_count || 0),
+            avg_ticket: Number((summary.rows[0] as any)?.avg_ticket || 0),
+          },
+          ...productsTop.rows.map((r: any) => ({ section: "top_products", name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
+          ...productsLow.rows.map((r: any) => ({ section: "low_products", name: r.name, qty: Number(r.qty || 0), revenue: Number(r.revenue || 0) })),
+          ...categories.rows.map((r: any) => ({ section: "category_revenue", category: r.category, revenue: Number(r.revenue || 0) })),
+          { section: "source", notes: `/api/reports/overview?${querystring}` },
+        ];
       } else {
         const queryPath = body.type === "sales" ? "/api/reports/sales" : body.type === "products" ? "/api/reports/products" : body.type === "customers" ? "/api/reports/customers" : "/api/reports/cash";
         // internal fetch-less path: rerun query logic
@@ -511,6 +580,11 @@ export function registerReportRoutes(app: Express) {
 
       if (body.format === "csv") {
         fs.writeFileSync(filePath, toCsv(rows));
+      } else if (body.format === "xlsx") {
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(rows);
+        XLSX.utils.book_append_sheet(wb, ws, "Reporte");
+        XLSX.writeFile(wb, filePath);
       } else {
         const doc = new PDFDocument({ margin: 40, size: "A4" });
         const stream = fs.createWriteStream(filePath);

@@ -99,6 +99,7 @@ export default function SettingsPage() {
   const [tosUpdatedAt, setTosUpdatedAt] = useState<string | null>(null);
   const [tosSaving, setTosSaving] = useState(false);
   const [slugSaving, setSlugSaving] = useState(false);
+  const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
 
   const minTrackingHours = getLimit("tracking_retention_min_hours") || 1;
   const maxTrackingHours = getLimit("tracking_retention_max_hours") || 24;
@@ -128,6 +129,16 @@ export default function SettingsPage() {
   };
 
   useEffect(() => {
+    apiRequest("GET", "/api/addons/status")
+      .then((r) => r.json())
+      .then((d) => {
+        const raw = d?.data || {};
+        const normalized: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(raw)) normalized[k] = v === true || v === 1 || v === "1" || String(v).toLowerCase() === "true";
+        setAddonStatus(normalized);
+      })
+      .catch(() => setAddonStatus({}));
+
     if (user?.role === "admin") {
       fetchConfig();
       fetchTosConfig();
@@ -414,11 +425,11 @@ export default function SettingsPage() {
           label: "PDFs",
           content: <PriceListPdfSettings />,
         },
-        {
+        ...(addonStatus.whatsapp_inbox || addonStatus.messaging_whatsapp ? [{
           id: "whatsapp",
           label: "WhatsApp",
           content: <WhatsAppSettings />,
-        },
+        }] : []),
       ]
       : []),
     {

@@ -73,8 +73,12 @@ export default function CashPage() {
     expenseDefinitionId: "",
   });
 
+  const [newAdditionalFees, setNewAdditionalFees] = useState<Array<{ name: string; amount: string; type: "costo" | "ingreso"; impactNetProfit: boolean }>>([]);
+
   const [editDialogOpen, setEditDialogOpen] = useState(false);
   const [editingMovement, setEditingMovement] = useState<CashMovement | null>(null);
+  const [editAdditionalFees, setEditAdditionalFees] = useState<Array<{ name: string; amount: string; type: "costo" | "ingreso"; impactNetProfit: boolean }>>([]);
+
   const [editForm, setEditForm] = useState({
     amount: "",
     associatedCost: "",
@@ -163,25 +167,31 @@ export default function CashPage() {
     e.preventDefault();
     try {
       let finalDescription = newMovement.description;
-      let finalAssociatedCost = parseFloat(newMovement.associatedCost) || 0;
+      let finalAssociatedCost = 0;
       let finalAmount = parseFloat(newMovement.amount) || 0;
 
-      const costName = newMovement.associatedCostName || "Tarifa Extra";
-      const isExtraIncome = newMovement.associatedCostType === "ingreso";
+      const fees = [
+        { name: newMovement.associatedCostName, amount: newMovement.associatedCost, type: newMovement.associatedCostType as "costo" | "ingreso", impactNetProfit: newMovement.impactNetProfit },
+        ...newAdditionalFees,
+      ];
 
-      if (finalAssociatedCost > 0) {
-        if (!newMovement.impactNetProfit) {
-          finalDescription += `\n[${costName} de $${finalAssociatedCost} registrado como comentario - No modificó el total]`;
-          finalAssociatedCost = 0; // Se vuelve 0 para la db porque no impacta
+      for (const fee of fees) {
+        const feeAmount = parseFloat(fee.amount || "0") || 0;
+        if (feeAmount <= 0) continue;
+        const feeName = fee.name || "Tarifa Extra";
+        if (!fee.impactNetProfit) {
+          finalDescription += `
+[${feeName} de $${feeAmount} registrado como comentario - No modificó el total]`;
+          continue;
+        }
+        if (fee.type === "ingreso") {
+          finalAmount += feeAmount;
+          finalDescription += `
+[Se le sumó al cobro un ingreso extra de $${feeAmount} en concepto de ${feeName}]`;
         } else {
-          if (isExtraIncome) {
-            // El usuario cobró más por esta tarifa. Se SUMA a lo que realmente cobró (amount real aumenta).
-            finalAmount += finalAssociatedCost;
-            finalDescription += `\n[Se le sumó al cobro un ingreso extra de $${finalAssociatedCost} en concepto de ${costName}]`;
-          } else {
-            // El usuario tuvo un gasto/costo. La db guarda associatedCost, nosotros lo restaremos visualmente después del amount neto.
-            finalDescription += `\n[Se le descontó costo/tarifa en contra de $${finalAssociatedCost} por ${costName}]`;
-          }
+          finalAssociatedCost += feeAmount;
+          finalDescription += `
+[Se le descontó costo/tarifa en contra de $${feeAmount} por ${feeName}]`;
         }
       }
 
@@ -210,34 +220,44 @@ export default function CashPage() {
         impactNetProfit: true,
         expenseDefinitionId: "",
       });
+      setNewAdditionalFees([]);
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
   }
 
+
   async function updateMovement(e: React.FormEvent) {
     e.preventDefault();
     if (!editingMovement) return;
     try {
       let finalDescription = editForm.description;
-      let finalAssociatedCost = parseFloat(editForm.associatedCost) || 0;
+      let finalAssociatedCost = 0;
       let finalAmount = parseFloat(editForm.amount) || 0;
 
-      const costName = editForm.associatedCostName || "Tarifa Extra";
-      const isExtraIncome = editForm.associatedCostType === "ingreso";
+      const fees = [
+        { name: editForm.associatedCostName, amount: editForm.associatedCost, type: editForm.associatedCostType as "costo" | "ingreso", impactNetProfit: editForm.impactNetProfit },
+        ...editAdditionalFees,
+      ];
 
-      if (finalAssociatedCost > 0) {
-        if (!editForm.impactNetProfit) {
-          finalDescription += `\n[${costName} de $${finalAssociatedCost} registrado como comentario - No modificó el total]`;
-          finalAssociatedCost = 0;
+      for (const fee of fees) {
+        const feeAmount = parseFloat(fee.amount || "0") || 0;
+        if (feeAmount <= 0) continue;
+        const feeName = fee.name || "Tarifa Extra";
+        if (!fee.impactNetProfit) {
+          finalDescription += `
+[${feeName} de $${feeAmount} registrado como comentario - No modificó el total]`;
+          continue;
+        }
+        if (fee.type === "ingreso") {
+          finalAmount += feeAmount;
+          finalDescription += `
+[Se le sumó al cobro un ingreso extra de $${feeAmount} en concepto de ${feeName}]`;
         } else {
-          if (isExtraIncome) {
-            finalAmount += finalAssociatedCost;
-            finalDescription += `\n[Se le sumó al cobro un ingreso extra de $${finalAssociatedCost} en concepto de ${costName}]`;
-          } else {
-            finalDescription += `\n[Se le descontó costo/tarifa en contra de $${finalAssociatedCost} por ${costName}]`;
-          }
+          finalAssociatedCost += feeAmount;
+          finalDescription += `
+[Se le descontó costo/tarifa en contra de $${feeAmount} por ${feeName}]`;
         }
       }
 
@@ -254,6 +274,7 @@ export default function CashPage() {
       toast({ title: "Error", description: err.message, variant: "destructive" });
     }
   }
+
 
   const activeMovements = canUseSessions && openSession
     ? movements.filter(m => m.sessionId === openSession.id)
@@ -493,6 +514,23 @@ export default function CashPage() {
                                       className="w-full h-9"
                                     />
                                   </div>
+                                </div>
+                                <div className="space-y-2">
+                                  {newAdditionalFees.map((fee, idx) => (
+                                    <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                                      <div className="col-span-3">
+                                        <Select value={fee.type} onValueChange={(v) => setNewAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, type: v as "costo" | "ingreso" } : f))}>
+                                          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                                          <SelectContent><SelectItem value="costo">Costo (-)</SelectItem><SelectItem value="ingreso">Ingreso (+)</SelectItem></SelectContent>
+                                        </Select>
+                                      </div>
+                                      <Input className="col-span-4 h-9" placeholder="Concepto" value={fee.name} onChange={(e) => setNewAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, name: e.target.value } : f))} />
+                                      <Input className="col-span-3 h-9" type="number" step="0.01" placeholder="0.00" value={fee.amount} onChange={(e) => setNewAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, amount: e.target.value } : f))} />
+                                      <Button type="button" variant="ghost" className="col-span-2" onClick={() => setNewAdditionalFees((prev) => prev.filter((_, i) => i !== idx))}>Quitar</Button>
+                                      <label className="col-span-12 text-xs flex items-center gap-2"><input type="checkbox" checked={fee.impactNetProfit} onChange={(e) => setNewAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, impactNetProfit: e.target.checked } : f))} />Impacta caja</label>
+                                    </div>
+                                  ))}
+                                  <Button type="button" variant="outline" size="sm" onClick={() => setNewAdditionalFees((prev) => [...prev, { name: "", amount: "", type: "costo", impactNetProfit: true }])}>+ Agregar tarifa extra</Button>
                                 </div>
                                 {(parseFloat(newMovement.associatedCost || "0") > 0) && (
                                   <div className="flex items-start flex-col gap-1 mt-2">
@@ -768,6 +806,23 @@ export default function CashPage() {
                         />
                       </div>
                     </div>
+                    <div className="space-y-2">
+                      {editAdditionalFees.map((fee, idx) => (
+                        <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-3">
+                            <Select value={fee.type} onValueChange={(v) => setEditAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, type: v as "costo" | "ingreso" } : f))}>
+                              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                              <SelectContent><SelectItem value="costo">Costo (-)</SelectItem><SelectItem value="ingreso">Ingreso (+)</SelectItem></SelectContent>
+                            </Select>
+                          </div>
+                          <Input className="col-span-4 h-9" placeholder="Concepto" value={fee.name} onChange={(e) => setEditAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, name: e.target.value } : f))} />
+                          <Input className="col-span-3 h-9" type="number" step="0.01" placeholder="0.00" value={fee.amount} onChange={(e) => setEditAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, amount: e.target.value } : f))} />
+                          <Button type="button" variant="ghost" className="col-span-2" onClick={() => setEditAdditionalFees((prev) => prev.filter((_, i) => i !== idx))}>Quitar</Button>
+                          <label className="col-span-12 text-xs flex items-center gap-2"><input type="checkbox" checked={fee.impactNetProfit} onChange={(e) => setEditAdditionalFees((prev) => prev.map((f, i) => i === idx ? { ...f, impactNetProfit: e.target.checked } : f))} />Impacta caja</label>
+                        </div>
+                      ))}
+                      <Button type="button" variant="outline" size="sm" onClick={() => setEditAdditionalFees((prev) => [...prev, { name: "", amount: "", type: "costo", impactNetProfit: true }])}>+ Agregar tarifa extra</Button>
+                    </div>
                     {parseFloat(editForm.associatedCost || "0") > 0 && (
                       <div className="flex items-start flex-col gap-1 mt-2">
                         <label className="flex items-center gap-2 cursor-pointer text-sm font-medium">
@@ -947,6 +1002,7 @@ export default function CashPage() {
                           description: m.description || "",
                           method: m.method || "efectivo",
                         });
+                        setEditAdditionalFees([]);
                         setEditDialogOpen(true);
                       }}
                     >
