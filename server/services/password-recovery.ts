@@ -14,7 +14,13 @@ export function buildPasswordResetUrl(token: string) {
   return `${base}/reset-password?token=${encodeURIComponent(token)}`;
 }
 
-export async function issuePasswordResetToken(userId: number, requestMeta?: { ip?: string; userAgent?: string | null }) {
+export async function issuePasswordResetToken(params: {
+  tenantId: number;
+  userId: number;
+  email: string;
+  ip?: string;
+  userAgent?: string | null;
+}) {
   const rawToken = crypto.randomBytes(32).toString("base64url");
   const tokenHash = hashToken(rawToken);
   const ttlMinutes = Number.isFinite(DEFAULT_TTL_MINUTES) && DEFAULT_TTL_MINUTES > 0 ? DEFAULT_TTL_MINUTES : 60;
@@ -22,15 +28,18 @@ export async function issuePasswordResetToken(userId: number, requestMeta?: { ip
 
   await db
     .update(passwordResetTokens)
-    .set({ usedAt: new Date() })
-    .where(and(eq(passwordResetTokens.userId, userId), isNull(passwordResetTokens.usedAt)));
+    .set({ usedAt: new Date(), revoked: true })
+    .where(and(eq(passwordResetTokens.userId, params.userId), isNull(passwordResetTokens.usedAt), eq(passwordResetTokens.revoked, false)));
 
   await db.insert(passwordResetTokens).values({
-    userId,
+    tenantId: params.tenantId,
+    userId: params.userId,
+    email: params.email,
     tokenHash,
     expiresAt,
-    requestedByIp: requestMeta?.ip || null,
-    requestedByUserAgent: requestMeta?.userAgent ? String(requestMeta.userAgent).slice(0, 300) : null,
+    revoked: false,
+    requestedByIp: params.ip || null,
+    requestedByUserAgent: params.userAgent ? String(params.userAgent).slice(0, 255) : null,
   });
 
   return { rawToken, expiresAt };
@@ -57,7 +66,14 @@ export async function validatePasswordResetToken(rawToken: string) {
     })
     .from(passwordResetTokens)
     .innerJoin(users, eq(users.id, passwordResetTokens.userId))
-    .where(and(eq(passwordResetTokens.tokenHash, tokenHash), gt(passwordResetTokens.expiresAt, now), isNull(passwordResetTokens.usedAt)))
+    .where(
+      and(
+        eq(passwordResetTokens.tokenHash, tokenHash),
+        gt(passwordResetTokens.expiresAt, now),
+        isNull(passwordResetTokens.usedAt),
+        eq(passwordResetTokens.revoked, false)
+      )
+    )
     .limit(1);
 
   const row = rows[0];
@@ -71,8 +87,15 @@ export async function consumePasswordResetToken(tokenId: number) {
   const now = new Date();
   const result = await db
     .update(passwordResetTokens)
-    .set({ usedAt: now })
-    .where(and(eq(passwordResetTokens.id, tokenId), isNull(passwordResetTokens.usedAt), gt(passwordResetTokens.expiresAt, now)))
+    .set({ usedAt: now, revoked: true })
+    .where(
+      and(
+        eq(passwordResetTokens.id, tokenId),
+        isNull(passwordResetTokens.usedAt),
+        gt(passwordResetTokens.expiresAt, now),
+        eq(passwordResetTokens.revoked, false)
+      )
+    )
     .returning({ id: passwordResetTokens.id });
   return result.length > 0;
 }

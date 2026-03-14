@@ -219,7 +219,10 @@ export function registerAuthRoutes(app: Express) {
         ip,
       });
 
-      const { rawToken, expiresAt } = await issuePasswordResetToken(user.id, {
+      const { rawToken, expiresAt } = await issuePasswordResetToken({
+        tenantId: tenant.id,
+        userId: user.id,
+        email: user.email,
         ip,
         userAgent: req.headers["user-agent"] || null,
       });

@@ -16,7 +16,7 @@ until nc -z "$DB_HOST" "$DB_PORT"; do
 done
 
 echo "[Web Entrypoint] Running SQL migrations idempotently (safe mode)..."
-npm run db:push
+npm run migrations:run
 
 echo "[Web Entrypoint] Starting server..."
 exec node dist/index.cjs
