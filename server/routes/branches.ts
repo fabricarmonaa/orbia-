@@ -10,6 +10,15 @@ import {
 } from "../auth";
 
 export function registerBranchRoutes(app: Express) {
+  const isHiddenCentralBranch = (name: string | null | undefined) => {
+    const normalized = String(name || "")
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .trim()
+      .toLowerCase();
+    return normalized === "casa central" || normalized === "sucursal central";
+  };
+
   app.get(
     "/api/branches",
     tenantAuth,
@@ -29,7 +38,7 @@ export function registerBranchRoutes(app: Express) {
           return res.json({ data: branch ? [branch] : [] });
         }
         const data = await storage.getBranches(tenantId);
-        res.json({ data });
+        res.json({ data: data.filter((branch) => !isHiddenCentralBranch((branch as any).name)) });
       } catch (err: any) {
         res.status(500).json({ error: err.message });
       }

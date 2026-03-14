@@ -279,8 +279,7 @@ export const salesStorage = {
         saleId: sale.id,
         createdById: input.cashierUserId,
       };
-      const sanitizedCashData = await cashStorage.sanitizeCashMovementForInsert(cashData);
-      await tx.insert(cashMovements).values(sanitizedCashData);
+      await cashStorage.insertCashMovementWithTx(tx as any, cashData);
 
       return { sale };
     });

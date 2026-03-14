@@ -10,7 +10,7 @@ import { validateBody, validateParams, validateQuery } from "../middleware/valid
 import { getDefaultStatus, resolveOrderStatusIdByCode, resolveCanonicalOrderStatusCode, normalizeDeliveryStatus, resolveOrderStatusDefinitionByCode, getStatuses } from "../services/statuses";
 import { db } from "../db";
 import { and, count, eq } from "drizzle-orm";
-import { orderFieldValues, orders, orderStatusHistory, cashMovements } from "@shared/schema";
+import { orderFieldValues, orders, orderStatusHistory } from "@shared/schema";
 import { HttpError } from "../lib/http-errors";
 import { getOrderCustomFields, saveCustomFieldValues, validateAndNormalizeCustomFields } from "../services/order-custom-fields";
 import { changeOrderStatusWithHistory, validateOrderScope } from "../services/orders-service";
@@ -247,7 +247,7 @@ export function registerOrderRoutes(app: Express) {
           const desc = calcPaymentStatus(paidNum, totalNum || paidNum) === "PARTIAL"
             ? `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}/${totalNum.toFixed(2)}`
             : `Pago pedido #${orderNumber}: ${paidNum.toFixed(2)}`;
-          const cashMovementPayload = await cashStorage.sanitizeCashMovementForInsert({
+          await cashStorage.insertCashMovementWithTx(tx as any, {
             tenantId,
             branchId: branchId ?? null,
             sessionId: openSession.id,
@@ -261,7 +261,6 @@ export function registerOrderRoutes(app: Express) {
             entityId: created.id,
             createdById: req.auth!.userId ?? null,
           });
-          await tx.insert(cashMovements).values(cashMovementPayload);
           hasCashMovement = true;
         }
 
@@ -362,7 +361,7 @@ export function registerOrderRoutes(app: Express) {
           const openSession = await storage.getOpenSession(tenantId, branchId ?? null);
           if (openSession) {
             const orderNum = current.orderNumber;
-            const cashMovementPayload = await cashStorage.sanitizeCashMovementForInsert({
+            await cashStorage.insertCashMovementWithTx(tx as any, {
               tenantId,
               branchId: branchId ?? null,
               sessionId: openSession.id,
@@ -376,7 +375,6 @@ export function registerOrderRoutes(app: Express) {
               entityId: id,
               createdById: req.auth!.userId ?? null,
             });
-            await tx.insert(cashMovements).values(cashMovementPayload);
             hasCashMovement = true;
           }
         }

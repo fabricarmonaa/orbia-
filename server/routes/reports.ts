@@ -124,6 +124,22 @@ async function getSaleItemsQtyExpression() {
     ? 'COALESCE(SUM(si.quantity),0)::int'
     : 'COALESCE(SUM(si.quantity::numeric),0)::int';
 }
+
+async function hasTableColumn(tableName: string, columnName: string) {
+  const result = await pool.query<{ exists: boolean }>(
+    `
+      SELECT EXISTS (
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = $2
+      ) AS exists
+    `,
+    [tableName, columnName],
+  );
+  return Boolean(result.rows[0]?.exists);
+}
 async function kpiData(tenantId: number, filters: z.infer<typeof reportFiltersSchema>) {
   const { where, params } = buildWhere(filters, tenantId);
   const previousFrom = new Date(`${filters.from}T00:00:00.000Z`);
@@ -275,6 +291,10 @@ export function registerReportRoutes(app: Express) {
       }
 
       const saleItemsQtyExpr = await getSaleItemsQtyExpression();
+      const hasOrderStatusCode = await hasTableColumn("orders", "status_code");
+      const orderStatusExpr = hasOrderStatusCode
+        ? "COALESCE(o.status_code, 'SIN_ESTADO')"
+        : "COALESCE(CAST(o.status_id AS text), 'SIN_ESTADO')";
 
       const [currentSales, previousSales, ordersCount, topProducts, slowProducts, categoryRevenue, statusBreakdown, byHour, byWeekday] = await Promise.all([
         pool.query(`SELECT COALESCE(SUM(s.total_amount::numeric),0) total, COUNT(*)::int count, COALESCE(AVG(s.total_amount::numeric),0) avg_ticket FROM sales s WHERE s.tenant_id = $1 AND s.sale_datetime >= $2 AND s.sale_datetime <= $3 ${branchSql}`, paramsCurrent),
@@ -321,10 +341,10 @@ export function registerReportRoutes(app: Express) {
           LIMIT 10
         `, paramsCurrent),
         pool.query(`
-          SELECT COALESCE(o.status_code, 'SIN_ESTADO') status_code, COUNT(*)::int count
+          SELECT ${orderStatusExpr} status_code, COUNT(*)::int count
           FROM orders o
           WHERE o.tenant_id = $1 AND o.created_at >= $2 AND o.created_at <= $3
-          GROUP BY COALESCE(o.status_code, 'SIN_ESTADO')
+          GROUP BY ${orderStatusExpr}
           ORDER BY count DESC
         `, [tenantId, range.from, range.to]),
         pool.query(`
@@ -382,6 +402,7 @@ export function registerReportRoutes(app: Express) {
       });
     } catch (err) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Filtros inválidos", code: "REPORT_FILTERS_INVALID" });
+      console.error("[reports] REPORT_OVERVIEW_ERROR", (err as any)?.message || err);
       return res.status(500).json({ error: "No se pudo obtener reporte general", code: "REPORT_OVERVIEW_ERROR" });
     }
   });

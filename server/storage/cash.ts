@@ -41,6 +41,28 @@ async function sanitizeCashMovementInsertPayload(data: InsertCashMovement) {
   return payload as InsertCashMovement;
 }
 
+type SqlExecutor = {
+  execute: (query: ReturnType<typeof sql>) => Promise<{ rows?: any[] } | any[]>;
+};
+
+function toDbColumnName(key: string) {
+  return key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`);
+}
+
+async function insertCashMovementWithExecutor(executor: SqlExecutor, data: InsertCashMovement) {
+  const payload = await sanitizeCashMovementInsertPayload(data);
+  const entries = Object.entries(payload).filter(([, value]) => value !== undefined);
+  if (entries.length === 0) {
+    throw new Error("CASH_MOVEMENT_EMPTY_PAYLOAD");
+  }
+
+  const columnList = sql.join(entries.map(([key]) => sql.raw(toDbColumnName(key))), sql`, `);
+  const valuesList = sql.join(entries.map(([, value]) => sql`${value}`), sql`, `);
+  const result = await executor.execute(sql`INSERT INTO cash_movements (${columnList}) VALUES (${valuesList}) RETURNING *`);
+  const rows = Array.isArray(result) ? result : (result?.rows || []);
+  return (rows[0] || null) as any;
+}
+
 export const cashStorage = {
   async getCashMovementColumns() {
     return getCashMovementColumnsSet();
@@ -143,13 +165,15 @@ export const cashStorage = {
     return result.rows as any[];
   },
   async createCashMovement(data: InsertCashMovement) {
-    const payload = await sanitizeCashMovementInsertPayload(data);
-    const [movement] = await db.insert(cashMovements).values(payload).returning();
-    return movement;
+    return insertCashMovementWithExecutor(db as unknown as SqlExecutor, data);
   },
 
   async sanitizeCashMovementForInsert(data: InsertCashMovement) {
     return sanitizeCashMovementInsertPayload(data);
+  },
+
+  async insertCashMovementWithTx(executor: SqlExecutor, data: InsertCashMovement) {
+    return insertCashMovementWithExecutor(executor, data);
   },
   async getCashMovementById(id: number, tenantId: number) {
     const [movement] = await db
