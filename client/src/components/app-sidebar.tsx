@@ -66,6 +66,7 @@ const menuItems: MenuItem[] = [
   { title: "WhatsApp Inbox (Addon)", url: "/app/whatsapp/conversations", icon: MessageCircle, addon: "whatsapp_inbox", section: "operacion", highlight: true },
   { title: "Agenda", url: "/app/agenda", icon: CalendarDays, feature: "agenda", section: "productividad" },
   { title: "Notas", url: "/app/notes", icon: NotebookPen, feature: "notes", section: "productividad" },
+  { title: "Reportes", url: "/app/reports", icon: FileSpreadsheet, adminOnly: true, section: "operacion" },
   { title: "Configuración", url: "/app/settings", icon: Settings, adminOnly: true, section: "configuracion" },
 ];
 
