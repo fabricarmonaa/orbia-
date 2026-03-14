@@ -1,4 +1,4 @@
-﻿-- HOTFIX: canonicalize orders.status_code (idempotent)
+-- HOTFIX: canonicalize orders.status_code (idempotent)
 -- 0) Ensure at least one default ORDER status per tenant (if missing)
 WITH missing_default AS (
   SELECT tenant_id
