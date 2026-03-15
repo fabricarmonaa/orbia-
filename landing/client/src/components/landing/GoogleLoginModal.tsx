@@ -49,7 +49,7 @@ export function GoogleLoginModal({ trigger }: Props) {
         throw new Error("Tu navegador bloqueó la ventana emergente. Habilitá los popups para continuar.");
       }
 
-      const expectedOrigin = new URL(data.url).origin;
+      const expectedOrigin = new URL(API_BASE).origin;
       const timeoutId = window.setTimeout(() => {
         window.removeEventListener("message", listener);
         setLoading(false);

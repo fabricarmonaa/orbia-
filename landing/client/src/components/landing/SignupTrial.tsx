@@ -54,7 +54,7 @@ export function SignupTrial() {
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente.");
 
-      const expectedOrigin = new URL(data.url).origin;
+      const expectedOrigin = new URL(appOrigin).origin;
       const timeoutId = window.setTimeout(() => {
         window.removeEventListener("message", listener);
         setLoading(false);

@@ -91,7 +91,7 @@ export default function TenantLogin() {
       if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google");
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente de Google.");
-      const expectedOrigin = new URL(data.url).origin;
+      const expectedOrigin = window.location.origin;
       const timeoutId = window.setTimeout(() => {
         window.removeEventListener("message", listener);
         toast({ title: "No se pudo ingresar con Google", description: "La autorización tardó demasiado. Intentá nuevamente.", variant: "destructive" });
