@@ -506,8 +506,17 @@ export function registerAuthRoutes(app: Express) {
           refererOrigin = undefined;
         }
       }
-      const rawOrigin = parentOriginFromQuery || req.headers.origin || refererOrigin;
-      const parentOrigin = validateParentOrigin(rawOrigin) || (process.env.APP_ORIGIN || "http://localhost:5000");
+      const headerOrigin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+
+      const candidateOrigins = [parentOriginFromQuery, headerOrigin, refererOrigin].filter(Boolean) as string[];
+      const parentOrigin = candidateOrigins.map((origin) => validateParentOrigin(origin)).find(Boolean);
+      if (!parentOrigin) {
+        return res.status(400).json({
+          error: "Origen no autorizado para Google Sign-In.",
+          code: "GOOGLE_ORIGIN_NOT_ALLOWED",
+        });
+      }
+
       const authUrl = buildGoogleAuthUrl({
         intent,
         nonce: randomUUID(),

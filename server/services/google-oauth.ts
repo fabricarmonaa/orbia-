@@ -117,7 +117,7 @@ export function getRedirectUri(intent: OAuthIntent): string {
 }
 
 function getStateSecret() {
-  return process.env.GOOGLE_OAUTH_STATE_SECRET || process.env.SESSION_SECRET || "orbia-google-state";
+  return process.env.GOOGLE_OAUTH_STATE_SECRET || "orbia-google-state";
 }
 
 function encodeState(payload: GoogleOAuthState) {

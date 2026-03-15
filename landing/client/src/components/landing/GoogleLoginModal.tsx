@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { getAppOrigin } from "@/lib/app-origin";
 
@@ -11,7 +9,6 @@ interface Props {
 
 export function GoogleLoginModal({ trigger }: Props) {
   const [open, setOpen] = useState(false);
-  const [tenantCode, setTenantCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +16,6 @@ export function GoogleLoginModal({ trigger }: Props) {
 
   useEffect(() => {
     if (!open) {
-      setTenantCode("");
       setError(null);
       setLoading(false);
     }
@@ -27,11 +23,6 @@ export function GoogleLoginModal({ trigger }: Props) {
 
   async function handleGoogleLogin(e: React.FormEvent) {
     e.preventDefault();
-    if (!tenantCode.trim()) {
-      setError("Ingresá tu código de negocio.");
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
@@ -54,7 +45,7 @@ export function GoogleLoginModal({ trigger }: Props) {
         window.removeEventListener("message", listener);
         setLoading(false);
         setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
-      }, 60000);
+      }, 180000);
 
       const listener = (event: MessageEvent) => {
         if (event.origin !== expectedOrigin) return;
@@ -94,24 +85,14 @@ export function GoogleLoginModal({ trigger }: Props) {
         </DialogHeader>
         <div className="py-2">
           <p className="text-sm text-muted-foreground mb-4">
-            Ingresá el código de negocio de tu empresa para continuar con tu cuenta de Google.
+            Continuá con Google para ingresar o crear tu cuenta automáticamente.
           </p>
           <form onSubmit={handleGoogleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="tenantCode">Código de negocio</Label>
-              <Input
-                id="tenantCode"
-                placeholder="Ej: miempresa"
-                value={tenantCode}
-                onChange={(e) => setTenantCode(e.target.value)}
-                required
-              />
-            </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
             <Button
               type="submit"
               className="w-full"
-              disabled={loading || !tenantCode.trim()}
+              disabled={loading}
             >
               {loading ? "Conectando..." : "Continuar con Google"}
             </Button>

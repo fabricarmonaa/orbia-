@@ -59,7 +59,7 @@ export function SignupTrial() {
         window.removeEventListener("message", listener);
         setLoading(false);
         setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
-      }, 60000);
+      }, 180000);
 
       const listener = (event: MessageEvent) => {
         if (event.origin !== expectedOrigin) return;

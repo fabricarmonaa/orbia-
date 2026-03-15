@@ -95,7 +95,7 @@ export default function TenantLogin() {
       const timeoutId = window.setTimeout(() => {
         window.removeEventListener("message", listener);
         toast({ title: "No se pudo ingresar con Google", description: "La autorización tardó demasiado. Intentá nuevamente.", variant: "destructive" });
-      }, 60000);
+      }, 180000);
 
       const listener = (event: MessageEvent) => {
         if (event.origin !== expectedOrigin) return;
