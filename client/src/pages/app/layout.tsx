@@ -30,6 +30,7 @@ import SalePrintPage from "./sale-print";
 import ReportsPage from "./reports";
 import { GlobalVoiceFab } from "@/components/global-voice-fab";
 import { Button } from "@/components/ui/button";
+import { BusinessOnboardingModal } from "@/components/onboarding/BusinessOnboardingModal";
 
 function SubscriptionBanner() {
   const { user } = useAuth();
@@ -99,6 +100,7 @@ export default function AppLayout() {
             <ThemeToggle />
           </header>
           <SubscriptionBanner />
+          <BusinessOnboardingModal />
           <main className="flex-1 overflow-auto p-4 sm:p-6">
             <Switch>
               {user?.role !== "CASHIER" && <Route path="/app/orders" component={OrdersPage} />}

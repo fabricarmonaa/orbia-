@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { NotebookPen, Plus, Calendar as CalendarIcon, Clock, CheckCircle2, Archive, Trash2, Tag, AlignLeft, CalendarDays } from "lucide-react";
@@ -191,6 +191,7 @@ export default function NotesPage() {
         <DialogContent className="sm:max-w-[500px] border-amber-200/60 bg-[#FFFCF2]/95 backdrop-blur-sm">
           <DialogHeader>
             <DialogTitle className="text-xl text-slate-800">Escribir una nota</DialogTitle>
+            <DialogDescription className="sr-only">Formulario para redactar una nueva nota y configurar recordatorios</DialogDescription>
           </DialogHeader>
           <div className="space-y-5 py-4">
             <div className="space-y-2 flex flex-col">

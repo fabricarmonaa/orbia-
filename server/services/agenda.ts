@@ -1,6 +1,7 @@
-import { and, eq, gte, lt, sql, desc, asc } from "drizzle-orm";
+import { and, eq, gte, lt, sql, desc, asc, inArray } from "drizzle-orm";
 import { agendaEvents, notes, orderFieldDefinitions, orderFieldValues, orders } from "@shared/schema";
 import { db } from "../db";
+import { syncEventToGoogle, deleteEventFromGoogle } from "./google-calendar";
 
 export function parseAgendaDate(fieldType: string, valueText?: string | null): Date | null {
   const v = String(valueText || "").trim();
@@ -52,6 +53,11 @@ export async function upsertAgendaEventFromSource(input: {
       updatedById: input.userId,
       updatedAt: new Date(),
     }).where(eq(agendaEvents.id, existing.id)).returning();
+    
+    // Automatically flag synced events from source entities if they need to be Google Synced
+    // For now we assume if they hit this pipeline they should try to sync 
+    // unless they specifically disabled it, but for source-entities it's true by default.
+    syncEventToGoogle(input.tenantId, input.userId, updated.id).catch(err => console.error(err));
     return updated;
   }
 
@@ -68,7 +74,10 @@ export async function upsertAgendaEventFromSource(input: {
     allDay: Boolean(input.allDay),
     createdById: input.userId,
     updatedById: input.userId,
+    googleSyncEnabled: true, // Enable sync for source entities automatically
   }).returning();
+  
+  syncEventToGoogle(input.tenantId, input.userId, created.id).catch(err => console.error(err));
   return created;
 }
 
@@ -79,7 +88,18 @@ export async function deleteAgendaEventFromSource(tenantId: number, sourceEntity
     eq(agendaEvents.sourceEntityId, sourceEntityId),
   );
   if (sourceFieldKey) where = and(where, eq(agendaEvents.sourceFieldKey, sourceFieldKey))!;
+  
+  const toDelete = await db.select().from(agendaEvents).where(where!);
+  if (!toDelete.length) return;
+
   await db.delete(agendaEvents).where(where!);
+
+  // Trigger google delete for all of those
+  for (const ev of toDelete) {
+    if (ev.googleEventId) {
+      deleteEventFromGoogle(tenantId, ev.createdById, ev.googleEventId).catch(err => console.error(err));
+    }
+  }
 }
 
 export async function syncOrderAgendaEvents(tenantId: number, orderId: number, userId: number) {
@@ -125,6 +145,9 @@ export async function syncOrderAgendaEvents(tenantId: number, orderId: number, u
   for (const ev of existing) {
     if (ev.sourceFieldKey && ev.sourceFieldKey !== "__default__" && !seen.has(ev.sourceFieldKey)) {
       await db.delete(agendaEvents).where(eq(agendaEvents.id, ev.id));
+      if (ev.googleEventId) {
+        deleteEventFromGoogle(tenantId, ev.createdById, ev.googleEventId).catch(err => console.error(err));
+      }
     }
   }
 }

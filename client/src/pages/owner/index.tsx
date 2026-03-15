@@ -167,7 +167,17 @@ export default function OwnerDashboard() {
     adminPassword: "",
     adminName: "",
   });
-  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "emails" | "security" | "legal">("tenants");
+  const [ownerTab, setOwnerTab] = useState<"tenants" | "subscriptions" | "emails" | "security" | "legal" | "users">("tenants");
+  const [superUsers, setSuperUsers] = useState<any[]>([]);
+
+  // User Management States
+  const [actionUser, setActionUser] = useState<any | null>(null);
+  const [userDeleteImpact, setUserDeleteImpact] = useState<any>(null);
+  const [checkingUserImpact, setCheckingUserImpact] = useState(false);
+  const [userImpactDialogOpen, setUserImpactDialogOpen] = useState(false);
+  const [userTransferDialogOpen, setUserTransferDialogOpen] = useState(false);
+  const [userReassignTarget, setUserReassignTarget] = useState("");
+  const [userDeleteConfirm, setUserDeleteConfirm] = useState("");
 
   const [securityEmail, setSecurityEmail] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
@@ -228,6 +238,10 @@ export default function OwnerDashboard() {
       document.title = "ORBIA - TÉRMINOS & POLÍTICAS";
       return;
     }
+    if (ownerTab === "users") {
+      document.title = "ORBIA - USUARIOS";
+      return;
+    }
     document.title = "ORBIA - ADMINISTRACIÓN";
   }, [ownerTab]);
 
@@ -273,18 +287,21 @@ export default function OwnerDashboard() {
 
   async function fetchData() {
     try {
-      const [tenantsRes, plansRes, transferRes] = await Promise.all([
+      const [tenantsRes, plansRes, transferRes, usersRes] = await Promise.all([
         apiRequest("GET", "/api/super/tenants"),
         apiRequest("GET", "/api/super/plans"),
         apiRequest("GET", "/api/super/transfer-info"),
+        apiRequest("GET", "/api/super/users"),
       ]);
       const tenantsData = await tenantsRes.json();
       const plansData = await plansRes.json();
       const transferData = await transferRes.json();
+      const usersData = await usersRes.json();
       const tenantsList: (Tenant & { plan?: Plan })[] = tenantsData.data || [];
       setTenants(tenantsList);
       setPlans(plansData.data || []);
       setTransferInfo(transferData?.data || { bank_name: "", account_holder: "", cbu: "", alias: "", whatsapp_contact: "" });
+      setSuperUsers(usersData.data || []);
 
       const dates: Record<number, { start: string; end: string }> = {};
       tenantsList.forEach((t) => {
@@ -586,6 +603,78 @@ export default function OwnerDashboard() {
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
+    } finally {
+      setProcessingTenantAction(false);
+    }
+  }
+
+  // --- SuperAdmin User Management ---
+  async function checkDeleteImpact(userToAct: any) {
+    setActionUser(userToAct);
+    setCheckingUserImpact(true);
+    setUserDeleteImpact(null);
+    setUserDeleteConfirm("");
+    setUserImpactDialogOpen(true);
+    try {
+      const res = await apiRequest("GET", `/api/super/users/${userToAct.id}/delete-impact`);
+      const payload = await res.json();
+      setUserDeleteImpact(payload.data);
+    } catch (err: any) {
+      toast({ title: "Error verificando impacto", description: err.message, variant: "destructive" });
+    } finally {
+      setCheckingUserImpact(false);
+    }
+  }
+
+  async function toggleUserDeshabilitar(userToAct: any, disable: boolean) {
+    const action = disable ? "disable" : "restore";
+    setProcessingTenantAction(true);
+    try {
+      await apiRequest("PATCH", `/api/super/users/${userToAct.id}/${action}`);
+      toast({ title: disable ? "Usuario inhabilitado con éxito" : "Usuario reactivado exitosamente" });
+      fetchData();
+    } catch (err: any) {
+      toast({ title: "Error actualizando usuario", description: err.message, variant: "destructive" });
+    } finally {
+      setProcessingTenantAction(false);
+    }
+  }
+
+  async function executeHardDelete() {
+    if (!actionUser) return;
+    if (userDeleteConfirm !== "ELIMINAR") {
+      toast({ title: "Validación", description: 'Escribí "ELIMINAR" para confirmar la operación destructiva', variant: "destructive" });
+      return;
+    }
+    setProcessingTenantAction(true);
+    try {
+      await apiRequest("DELETE", `/api/super/users/${actionUser.id}`, { confirmText: "ELIMINAR" });
+      toast({ title: "Usuario purgado definitivamente del sistema" });
+      setUserImpactDialogOpen(false);
+      setActionUser(null);
+      fetchData();
+    } catch (err: any) {
+      toast({ title: "La Purga fue Cancelada", description: err.message, variant: "destructive" });
+    } finally {
+      setProcessingTenantAction(false);
+    }
+  }
+
+  async function executeTransferOwnership() {
+    if (!actionUser || !userReassignTarget) {
+      toast({ title: "Validación", description: 'Seleccioná un target válido', variant: "destructive" });
+      return;
+    }
+    setProcessingTenantAction(true);
+    try {
+      await apiRequest("POST", `/api/super/users/${actionUser.id}/transfer/${userReassignTarget}`);
+      toast({ title: "Propiedad reasignada exitosamente a nivel SQL" });
+      // Re-evaluar el impacto ahora que se limpió en backend.
+      checkDeleteImpact(actionUser);
+      setUserTransferDialogOpen(false);
+      setUserReassignTarget("");
+    } catch (err: any) {
+      toast({ title: "Fallo durante la Transferencia", description: err.message, variant: "destructive" });
     } finally {
       setProcessingTenantAction(false);
     }
@@ -1159,11 +1248,101 @@ export default function OwnerDashboard() {
           </DialogContent>
         </Dialog>
 
-        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as "tenants" | "subscriptions" | "emails" | "security" | "legal")} data-testid="tabs-owner">
+        <Dialog open={userImpactDialogOpen} onOpenChange={setUserImpactDialogOpen}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Eliminación Severa de Usuario</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              {checkingUserImpact ? (
+                 <div className="flex flex-col items-center justify-center p-8 space-y-4">
+                   <Skeleton className="h-10 w-10 rounded-full" />
+                   <p className="text-muted-foreground text-sm">Escaneando transacciones de BD para proteger historial...</p>
+                 </div>
+              ) : userDeleteImpact ? (
+                <>
+                  {!userDeleteImpact.canHardDelete ? (
+                    <div className="p-4 bg-destructive/10 text-destructive rounded-md space-y-2 border border-destructive/20 text-sm">
+                      <p className="font-bold flex items-center gap-2">
+                        <Shield className="w-4 h-4"/> 
+                        Purga Bloqueada por Integridad
+                      </p>
+                      <p>El usuario posee operaciones críticas intransferibles:</p>
+                      <ul className="list-disc ml-5 mt-2">
+                         {userDeleteImpact.impact?.hasCashMovements && <li>Movimientos documentados de Caja (Fiscal)</li>}
+                         {userDeleteImpact.impact?.hasOrders && <li>Pedidos u Órdenes a clientes bajo su nombre</li>}
+                         {userDeleteImpact.impact?.hasPurchases && <li>Ingreso documentado de Compras/Stock</li>}
+                         {userDeleteImpact.impact?.hasStockMovements && <li>Operaciones de Auditoría de Inventario</li>}
+                      </ul>
+                      <p className="pt-2 italic">Recomendamos firmemente Deshabilitar la cuenta conservando historia.</p>
+                    </div>
+                  ) : (
+                    <div className="p-4 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-md border border-orange-500/20 text-sm">
+                      El historial del usuario está limpio de impactos transaccionales pesados. La Purga puede continuar, erradicando todas sus credenciales, tokens, y la cuenta.
+                    </div>
+                  )}
+
+                  <div className="flex justify-between items-center gap-2 mt-4">
+                    <Button variant="outline" onClick={() => {
+                        setUserTransferDialogOpen(true);
+                      }}>
+                      Reasignar Entidades Livianas
+                    </Button>
+                  </div>
+                  
+                  {userDeleteImpact.canHardDelete && (
+                    <div className="space-y-2 mt-4 pt-4 border-t">
+                      <Label className="text-destructive font-medium">Escribí "ELIMINAR" para confirmar</Label>
+                      <Input
+                        value={userDeleteConfirm}
+                        className="border-destructive/30"
+                        onChange={(e) => setUserDeleteConfirm(e.target.value)}
+                        placeholder="ELIMINAR"
+                      />
+                      <Button variant="destructive" className="w-full mt-2" onClick={executeHardDelete} disabled={processingTenantAction || userDeleteConfirm !== "ELIMINAR"}>
+                        <Trash2 className="w-4 h-4 mr-2" />
+                        Ejecutar Purga de Usuario
+                      </Button>
+                    </div>
+                  )}
+                </>
+              ) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={userTransferDialogOpen} onOpenChange={setUserTransferDialogOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Transferencia de Elementos</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Seleccioná el ID numérico del Usuario SuperAdmin destino para migrar <strong>Agenda, Notas, y Propiedades Livianas</strong>.
+              </p>
+              <div className="space-y-2">
+                <Label>ID de Usuario Destino</Label>
+                <Input
+                  type="number"
+                  value={userReassignTarget}
+                  onChange={(e) => setUserReassignTarget(e.target.value)}
+                  placeholder="ID numérico"
+                />
+              </div>
+              <Button onClick={executeTransferOwnership} disabled={processingTenantAction}>
+                <Save className="w-4 h-4 mr-2" />
+                Transferir y Re-evaluar
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Tabs value={ownerTab} onValueChange={(value) => setOwnerTab(value as any)} data-testid="tabs-owner">
           <TabsList>
             <TabsTrigger value="tenants" data-testid="tab-tenants">Negocios</TabsTrigger>
             <TabsTrigger value="subscriptions" data-testid="tab-subscriptions">Suscripciones</TabsTrigger>
             <TabsTrigger value="emails" data-testid="tab-emails">Correos</TabsTrigger>
+            <TabsTrigger value="users" data-testid="tab-users">Usuarios</TabsTrigger>
             <TabsTrigger value="security" data-testid="tab-security">Seguridad</TabsTrigger>
             <TabsTrigger value="legal" data-testid="tab-legal">Terminos & politicas</TabsTrigger>
           </TabsList>
@@ -1698,6 +1877,81 @@ export default function OwnerDashboard() {
                     <p><strong>Campaña:</strong> {sendSummary.campaignId}</p>
                     <p><strong>Enviados:</strong> {sendSummary.sent}</p>
                     <p><strong>Fallidos:</strong> {sendSummary.failed}</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="users" className="space-y-4">
+            <h2 className="text-xl font-semibold">Usuarios Globales (SuperAdministración)</h2>
+            <Card>
+              <CardHeader className="pb-2">
+                <h3 className="font-semibold">Mantenimiento y Control</h3>
+                <p className="text-sm text-muted-foreground">Deshabilitá o purgá cuentas cuidando la integridad relacional de Cajas y Órdenes.</p>
+              </CardHeader>
+              <CardContent>
+                <div className="relative mb-4 max-w-sm">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    placeholder="Buscar usuario..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-9"
+                  />
+                </div>
+                {loading ? (
+                  <Skeleton className="h-64 w-full" />
+                ) : (
+                  <div className="space-y-3">
+                    {superUsers.filter((u) => 
+                      (u.email || "").toLowerCase().includes(search.toLowerCase()) || 
+                      (u.fullName || "").toLowerCase().includes(search.toLowerCase()) ||
+                      (u.tenantName || "").toLowerCase().includes(search.toLowerCase())
+                    ).map((userRow) => {
+                      const isDeleted = !!userRow.deletedAt;
+                      return (
+                        <Card key={userRow.id}>
+                          <CardContent className="py-4 space-y-3">
+                            <div className="flex items-start justify-between">
+                              <div className="flex items-start gap-4">
+                                <Avatar className="h-10 w-10">
+                                  <AvatarFallback>{userRow.fullName?.charAt(0).toUpperCase() || "U"}</AvatarFallback>
+                                </Avatar>
+                                <div>
+                                  <p className="font-bold flex items-center gap-2">
+                                     {userRow.fullName} 
+                                     {userRow.isSuperAdmin && <Badge variant="secondary"><Shield className="w-3 h-3 mr-1"/>SA</Badge>}
+                                  </p>
+                                  <p className="text-sm font-mono text-muted-foreground">{userRow.email} </p>
+                                  <p className="text-xs mt-1 text-muted-foreground">Tenant: {userRow.tenantName || "Ninguno"} ({userRow.tenantCode || "N/A"})</p>
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end gap-2">
+                                <Badge variant={isDeleted ? "destructive" : "outline"} className={isDeleted ? "" : "border-green-500 text-green-600 dark:text-green-400"}>
+                                  {isDeleted ? "Inhabilitado" : "Activo"}
+                                </Badge>
+                                <div className="flex items-center gap-2 mt-2">
+                                  {isDeleted ? (
+                                    <Button size="sm" variant="outline" onClick={() => toggleUserDeshabilitar(userRow, false)}>
+                                      Restaurar
+                                    </Button>
+                                  ) : (
+                                    <Button size="sm" variant="secondary" onClick={() => toggleUserDeshabilitar(userRow, true)}>
+                                      Deshabilitar
+                                    </Button>
+                                  )}
+                                  
+                                  <Button size="sm" variant="destructive" onClick={() => checkDeleteImpact(userRow)}>
+                                    <Trash2 className="w-4 h-4 mr-1" /> Purga Extrema
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

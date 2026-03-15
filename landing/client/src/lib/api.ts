@@ -3,11 +3,8 @@ import { getAppOrigin } from "@/lib/app-origin";
 const API_BASE = getAppOrigin();
 
 export async function postPublicOnboard(payload: {
-  companyName: string;
-  ownerName: string;
   email: string;
   password: string;
-  industry: string;
 }) {
   const res = await fetch(`${API_BASE}/api/public/onboard`, {
     method: "POST",

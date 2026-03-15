@@ -22,12 +22,15 @@ export const agendaEvents = pgTable("agenda_events", {
   status: varchar("status", { length: 30 }),
   createdById: integer("created_by_id").references(() => users.id).notNull(),
   updatedById: integer("updated_by_id").references(() => users.id),
+  googleEventId: varchar("google_event_id", { length: 255 }),
+  googleSyncEnabled: boolean("google_sync_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 }, (table) => [
   index("idx_agenda_events_tenant_starts_at").on(table.tenantId, table.startsAt),
   index("idx_agenda_events_tenant_source").on(table.tenantId, table.sourceEntityType, table.sourceEntityId),
   index("idx_agenda_events_tenant_branch_starts_at").on(table.tenantId, table.branchId, table.startsAt),
+  index("idx_agenda_events_google_id").on(table.googleEventId),
   uniqueIndex("uq_agenda_events_source_field").on(table.tenantId, table.sourceEntityType, table.sourceEntityId, table.sourceFieldKey),
 ]);
 

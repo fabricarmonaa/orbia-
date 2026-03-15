@@ -6,6 +6,8 @@ import { db } from "../db";
 import { agendaEvents } from "@shared/schema";
 import { and, eq } from "drizzle-orm";
 import { listAgendaEventsRange } from "../services/agenda";
+import { syncEventToGoogle, deleteEventFromGoogle, getActiveConnection, getValidAccessToken } from "../services/google-calendar";
+import { listGoogleCalendarEvents } from "../services/google-oauth";
 
 const rangeQuery = z.object({ from: z.string().datetime(), to: z.string().datetime() });
 const createSchema = z.object({
@@ -17,17 +19,52 @@ const createSchema = z.object({
   allDay: z.boolean().optional(),
   status: z.string().max(30).optional().nullable(),
   branchId: z.coerce.number().int().positive().optional().nullable(),
+  googleSyncEnabled: z.boolean().optional(),
 });
 const idParam = z.object({ id: z.coerce.number().int().positive() });
 
 export function registerAgendaRoutes(app: Express) {
   app.get('/api/agenda/events', tenantAuth, requireFeature('agenda'), enforceBranchScope, validateQuery(rangeQuery), async (req, res) => {
     const tenantId = req.auth!.tenantId!;
+    const userId = req.auth!.userId;
     const branchId = req.auth!.scope === 'BRANCH' ? req.auth!.branchId : null;
     const from = new Date(String(req.query.from));
     const to = new Date(String(req.query.to));
     const data = await listAgendaEventsRange(tenantId, from, to, branchId);
-    res.json({ data });
+    let allEvents: any[] = [...data];
+
+    try {
+      const conn = await getActiveConnection(userId, tenantId);
+      if (conn && conn.selectedCalendarId) {
+        const accessToken = await getValidAccessToken(conn.id);
+        if (accessToken) {
+          const googleEvents = await listGoogleCalendarEvents(accessToken, conn.selectedCalendarId, from.toISOString(), to.toISOString());
+          
+          const existingGoogleIds = new Set(data.filter(d => Boolean(d.googleEventId)).map(d => String(d.googleEventId)));
+          
+          const mapped = googleEvents
+            .filter((e: any) => !existingGoogleIds.has(e.id))
+            .map((e: any) => ({
+              id: `google:${e.id}`,
+              title: e.title,
+              description: e.description,
+              startsAt: e.startsAt,
+              endsAt: e.endsAt,
+              allDay: e.allDay,
+              eventType: "MANUAL",
+              sourceEntityType: "GOOGLE_CALENDAR",
+              sourceFieldKey: e.id,
+              htmlLink: e.htmlLink,
+            }));
+            
+          allEvents = [...mapped, ...allEvents];
+        }
+      }
+    } catch (err) {
+      console.error("[Agenda] Error listando eventos externos", err);
+    }
+
+    res.json({ data: allEvents });
   });
 
   app.post('/api/agenda/events', tenantAuth, requireFeature('agenda'), enforceBranchScope, validateBody(createSchema), async (req, res) => {
@@ -46,7 +83,14 @@ export function registerAgendaRoutes(app: Express) {
       status: req.body.status || 'PENDIENTE',
       createdById: userId,
       updatedById: userId,
+      googleSyncEnabled: Boolean(req.body.googleSyncEnabled),
     }).returning();
+    
+    // Background sync to Google Calendar if requested
+    if (created.googleSyncEnabled) {
+      syncEventToGoogle(tenantId, userId, created.id).catch(err => console.error("Error trigger syncEventToGoogle:", err));
+    }
+    
     res.status(201).json({ data: created });
   });
 
@@ -67,8 +111,20 @@ export function registerAgendaRoutes(app: Express) {
       status: req.body.status ?? current.status,
       branchId,
       updatedById: req.auth!.userId,
+      googleSyncEnabled: req.body.googleSyncEnabled ?? current.googleSyncEnabled,
       updatedAt: new Date(),
     }).where(eq(agendaEvents.id, id)).returning();
+    
+    // Resync or remove according to the toggle
+    if (saved.googleSyncEnabled) {
+      syncEventToGoogle(tenantId, req.auth!.userId, saved.id).catch(err => console.error(err));
+    } else if (current.googleSyncEnabled && current.googleEventId) {
+      deleteEventFromGoogle(tenantId, req.auth!.userId, current.googleEventId).catch(err => console.error(err));
+      // Locally unlink
+      await db.update(agendaEvents).set({ googleEventId: null }).where(eq(agendaEvents.id, saved.id));
+      saved.googleEventId = null;
+    }
+    
     res.json({ data: saved });
   });
 
@@ -78,7 +134,13 @@ export function registerAgendaRoutes(app: Express) {
     const [current] = await db.select().from(agendaEvents).where(and(eq(agendaEvents.id, id), eq(agendaEvents.tenantId, tenantId)));
     if (!current) return res.status(404).json({ error: 'Evento no encontrado' });
     if (current.sourceEntityType) return res.status(400).json({ error: 'Evento sincronizado desde otra entidad' });
+    
     await db.delete(agendaEvents).where(eq(agendaEvents.id, id));
+    
+    if (current.googleEventId) {
+      deleteEventFromGoogle(tenantId, req.auth!.userId, current.googleEventId).catch(err => console.error(err));
+    }
+    
     res.status(204).send();
   });
 }

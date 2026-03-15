@@ -48,21 +48,13 @@ function legalHtmlPage(title: string, logoUrl: string | null, bodyText: string, 
 }
 
 const signupSchema = z.object({
-  companyName: z.string().min(2).max(200),
-  ownerName: z.string().min(2).max(200),
   email: z.string().email().max(255),
-  dni: z.string().max(20).optional(),
-  phone: z.string().max(50).optional(),
   password: z.string().min(6).max(120),
-  industry: z.string().max(120).optional(),
 });
 
 const onboardSchema = z.object({
-  companyName: z.string().min(2).max(200),
-  ownerName: z.string().min(2).max(200),
   email: z.string().email().max(255),
   password: z.string().min(6).max(120),
-  industry: z.string().min(2).max(120),
 });
 
 export function registerPublicRoutes(app: Express) {
@@ -158,12 +150,14 @@ export function registerPublicRoutes(app: Express) {
   app.post("/api/public/onboard", strictSignupLimiter, async (req, res) => {
     try {
       const payload = onboardSchema.parse(req.body || {});
+      const email = payload.email.trim().toLowerCase();
+      const ownerName = email.split('@')[0];
       const created = await createPublicTrialSignup({
-        tenantName: payload.companyName.trim(),
-        adminName: payload.ownerName.trim(),
-        email: payload.email.trim().toLowerCase(),
+        tenantName: "Mi Negocio",
+        adminName: ownerName,
+        email: email,
         password: payload.password,
-        industry: payload.industry.trim(),
+        industry: "General",
       });
 
       return res.status(201).json({
@@ -188,12 +182,12 @@ export function registerPublicRoutes(app: Express) {
   app.post("/api/public/signup", strictSignupLimiter, async (req, res) => {
     try {
       const payload = signupSchema.parse(req.body || {});
+      const email = payload.email.trim().toLowerCase();
+      const ownerName = email.split('@')[0];
       const created = await createPublicTrialSignup({
-        tenantName: payload.companyName.trim(),
-        adminName: payload.ownerName.trim(),
-        email: payload.email.trim().toLowerCase(),
-        dni: payload.dni?.trim() || null,
-        phone: payload.phone?.trim() || null,
+        tenantName: "Mi Negocio",
+        adminName: ownerName,
+        email: email,
         password: payload.password,
       });
 

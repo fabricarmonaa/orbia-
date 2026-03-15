@@ -7,9 +7,9 @@ import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
 import crypto from "crypto";
 import { db } from "../db";
-import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs, tenants } from "@shared/schema";
+import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs, tenants, cashMovements, orders, purchases, stockMovements, userPermissions, userGoogleConnections, passwordResetTokens, notes, agendaEvents, whatsappMessages, whatsappConversations, whatsappConversationEvents } from "@shared/schema";
 import { orderTypeDefinitions, orderTypePresets } from "@shared/schema/order-presets";
-import { eq, and, isNull, ilike } from "drizzle-orm";
+import { eq, and, isNull, ilike, sql } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
@@ -1154,4 +1154,205 @@ export function registerSuperRoutes(app: Express) {
         res.status(500).json({ error: err.message });
       }
     });
+
+  // =====================================================================
+  // USER MANAGEMENT (DISABLE & PURGE)
+  // =====================================================================
+
+  const getSuperUserDeleteImpact = async (userId: number) => {
+    // Tablas Intocables / Históricas (Bloquean Hard Delete)
+    const [cashRows] = await db.select({ id: cashMovements.id }).from(cashMovements).where(eq(cashMovements.createdById, userId)).limit(1);
+    const [orderRows] = await db.select({ id: orders.id }).from(orders).where(eq(orders.createdById, userId)).limit(1);
+    const [purchaseRows] = await db.select({ id: purchases.id }).from(purchases).where(eq(purchases.importedByUserId, userId)).limit(1);
+    const [stockRows] = await db.select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.userId, userId)).limit(1);
+
+    const hasHeavyRelations = !!(cashRows || orderRows || purchaseRows || stockRows);
+
+    return {
+      canHardDelete: !hasHeavyRelations,
+      impact: {
+        hasCashMovements: !!cashRows,
+        hasOrders: !!orderRows,
+        hasPurchases: !!purchaseRows,
+        hasStockMovements: !!stockRows,
+      }
+    };
+  };
+
+  app.get("/api/super/users", superAuth, async (req, res) => {
+    try {
+      const allUsers = await db.select({
+        id: users.id,
+        tenantId: users.tenantId,
+        branchId: users.branchId,
+        email: users.email,
+        fullName: users.fullName,
+        role: users.role,
+        isSuperAdmin: users.isSuperAdmin,
+        isActive: users.isActive,
+        createdAt: users.createdAt,
+        deletedAt: users.deletedAt,
+        tenantName: tenants.name,
+        tenantCode: tenants.code,
+      })
+      .from(users)
+      .leftJoin(tenants, eq(users.tenantId, tenants.id))
+      .orderBy(users.id);
+
+      return res.json({ data: allUsers });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get("/api/super/users/:userId/delete-impact", superAuth, async (req, res) => {
+    try {
+      const targetUserId = parseInt(req.params.userId as string, 10);
+      const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+      if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
+      
+      const analysis = await getSuperUserDeleteImpact(targetUserId);
+      return res.json({ data: analysis });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/users/:userId/disable", superAuth, async (req, res) => {
+    try {
+      const targetUserId = parseInt(req.params.userId as string, 10);
+      const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+      if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
+
+      if (targetUser.isSuperAdmin) {
+        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+        if (superAdmins.length <= 1) {
+          return res.status(400).json({ error: "No podés deshabilitar al único Super Admin existente" });
+        }
+      }
+
+      const [updated] = await db
+        .update(users)
+        .set({ deletedAt: new Date(), isActive: false })
+        .where(eq(users.id, targetUserId))
+        .returning();
+
+      await db.execute(sql`DELETE FROM session WHERE sess::text ILIKE ${'%\"userId\":' + targetUserId + '%'}`); // Invalidamos sesiones activas
+
+      return res.json({ data: updated });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.patch("/api/super/users/:userId/restore", superAuth, async (req, res) => {
+    try {
+      const targetUserId = parseInt(req.params.userId as string, 10);
+      const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+      if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
+
+      const [updated] = await db
+        .update(users)
+        .set({ deletedAt: null, isActive: true })
+        .where(eq(users.id, targetUserId))
+        .returning();
+
+      return res.json({ data: updated });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete("/api/super/users/:userId", superAuth, async (req, res) => {
+    try {
+      const targetUserId = parseInt(req.params.userId as string, 10);
+      const { confirmText } = z.object({ confirmText: z.string().trim() }).parse(req.body || {});
+      
+      if (confirmText !== "ELIMINAR") {
+        return res.status(400).json({ error: "Confirmación inválida." });
+      }
+
+      if (targetUserId === req.auth!.userId) {
+        return res.status(400).json({ error: "No podés eliminarte a vos mismo" });
+      }
+
+      const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+      if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
+
+      if (targetUser.isSuperAdmin) {
+        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+        if (superAdmins.length <= 1) {
+          return res.status(400).json({ error: "No podés purgar al último Super Admin activo" });
+        }
+      }
+
+      const analysis = await getSuperUserDeleteImpact(targetUserId);
+      
+      if (!analysis.canHardDelete) {
+        return res.status(409).json({
+          error: "Extracción abortada: El usuario posee historial crítico que corrompería el sistema.",
+          impact: analysis.impact
+        });
+      }
+
+      // Purge Accesorios Libres 
+      await db.delete(userPermissions).where(eq(userPermissions.userId, targetUserId));
+      await db.delete(userGoogleConnections).where(eq(userGoogleConnections.userId, targetUserId));
+      await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, targetUserId));
+      await db.execute(sql`DELETE FROM session WHERE sess::text ILIKE ${'%\"userId\":' + targetUserId + '%'}`);
+
+      // Hard Delete Master
+      await db.delete(users).where(eq(users.id, targetUserId));
+
+      return res.json({ ok: true, message: "Usuario eliminado completamente." });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.errors });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post("/api/super/users/:userId/transfer/:targetId", superAuth, async (req, res) => {
+    try {
+      const sourceUserId = parseInt(req.params.userId as string, 10);
+      const targetUserId = parseInt(req.params.targetId as string, 10);
+
+      if (sourceUserId === targetUserId) {
+        return res.status(400).json({ error: "No podés transferir datos a vos mismo" });
+      }
+
+      const [sourceUser] = await db.select().from(users).where(eq(users.id, sourceUserId));
+      const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
+
+      if (!sourceUser || !targetUser) return res.status(404).json({ error: "Uno o ambos usuarios no existen" });
+
+      if (sourceUser.tenantId !== targetUser.tenantId) {
+         // Omitimos la traba de tenant si el target es un SuperAdmin tecnico, pero de otra forma se bloquea.
+         // Lo ideal es transferir ownership a alguien de su misma compañía:
+         if (!targetUser.isSuperAdmin) {
+            return res.status(400).json({ error: "Solo podés transferir a usuarios del mismo negocio o a un superadmin."});
+         }
+      }
+
+      // Transferimos entidades delegables o livianas de negocio:
+      await db.update(notes).set({ createdById: targetUserId }).where(eq(notes.createdById, sourceUserId));
+      await db.update(notes).set({ updatedById: targetUserId }).where(eq(notes.updatedById, sourceUserId));
+      
+      await db.update(agendaEvents).set({ createdById: targetUserId }).where(eq(agendaEvents.createdById, sourceUserId));
+      await db.update(agendaEvents).set({ updatedById: targetUserId }).where(eq(agendaEvents.updatedById, sourceUserId));
+
+      await db.update(whatsappConversationEvents).set({ actorUserId: targetUserId }).where(eq(whatsappConversationEvents.actorUserId, sourceUserId));
+      await db.update(whatsappMessages).set({ senderUserId: targetUserId }).where(eq(whatsappMessages.senderUserId, sourceUserId));
+      await db.update(whatsappConversations).set({ assignedUserId: targetUserId }).where(eq(whatsappConversations.assignedUserId, sourceUserId));
+      await db.update(whatsappConversations).set({ linkedManuallyByUserId: targetUserId }).where(eq(whatsappConversations.linkedManuallyByUserId, sourceUserId));
+      
+      // Nota Categórica: JAMÁS transferir VENTAS, CAJAS, ESTADO FINANCIERO ni STOCK para preservar la auditoría.
+      
+      return res.json({ ok: true, message: "Propiedad reasignada exitosamente." });
+      
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.errors });
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
 }

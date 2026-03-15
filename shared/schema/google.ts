@@ -17,6 +17,9 @@ export const userGoogleConnections = pgTable("user_google_connections", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
   isActive: boolean("is_active").notNull().default(true),
 }, (table) => [
-  uniqueIndex("uq_user_google_connections_user").on(table.userId),
+  // Un usuario solo puede tener una conexión Google por tenant.
+  uniqueIndex("uq_user_google_conn_user_tenant").on(table.userId, table.tenantId),
+  // Una cuenta Google solo puede estar conectada a un usuario por tenant.
+  uniqueIndex("uq_user_google_conn_google_per_tenant").on(table.tenantId, table.googleUserId),
   index("idx_user_google_connections_tenant").on(table.tenantId),
 ]);

@@ -1,14 +1,9 @@
 const DEFAULT_DEV_APP_ORIGIN = "http://localhost:5000";
-const DEFAULT_PROD_APP_ORIGIN = "https://app.orbiapanel.com";
 
 export function getAppOrigin() {
-  const raw = (import.meta.env.VITE_APP_ORIGIN as string | undefined)?.trim();
-  let origin = raw || (import.meta.env.DEV ? DEFAULT_DEV_APP_ORIGIN : DEFAULT_PROD_APP_ORIGIN);
-
-  if (!origin.startsWith("http://") && !origin.startsWith("https://")) {
-    origin = `https://${origin}`;
-  }
-
+  const raw = import.meta.env.VITE_APP_ORIGIN;
+  const isLocal = typeof window !== "undefined" && ["localhost", "127.0.0.1"].includes(window.location.hostname);
+  
+  let origin = raw || ((import.meta.env.PROD && !isLocal) ? "https://app.orbiapanel.com" : DEFAULT_DEV_APP_ORIGIN);
   return origin.replace(/\/$/, "");
 }
-

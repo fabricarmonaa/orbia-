@@ -5,14 +5,14 @@ import "react-day-picker/dist/style.css";
 import { apiRequest } from "@/lib/auth";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { CalendarDays, Clock, ExternalLink, Plus, Pencil, Trash2 } from "lucide-react";
+import { CalendarDays, Clock, ExternalLink, Plus, Pencil, Trash2, Cloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
 type AgendaEvent = {
@@ -25,6 +25,8 @@ type AgendaEvent = {
   eventType: string;
   sourceEntityType?: string | null;
   htmlLink?: string | null;
+  googleEventId?: string | null;
+  googleSyncEnabled?: boolean;
 };
 
 type CalendarStatus = {
@@ -128,7 +130,7 @@ export default function AgendaPage() {
       startsAt,
       endsAt: null,
       allDay: form.allDay,
-      saveToGoogle: form.saveToGoogle,
+      googleSyncEnabled: form.saveToGoogle,
     };
     if (editing) {
       await apiRequest("PATCH", `/api/agenda/events/${encodeURIComponent(String(editing.id))}`, body);
@@ -199,7 +201,14 @@ export default function AgendaPage() {
               <div key={String(e.id)} className="border rounded-md p-3 space-y-2">
                 <div className="flex items-start justify-between gap-2">
                   <div>
-                    <p className="font-medium">{e.title}</p>
+                    <h3 className="font-medium flex items-center gap-2">
+                      {e.title}
+                      {e.googleEventId && (
+                        <span title="Sincronizado con Google Calendar" className="flex items-center">
+                          <Cloud className="w-4 h-4 text-blue-500" />
+                        </span>
+                      )}
+                    </h3>
                     <p className="text-xs text-muted-foreground">{e.allDay ? "Todo el día" : new Date(e.startsAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}</p>
                   </div>
                   <Badge variant={e.sourceEntityType === "GOOGLE_CALENDAR" ? "default" : "outline"}>{e.sourceEntityType === "GOOGLE_CALENDAR" ? "Google" : "Local"}</Badge>
@@ -215,7 +224,7 @@ export default function AgendaPage() {
                       date: toIsoDay(dt),
                       time: `${String(dt.getHours()).padStart(2, "0")}:${String(dt.getMinutes()).padStart(2, "0")}`,
                       allDay: e.allDay,
-                      saveToGoogle: e.sourceEntityType === "GOOGLE_CALENDAR" || Boolean(calendarStatus.connected && calendarStatus.selectedCalendarId),
+                      saveToGoogle: typeof e.googleSyncEnabled === "boolean" ? e.googleSyncEnabled : Boolean(e.googleEventId || (calendarStatus.connected && calendarStatus.selectedCalendarId)),
                     });
                     setOpen(true);
                   }}><Pencil className="w-4 h-4 mr-1" />Editar</Button>
@@ -231,7 +240,10 @@ export default function AgendaPage() {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? "Editar evento" : "Nuevo evento"}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editing ? "Editar evento" : "Nuevo evento"}</DialogTitle>
+            <DialogDescription className="sr-only">Formulario para crear o editar un evento en la agenda</DialogDescription>
+          </DialogHeader>
           <div className="space-y-3">
             <div><Label>Título</Label><Input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} /></div>
             <div><Label>Descripción</Label><Textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
@@ -240,7 +252,14 @@ export default function AgendaPage() {
               {!form.allDay ? <div><Label>Hora</Label><Input type="time" value={form.time} onChange={(e) => setForm({ ...form, time: e.target.value })} /></div> : null}
             </div>
             <div className="flex items-center gap-2"><Switch checked={form.allDay} onCheckedChange={(v) => setForm({ ...form, allDay: v })} /><Label>Evento de todo el día</Label></div>
-            <div className="flex items-center gap-2"><Switch checked={form.saveToGoogle} disabled={!calendarStatus.connected || !calendarStatus.selectedCalendarId} onCheckedChange={(v) => setForm({ ...form, saveToGoogle: v })} /><Label>Guardar también en Google Calendar</Label></div>
+            <div className="flex items-start gap-3 mt-4">
+              <Switch className="mt-0.5" checked={form.saveToGoogle} disabled={!calendarStatus.connected || !calendarStatus.selectedCalendarId} onCheckedChange={(v) => setForm({ ...form, saveToGoogle: v })} />
+              <div className="flex flex-col">
+                <Label>Guardar también en Google Calendar</Label>
+                {!calendarStatus.connected && <span className="text-[0.8rem] text-muted-foreground mt-1">Conectá tu cuenta de Google arriba para habilitar.</span>}
+                {calendarStatus.connected && !calendarStatus.selectedCalendarId && <span className="text-[0.8rem] text-muted-foreground mt-1">Seleccioná un calendario principal arriba para sincronizar.</span>}
+              </div>
+            </div>
           </div>
           <DialogFooter><Button variant="ghost" onClick={() => setOpen(false)}>Cancelar</Button><Button onClick={saveEvent}>Guardar</Button></DialogFooter>
         </DialogContent>

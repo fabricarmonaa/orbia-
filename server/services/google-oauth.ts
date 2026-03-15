@@ -14,6 +14,13 @@ export type GoogleOAuthState = {
   intent: OAuthIntent;
   userId?: number;
   nonce: string;
+  /**
+   * El origin del cliente que abrió el popup.
+   * Se usa como targetOrigin en window.opener.postMessage para que el mensaje
+   * solo llegue al origin correcto.
+   * Valores válidos provienen de GOOGLE_ALLOWED_ORIGINS (whitelist del servidor).
+   */
+  parentOrigin: string;
 };
 
 export type GoogleProfile = {
@@ -30,10 +37,83 @@ function getRequiredEnv(name: string) {
   return value;
 }
 
+/**
+ * Retorna la lista de origins permitidos como targetOrigin del postMessage.
+ * Se construye desde GOOGLE_ALLOWED_ORIGINS (CSV) si está definida,
+ * y se complementa con APP_ORIGIN y LANDING_URL.
+ */
+export function getAllowedParentOrigins(): string[] {
+  const fromEnv = (process.env.GOOGLE_ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const extras = [
+    process.env.APP_ORIGIN,
+    process.env.PUBLIC_APP_URL,
+    process.env.LANDING_URL,
+    process.env.PUBLIC_WEB_URL,
+  ].filter(Boolean) as string[];
+  const all = Array.from(new Set([
+    ...fromEnv, 
+    ...extras, 
+    "http://localhost:5000", "http://127.0.0.1:5000",
+    "http://localhost:5001", "http://127.0.0.1:5001",
+    "http://localhost:5173", "http://127.0.0.1:5173"
+  ]));
+  return all;
+}
+
+/**
+ * Verifica que el origin dado esté en la whitelist de origins permitidos.
+ * Devuelve el origin si es válido, o null si no lo es.
+ */
+export function validateParentOrigin(origin: string | undefined): string | null {
+  if (!origin) return null;
+  const allowed = getAllowedParentOrigins();
+  const clean = origin.replace(/\/$/, "").trim();
+  return allowed.includes(clean) ? clean : null;
+}
+
+/**
+ * Valida que todas las credenciales de Google OAuth estén configuradas.
+ * Llamar al arranque del servidor para fallar claro y temprano.
+ */
 export function assertGoogleOAuthConfigured() {
   getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID");
   getRequiredEnv("GOOGLE_OAUTH_CLIENT_SECRET");
-  getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
+  // Al menos uno de los dos redirect URIs debe estar configurado.
+  const authUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
+  const calUri = process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+  if (!authUri && !calUri) {
+    throw new Error("Falta configurar GOOGLE_OAUTH_REDIRECT_URI o GOOGLE_CALENDAR_REDIRECT_URI");
+  }
+}
+
+/**
+ * Verifica silenciosamente si las credenciales están disponibles (sin lanzar).
+ * Usado para mostrar estado en logs sin cortar el arranque.
+ */
+export function isGoogleOAuthConfigured(): boolean {
+  return Boolean(
+    process.env.GOOGLE_OAUTH_CLIENT_ID &&
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
+    (process.env.GOOGLE_OAUTH_REDIRECT_URI || process.env.GOOGLE_CALENDAR_REDIRECT_URI),
+  );
+}
+
+/**
+ * Devuelve el redirect URI correcto según el intent.
+ * - "login"    → GOOGLE_OAUTH_REDIRECT_URI
+ * - "calendar" → GOOGLE_CALENDAR_REDIRECT_URI (o GOOGLE_OAUTH_REDIRECT_URI como fallback)
+ */
+export function getRedirectUri(intent: OAuthIntent): string {
+  if (intent === "calendar") {
+    const calUri = process.env.GOOGLE_CALENDAR_REDIRECT_URI;
+    if (calUri) return calUri;
+    // Fallback al redirect general si no hay uno de calendar específico.
+    return getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
+  }
+  return getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
 }
 
 function getStateSecret() {
@@ -63,7 +143,7 @@ export function decodeState(raw: string): GoogleOAuthState | null {
 export function buildGoogleAuthUrl(statePayload: GoogleOAuthState) {
   assertGoogleOAuthConfigured();
   const clientId = getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID");
-  const redirectUri = getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
+  const redirectUri = getRedirectUri(statePayload.intent);
   const scope = [
     "openid",
     "email",
@@ -85,11 +165,11 @@ export function buildGoogleAuthUrl(statePayload: GoogleOAuthState) {
   return `${GOOGLE_AUTH_ENDPOINT}?${params.toString()}`;
 }
 
-export async function exchangeGoogleCode(code: string) {
+export async function exchangeGoogleCode(code: string, intent: OAuthIntent) {
   assertGoogleOAuthConfigured();
   const clientId = getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID");
   const clientSecret = getRequiredEnv("GOOGLE_OAUTH_CLIENT_SECRET");
-  const redirectUri = getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
+  const redirectUri = getRedirectUri(intent);
   const body = new URLSearchParams({
     code,
     client_id: clientId,

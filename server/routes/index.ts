@@ -34,8 +34,20 @@ import { registerProviderRoutes } from "./providers";
 import { registerGoogleCalendarRoutes } from "./google-calendar";
 import { registerNotesRoutes } from "./notes";
 import { registerWhatsappRoutes } from "./whatsapp";
+import { registerAgendaRoutes } from "./agenda";
+
+import { assertGoogleOAuthConfigured } from "../services/google-oauth";
 
 export async function registerRoutes(httpServer: Server, app: Express): Promise<Server> {
+  // Validate Google OAuth credentials at startup
+  try {
+    assertGoogleOAuthConfigured();
+  } catch (err: any) {
+    console.error("\n[!] ERROR DE CONFIGURACION CRITICO: ", err.message);
+    console.error("[!] Configura las variables de entorno de Google OAuth y reinicia.\n");
+    process.exit(1);
+  }
+
   app.get("/health", (_req, res) => {
     res.status(200).json({ ok: true });
   });
@@ -74,5 +86,6 @@ export async function registerRoutes(httpServer: Server, app: Express): Promise<
   registerGoogleCalendarRoutes(app);
   registerNotesRoutes(app);
   registerWhatsappRoutes(app);
+  registerAgendaRoutes(app);
   return httpServer;
 }

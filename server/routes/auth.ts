@@ -23,7 +23,8 @@ import { isMailerConfigured, sendMail } from "../services/mailer/gmailMailer";
 import { buildPasswordResetUrl, consumePasswordResetToken, issuePasswordResetToken, validatePasswordResetToken } from "../services/password-recovery";
 import { randomUUID } from "crypto";
 import { userGoogleConnections } from "@shared/schema";
-import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken } from "../services/google-oauth";
+import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, validateParentOrigin } from "../services/google-oauth";
+import { createPublicTrialSignup } from "../services/public-signup";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -40,13 +41,11 @@ const superLoginSchema = z.object({
 });
 
 const tenantLoginSchema = z.object({
-  tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
   password: z.string().min(1).max(256),
 });
 
 const forgotPasswordSchema = z.object({
-  tenantCode: z.string().transform((value) => sanitizeShortText(value, 40)).refine((value) => value.length >= 2, "Código inválido"),
   email: z.string().trim().email().max(120),
 });
 
@@ -57,7 +56,7 @@ const resetPasswordSchema = z.object({
 
 
 const googleStartSchema = z.object({
-  tenantCode: z.string().trim().min(2).max(40),
+  intent: z.enum(["login", "calendar"]).default("login"),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -74,16 +73,16 @@ const superLoginLimiter = createRateLimiter({
 const tenantLoginLimiter = createRateLimiter({
   windowMs: 10 * 60 * 1000,
   max: parseInt(process.env.AUTH_LOGIN_LIMIT || "10", 10),
-  keyGenerator: (req) => `tenant-login:${req.ip}:${String(req.body?.tenantCode || "").toLowerCase()}`,
+  keyGenerator: (req) => `tenant-login:${req.ip}:${String(req.body?.email || "").toLowerCase()}`,
   errorMessage: "Demasiados intentos. Intentá nuevamente en unos minutos.",
   code: "RATE_LIMITED",
   onLimit: async ({ req, retryAfterSec }) => {
-    const tenantCode = String(req.body?.tenantCode || "").trim();
-    if (!tenantCode) return;
-    const tenant = await storage.getTenantByCode(tenantCode).catch(() => undefined);
-    if (!tenant) return;
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    if (!email) return;
+    const user = await storage.getUserByEmail(email).catch(() => undefined);
+    if (!user || !user.tenantId) return;
     await storage.createAuditLog({
-      tenantId: tenant.id,
+      tenantId: user.tenantId,
       userId: null,
       action: "brute_force_blocked",
       entityType: "auth",
@@ -167,7 +166,7 @@ async function logSuperSecurity(superAdminId: number | null, action: string, met
 export function registerAuthRoutes(app: Express) {
   app.post("/api/auth/forgot-password", forgotPasswordLimiter, async (req, res) => {
     try {
-      const { tenantCode, email } = forgotPasswordSchema.parse(req.body || {});
+      const { email } = forgotPasswordSchema.parse(req.body || {});
       const normalizedEmail = email.trim().toLowerCase();
       const ip = getClientIp(req);
       const genericResponse = {
@@ -178,7 +177,6 @@ export function registerAuthRoutes(app: Express) {
       if (!isMailerConfigured()) {
         console.error("[auth:forgot-password] mailer no configurado", {
           requestId: req.requestId,
-          tenantCode,
           hasClientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
           hasClientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
           hasRefreshToken: !!process.env.GMAIL_OAUTH_REFRESH_TOKEN,
@@ -187,34 +185,27 @@ export function registerAuthRoutes(app: Express) {
         return res.status(503).json({ error: "El servicio de correo no está disponible", code: "MAILER_NOT_CONFIGURED" });
       }
 
-      const tenant = await storage.getTenantByCode(tenantCode);
+      const user = await storage.getUserByEmail(normalizedEmail);
+      if (!user || !user.isActive || !user.tenantId) {
+        console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
+          requestId: req.requestId,
+          email: normalizedEmail,
+          userFound: !!user,
+          userActive: !!user?.isActive,
+        });
+        return res.json(genericResponse);
+      }
+
+      const tenant = await storage.getTenantById(user.tenantId);
       if (!tenant || tenant.deletedAt || tenant.isBlocked || !tenant.isActive) {
         console.warn("[auth:forgot-password] solicitud omitida por tenant inválido/inactivo", {
           requestId: req.requestId,
-          tenantCode,
+          tenantId: user.tenantId,
           email: normalizedEmail,
           tenantFound: !!tenant,
           tenantDeleted: !!tenant?.deletedAt,
           tenantBlocked: !!tenant?.isBlocked,
           tenantActive: !!tenant?.isActive,
-        });
-        return res.json(genericResponse);
-      }
-
-      const [user] = await db
-        .select()
-        .from(users)
-        .where(and(eq(users.tenantId, tenant.id), eq(users.email, normalizedEmail), isNull(users.deletedAt)))
-        .limit(1);
-
-      if (!user || !user.isActive) {
-        console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
-          requestId: req.requestId,
-          tenantId: tenant.id,
-          tenantCode,
-          email: normalizedEmail,
-          userFound: !!user,
-          userActive: !!user?.isActive,
         });
         return res.json(genericResponse);
       }
@@ -505,16 +496,15 @@ export function registerAuthRoutes(app: Express) {
 
   app.get("/api/auth/google/start", async (req, res) => {
     try {
-      const { tenantCode } = googleStartSchema.parse(req.query || {});
-      const tenant = await storage.getTenantByCode(tenantCode);
-      if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
-        return res.status(400).json({ error: "No encontramos un negocio activo para ese código." });
-      }
+      const { intent } = googleStartSchema.parse(req.query || {});
+      const rawOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
+      const parentOrigin = validateParentOrigin(rawOrigin) || (process.env.APP_ORIGIN || "http://localhost:5000");
       const authUrl = buildGoogleAuthUrl({
-        tenantId: tenant.id,
-        tenantCode: tenant.code,
-        intent: "login",
+        tenantId: 0,
+        tenantCode: "tBD",
+        intent,
         nonce: randomUUID(),
+        parentOrigin,
       });
       return res.json({ url: authUrl });
     } catch (err: any) {
@@ -523,13 +513,23 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
-    const emit = (payload: Record<string, unknown>) => {
+    const emitToParent = (payload: Record<string, unknown>, parentOrigin: string) => {
       const safe = JSON.stringify(payload).replace(/</g, "\u003c");
+      // Usamos el parentOrigin validado (guardado en state durante /start) como targetOrigin.
+      // Esto garantiza que el mensaje solo llegue al origin correcto (app o landing).
+      const targetOrigin = JSON.stringify(parentOrigin);
+
+      // Deshabilitamos COOP estricto para que window.opener no sea null en cross-origin.
+      res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+      // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
+      res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
+
       return res.status(200).send(`<!doctype html><html><body><script>
         (function(){
           const data = ${safe};
+          const target = ${targetOrigin};
           if (window.opener) {
-            window.opener.postMessage({ type: 'orbia-google-auth', ...data }, window.location.origin);
+            window.opener.postMessage({ type: 'orbia-google-auth', ...data }, target);
             window.close();
           } else {
             document.body.innerText = data.message || 'Podés cerrar esta ventana.';
@@ -538,40 +538,63 @@ export function registerAuthRoutes(app: Express) {
       </script></body></html>`);
     };
 
+    // fallbackOrigin mientras no tengamos el state decodificado
+    const fallbackOrigin = process.env.APP_ORIGIN || "http://localhost:5000";
+    const emit = (payload: Record<string, unknown>, parentOrigin?: string) =>
+      emitToParent(payload, parentOrigin || fallbackOrigin);
+
+    let parentOrigin = fallbackOrigin;
+
     try {
       const code = String(req.query.code || "");
       const state = decodeState(String(req.query.state || ""));
-      if (!code || !state) return emit({ ok: false, message: "La autorización de Google no fue válida." });
-      const tenant = await storage.getTenantById(state.tenantId);
-      if (!tenant || tenant.code !== state.tenantCode) return emit({ ok: false, message: "El negocio ya no está disponible." });
+      
+      if (state && state.parentOrigin) {
+        parentOrigin = validateParentOrigin(state.parentOrigin) || fallbackOrigin;
+      }
 
-      const tokenData = await exchangeGoogleCode(code);
+      if (!code || !state) return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
+
+      const tokenData = await exchangeGoogleCode(code, "login");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
 
       if (state.intent === "login") {
-        let user = await storage.getUserByEmail(profile.email, tenant.id);
+        let user = await storage.getUserByEmail(profile.email);
+        let currentTenantId: number;
+        
         if (!user) {
-          const password = await hashPassword(randomUUID());
-          user = await storage.createUser({
-            tenantId: tenant.id,
+          const ownerName = profile.email.split('@')[0];
+          const password = randomUUID();
+          const created = await createPublicTrialSignup({
+            tenantName: "Mi Negocio",
+            adminName: profile.name || ownerName,
             email: profile.email,
             password,
-            fullName: profile.name || profile.email,
-            role: "admin",
-            scope: "TENANT",
-            branchId: null,
-            isActive: true,
-            isSuperAdmin: false,
-            avatarUrl: profile.picture || null,
-            avatarUpdatedAt: profile.picture ? new Date() : null,
-            tokenInvalidBefore: null,
+            industry: "General",
           });
+          
+          user = await storage.getUserByEmail(profile.email);
+          if (!user || !user.tenantId) {
+             return emit({ ok: false, message: "No se pudo crear la cuenta de usuario." }, parentOrigin);
+          }
+          currentTenantId = user.tenantId;
+          
+          if (profile.picture) {
+             await storage.updateUser(user.id, currentTenantId, { avatarUrl: profile.picture });
+             user.avatarUrl = profile.picture;
+          }
+        } else {
+          currentTenantId = user.tenantId!;
+          const tenant = await storage.getTenantById(currentTenantId);
+          if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
+            return emit({ ok: false, message: "El negocio ya no está disponible o está inactivo." }, parentOrigin);
+          }
         }
         const now = new Date();
         const expires = tokenData.expiresIn > 0 ? new Date(now.getTime() + tokenData.expiresIn * 1000) : null;
         const existing = await db.select().from(userGoogleConnections).where(eq(userGoogleConnections.userId, user.id)).limit(1);
         const values = {
-          tenantId: tenant.id,
+          tenantId: currentTenantId,
           userId: user.id,
           googleUserId: profile.sub,
           googleEmail: profile.email,
@@ -592,7 +615,7 @@ export function registerAuthRoutes(app: Express) {
           userId: user.id,
           email: user.email,
           role: user.role,
-          tenantId: tenant.id,
+          tenantId: currentTenantId,
           isSuperAdmin: false,
           branchId: user.branchId,
           scope: user.scope || "TENANT",
@@ -602,24 +625,31 @@ export function registerAuthRoutes(app: Express) {
           email: user.email,
           fullName: user.fullName,
           role: user.role,
-          tenantId: tenant.id,
+          tenantId: currentTenantId,
           isSuperAdmin: false,
           branchId: user.branchId,
           scope: user.scope || "TENANT",
           avatarUrl: user.avatarUrl || null,
-        }, message: "Cuenta de Google conectada correctamente." });
+        }, message: "Cuenta de Google conectada correctamente." }, parentOrigin);
       }
 
-      return emit({ ok: false, message: "Flujo no soportado en este endpoint." });
+      return emit({ ok: false, message: "Flujo no soportado en este endpoint." }, parentOrigin);
     } catch (err: any) {
-      return emit({ ok: false, message: "No pudimos completar el acceso con Google." });
+      console.error("[Google OAuth Callback Error]", err);
+      return emit({ ok: false, message: err?.message || "No pudimos completar el acceso con Google.", details: err?.toString() }, parentOrigin);
     }
   });
 
   app.post("/api/auth/login", strictLoginLimiter, tenantLoginLimiter, async (req, res) => {
     try {
-      const { tenantCode, email, password } = tenantLoginSchema.parse(req.body);
-      const tenant = await storage.getTenantByCode(tenantCode);
+      const { email, password } = tenantLoginSchema.parse(req.body);
+      
+      const user = await storage.getUserByEmail(email);
+      if (!user || !user.isActive || !user.tenantId) {
+        return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
+      }
+
+      const tenant = await storage.getTenantById(user.tenantId);
       if (!tenant) {
         return res.status(401).json({ error: "Negocio no encontrado", code: "TENANT_NOT_FOUND" });
       }
@@ -643,10 +673,7 @@ export function registerAuthRoutes(app: Express) {
           return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
         }
       }
-      const user = await storage.getUserByEmail(email, tenant.id);
-      if (!user || !user.isActive) {
-        return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
-      }
+      
       const valid = await comparePassword(password, user.password);
       if (!valid) {
         return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });

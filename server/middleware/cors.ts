@@ -16,6 +16,8 @@ const landingOrigins = [
   process.env.PUBLIC_WEB_URL,
   "https://orbiapanel.com",
   "https://www.orbiapanel.com",
+  "http://localhost:5001",
+  "http://127.0.0.1:5001",
 ].filter(Boolean) as string[];
 
 
@@ -28,7 +30,9 @@ export function corsGuard(req: Request, res: Response, next: NextFunction) {
   if (origin) {
     const isAllowed = allowedOrigins.has(origin);
     const isAllowedLandingPublicOrigin = (isPublicSignup || isPublicPlans) && landingOrigins.includes(origin);
-    if (isAllowed || isPublicTracking || isAllowedLandingPublicOrigin) {
+    // La landing también puede iniciar el flujo OAuth de Google Sign-In.
+    const isGoogleStartFromLanding = req.path === "/api/auth/google/start" && landingOrigins.includes(origin);
+    if (isAllowed || isPublicTracking || isAllowedLandingPublicOrigin || isGoogleStartFromLanding) {
       res.setHeader("Access-Control-Allow-Origin", origin);
       res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
