@@ -46,16 +46,31 @@ export function SignupTrial() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${appOrigin}/api/auth/google/start?intent=login`);
+      const parentOrigin = window.location.origin;
+      const res = await fetch(`${appOrigin}/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
       const data = await res.json();
       if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google.");
 
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente.");
 
+      const timeoutId = window.setTimeout(() => {
+        setLoading(false);
+        setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
+      }, 60000);
+      const closeWatcher = window.setInterval(() => {
+        if (!popup || popup.closed) {
+          window.clearInterval(closeWatcher);
+          window.clearTimeout(timeoutId);
+          setLoading(false);
+        }
+      }, 500);
+
       const listener = (event: MessageEvent) => {
         if (event.data?.type !== "orbia-google-auth") return;
         window.removeEventListener("message", listener);
+        window.clearInterval(closeWatcher);
+        window.clearTimeout(timeoutId);
 
         if (!event.data?.ok) {
           setError(event.data?.message || "Ocurrió un error en la autorización.");

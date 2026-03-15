@@ -83,13 +83,14 @@ export function registerGoogleCalendarRoutes(app: Express) {
 
       const tokenData = await exchangeGoogleCode(code, "calendar");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
-      const [user] = await db.select().from(users).where(and(eq(users.id, state.userId), eq(users.tenantId, state.tenantId), isNull(users.deletedAt))).limit(1);
+      const tenantId = state.tenantId!;
+      const [user] = await db.select().from(users).where(and(eq(users.id, state.userId), eq(users.tenantId, tenantId), isNull(users.deletedAt))).limit(1);
       if (!user) return emit({ ok: false, message: "No encontramos tu usuario." }, parentOrigin);
       const now = new Date();
       const expires = tokenData.expiresIn > 0 ? new Date(now.getTime() + tokenData.expiresIn * 1000) : null;
-      const existing = await getActiveConnection(user.id, state.tenantId);
+      const existing = await getActiveConnection(user.id, tenantId);
       const values = {
-        tenantId: state.tenantId,
+        tenantId,
         userId: user.id,
         googleUserId: profile.sub,
         googleEmail: profile.email,

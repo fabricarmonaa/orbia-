@@ -9,8 +9,8 @@ const GOOGLE_CALENDAR_BASE = "https://www.googleapis.com/calendar/v3";
 type OAuthIntent = "login" | "calendar";
 
 export type GoogleOAuthState = {
-  tenantId: number;
-  tenantCode: string;
+  tenantId?: number;
+  tenantCode?: string;
   intent: OAuthIntent;
   userId?: number;
   nonce: string;
@@ -133,7 +133,10 @@ export function decodeState(raw: string): GoogleOAuthState | null {
     const expected = crypto.createHmac("sha256", getStateSecret()).update(body).digest("base64url");
     if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as GoogleOAuthState;
-    if (!payload.tenantId || !payload.tenantCode || !payload.intent || !payload.nonce) return null;
+    if (!payload.intent || !payload.nonce || !payload.parentOrigin) return null;
+    if (payload.intent === "calendar") {
+      if (!payload.tenantId || !payload.tenantCode || !payload.userId) return null;
+    }
     return payload;
   } catch {
     return null;

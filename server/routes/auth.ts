@@ -57,6 +57,7 @@ const resetPasswordSchema = z.object({
 
 const googleStartSchema = z.object({
   intent: z.enum(["login", "calendar"]).default("login"),
+  parentOrigin: z.string().trim().url().optional(),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -496,12 +497,18 @@ export function registerAuthRoutes(app: Express) {
 
   app.get("/api/auth/google/start", async (req, res) => {
     try {
-      const { intent } = googleStartSchema.parse(req.query || {});
-      const rawOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
+      const { intent, parentOrigin: parentOriginFromQuery } = googleStartSchema.parse(req.query || {});
+      let refererOrigin: string | undefined;
+      if (req.headers.referer) {
+        try {
+          refererOrigin = new URL(req.headers.referer).origin;
+        } catch {
+          refererOrigin = undefined;
+        }
+      }
+      const rawOrigin = parentOriginFromQuery || req.headers.origin || refererOrigin;
       const parentOrigin = validateParentOrigin(rawOrigin) || (process.env.APP_ORIGIN || "http://localhost:5000");
       const authUrl = buildGoogleAuthUrl({
-        tenantId: 0,
-        tenantCode: "tBD",
         intent,
         nonce: randomUUID(),
         parentOrigin,
