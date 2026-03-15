@@ -9,7 +9,7 @@ import crypto from "crypto";
 import { db } from "../db";
 import { superAdminTotp, superAdminAuditLogs, users, emailCampaigns, emailDeliveryLogs, tenants, cashMovements, orders, purchases, stockMovements, userPermissions, userGoogleConnections, passwordResetTokens, notes, agendaEvents, whatsappMessages, whatsappConversations, whatsappConversationEvents } from "@shared/schema";
 import { orderTypeDefinitions, orderTypePresets } from "@shared/schema/order-presets";
-import { eq, and, isNull, ilike, sql } from "drizzle-orm";
+import { eq, and, isNull, ilike, sql, count } from "drizzle-orm";
 import { generateSecret, generateURI, verify as verifyTotp } from "otplib";
 import QRCode from "qrcode";
 import { sendMail, isMailerConfigured } from "../services/mailer/gmailMailer";
@@ -232,7 +232,7 @@ export function registerSuperRoutes(app: Express) {
       if (!updated) {
         return res.status(404).json({ error: "Plan no encontrado", code: "PLAN_NOT_FOUND" });
       }
-      return res.json({ data: updated });
+      return res.json({ success: true });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Payload inválido", code: "PLAN_PAYLOAD_INVALID", details: err.errors });
@@ -1159,23 +1159,82 @@ export function registerSuperRoutes(app: Express) {
   // USER MANAGEMENT (DISABLE & PURGE)
   // =====================================================================
 
-  const getSuperUserDeleteImpact = async (userId: number) => {
-    // Tablas Intocables / Históricas (Bloquean Hard Delete)
-    const [cashRows] = await db.select({ id: cashMovements.id }).from(cashMovements).where(eq(cashMovements.createdById, userId)).limit(1);
-    const [orderRows] = await db.select({ id: orders.id }).from(orders).where(eq(orders.createdById, userId)).limit(1);
-    const [purchaseRows] = await db.select({ id: purchases.id }).from(purchases).where(eq(purchases.importedByUserId, userId)).limit(1);
-    const [stockRows] = await db.select({ id: stockMovements.id }).from(stockMovements).where(eq(stockMovements.userId, userId)).limit(1);
+  const purgeUserSessions = async (userId: number) => {
+    const pattern = `%"userId":${userId}%`;
+    try {
+      await db.execute(sql`DELETE FROM session WHERE sess::text ILIKE ${pattern}`);
+      return;
+    } catch {
+      try {
+        await db.execute(sql`DELETE FROM sessions WHERE sess::text ILIKE ${pattern}`);
+      } catch {
+        // tabla de sesión inexistente o incompatible: no bloquea la operación
+      }
+    }
+  };
 
-    const hasHeavyRelations = !!(cashRows || orderRows || purchaseRows || stockRows);
+  const getSessionCount = async (userId: number) => {
+    const pattern = `%"userId":${userId}%`;
+    try {
+      const rows: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM session WHERE sess::text ILIKE ${pattern}`);
+      return Number(rows?.rows?.[0]?.c || 0);
+    } catch {
+      try {
+        const rows: any = await db.execute(sql`SELECT COUNT(*)::int AS c FROM sessions WHERE sess::text ILIKE ${pattern}`);
+        return Number(rows?.rows?.[0]?.c || 0);
+      } catch {
+        return 0;
+      }
+    }
+  };
+
+  const getSuperUserDeleteImpact = async (userId: number) => {
+    const [
+      sessions,
+      userPermissionsCount,
+      googleConnections,
+      passwordResetCount,
+      notesCount,
+      agendaEventsCount,
+      cashMovementsCount,
+      ordersCount,
+      purchasesCount,
+      stockMovementsCount,
+      emailCampaignsCount,
+      superAdminTotpCount,
+    ] = await Promise.all([
+      getSessionCount(userId),
+      db.select({ c: count() }).from(userPermissions).where(eq(userPermissions.userId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(userGoogleConnections).where(eq(userGoogleConnections.userId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(passwordResetTokens).where(eq(passwordResetTokens.userId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(notes).where(eq(notes.createdById, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(agendaEvents).where(eq(agendaEvents.createdById, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(cashMovements).where(eq(cashMovements.createdById, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(orders).where(eq(orders.createdById, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(purchases).where(eq(purchases.importedByUserId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(stockMovements).where(eq(stockMovements.userId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(emailCampaigns).where(eq(emailCampaigns.createdByUserId, userId)).then((r) => Number(r[0]?.c || 0)),
+      db.select({ c: count() }).from(superAdminTotp).where(eq(superAdminTotp.superAdminId, userId)).then((r) => Number(r[0]?.c || 0)),
+    ]);
+
+    const blockingDependencies = notesCount + agendaEventsCount + cashMovementsCount + ordersCount + purchasesCount + stockMovementsCount + emailCampaignsCount;
 
     return {
-      canHardDelete: !hasHeavyRelations,
+      canHardDelete: blockingDependencies === 0,
       impact: {
-        hasCashMovements: !!cashRows,
-        hasOrders: !!orderRows,
-        hasPurchases: !!purchaseRows,
-        hasStockMovements: !!stockRows,
-      }
+        sessions,
+        user_permissions: userPermissionsCount,
+        google_connections: googleConnections,
+        password_reset_tokens: passwordResetCount,
+        notes: notesCount,
+        agenda_events: agendaEventsCount,
+        cash_movements: cashMovementsCount,
+        orders: ordersCount,
+        purchases: purchasesCount,
+        stock_movements: stockMovementsCount,
+        email_campaigns: emailCampaignsCount,
+        superadmin_totp: superAdminTotpCount,
+      },
     };
   };
 
@@ -1190,6 +1249,7 @@ export function registerSuperRoutes(app: Express) {
         role: users.role,
         isSuperAdmin: users.isSuperAdmin,
         isActive: users.isActive,
+        disabled: users.disabled,
         createdAt: users.createdAt,
         deletedAt: users.deletedAt,
         tenantName: tenants.name,
@@ -1225,21 +1285,25 @@ export function registerSuperRoutes(app: Express) {
       if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
 
       if (targetUser.isSuperAdmin) {
-        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt), eq(users.disabled, false)));
         if (superAdmins.length <= 1) {
           return res.status(400).json({ error: "No podés deshabilitar al único Super Admin existente" });
         }
       }
 
-      const [updated] = await db
+      if (targetUserId === req.auth!.userId) {
+        return res.status(400).json({ error: "No podés deshabilitarte a vos mismo" });
+      }
+
+      await db
         .update(users)
-        .set({ deletedAt: new Date(), isActive: false })
+        .set({ disabled: true, isActive: false, tokenInvalidBefore: new Date() })
         .where(eq(users.id, targetUserId))
         .returning();
 
-      await db.execute(sql`DELETE FROM session WHERE sess::text ILIKE ${'%\"userId\":' + targetUserId + '%'}`); // Invalidamos sesiones activas
+      await purgeUserSessions(targetUserId); // Invalidamos sesiones activas
 
-      return res.json({ data: updated });
+      return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -1251,13 +1315,13 @@ export function registerSuperRoutes(app: Express) {
       const [targetUser] = await db.select().from(users).where(eq(users.id, targetUserId));
       if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
 
-      const [updated] = await db
+      await db
         .update(users)
-        .set({ deletedAt: null, isActive: true })
+        .set({ deletedAt: null, isActive: true, disabled: false, tokenInvalidBefore: new Date() })
         .where(eq(users.id, targetUserId))
         .returning();
 
-      return res.json({ data: updated });
+      return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -1280,7 +1344,7 @@ export function registerSuperRoutes(app: Express) {
       if (!targetUser) return res.status(404).json({ error: "Usuario no encontrado" });
 
       if (targetUser.isSuperAdmin) {
-        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+        const superAdmins = await db.select().from(users).where(and(eq(users.isSuperAdmin, true), isNull(users.deletedAt), eq(users.disabled, false)));
         if (superAdmins.length <= 1) {
           return res.status(400).json({ error: "No podés purgar al último Super Admin activo" });
         }
@@ -1290,7 +1354,7 @@ export function registerSuperRoutes(app: Express) {
       
       if (!analysis.canHardDelete) {
         return res.status(409).json({
-          error: "Extracción abortada: El usuario posee historial crítico que corrompería el sistema.",
+          error: "User cannot be deleted due to active dependencies",
           impact: analysis.impact
         });
       }
@@ -1299,7 +1363,7 @@ export function registerSuperRoutes(app: Express) {
       await db.delete(userPermissions).where(eq(userPermissions.userId, targetUserId));
       await db.delete(userGoogleConnections).where(eq(userGoogleConnections.userId, targetUserId));
       await db.delete(passwordResetTokens).where(eq(passwordResetTokens.userId, targetUserId));
-      await db.execute(sql`DELETE FROM session WHERE sess::text ILIKE ${'%\"userId\":' + targetUserId + '%'}`);
+      await purgeUserSessions(targetUserId);
 
       // Hard Delete Master
       await db.delete(users).where(eq(users.id, targetUserId));
@@ -1307,6 +1371,9 @@ export function registerSuperRoutes(app: Express) {
       return res.json({ ok: true, message: "Usuario eliminado completamente." });
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.errors });
+      if (String((err as any)?.code || "") === "23503") {
+        return res.status(409).json({ error: "User cannot be deleted due to active dependencies" });
+      }
       return res.status(500).json({ error: err.message });
     }
   });
@@ -1351,6 +1418,9 @@ export function registerSuperRoutes(app: Express) {
       
     } catch (err: any) {
       if (err instanceof z.ZodError) return res.status(400).json({ error: "Payload inválido", details: err.errors });
+      if (String((err as any)?.code || "") === "23503") {
+        return res.status(409).json({ error: "User cannot be deleted due to active dependencies" });
+      }
       return res.status(500).json({ error: err.message });
     }
   });

@@ -187,7 +187,7 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const user = await storage.getUserByEmail(normalizedEmail);
-      if (!user || !user.isActive || !user.tenantId) {
+      if (!user || !user.isActive || user.disabled || !user.tenantId) {
         console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
           requestId: req.requestId,
           email: normalizedEmail,
@@ -601,6 +601,9 @@ export function registerAuthRoutes(app: Express) {
              user.avatarUrl = profile.picture;
           }
         } else {
+          if (user.disabled || !user.isActive) {
+            return emit({ ok: false, message: "Tu usuario está deshabilitado. Contactá al administrador." }, parentOrigin);
+          }
           currentTenantId = user.tenantId!;
           const tenant = await storage.getTenantById(currentTenantId);
           if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
@@ -662,7 +665,7 @@ export function registerAuthRoutes(app: Express) {
       const { email, password } = tenantLoginSchema.parse(req.body);
       
       const user = await storage.getUserByEmail(email);
-      if (!user || !user.isActive || !user.tenantId) {
+      if (!user || !user.isActive || user.disabled || !user.tenantId) {
         return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
       }
 

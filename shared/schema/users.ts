@@ -24,6 +24,7 @@ export const users = pgTable(
     scope: varchar("scope", { length: 20 }).notNull().default("TENANT"),
     branchId: integer("branch_id"),
     isActive: boolean("is_active").notNull().default(true),
+    disabled: boolean("disabled").notNull().default(false),
     isSuperAdmin: boolean("is_super_admin").notNull().default(false),
     avatarUrl: text("avatar_url"),
     avatarUpdatedAt: timestamp("avatar_updated_at"),
