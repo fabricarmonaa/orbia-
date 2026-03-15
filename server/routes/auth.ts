@@ -526,8 +526,9 @@ export function registerAuthRoutes(app: Express) {
       // Esto garantiza que el mensaje solo llegue al origin correcto (app o landing).
       const targetOrigin = JSON.stringify(parentOrigin);
 
-      // Deshabilitamos COOP estricto para que window.opener no sea null en cross-origin.
+      // Deshabilitamos aislamiento cross-origin estricto para mantener window.opener en popup OAuth.
       res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+      res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
       // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 

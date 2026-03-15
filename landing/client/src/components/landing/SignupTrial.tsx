@@ -54,22 +54,17 @@ export function SignupTrial() {
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente.");
 
+      const expectedOrigin = new URL(data.url).origin;
       const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("message", listener);
         setLoading(false);
         setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
       }, 60000);
-      const closeWatcher = window.setInterval(() => {
-        if (!popup || popup.closed) {
-          window.clearInterval(closeWatcher);
-          window.clearTimeout(timeoutId);
-          setLoading(false);
-        }
-      }, 500);
 
       const listener = (event: MessageEvent) => {
+        if (event.origin !== expectedOrigin) return;
         if (event.data?.type !== "orbia-google-auth") return;
         window.removeEventListener("message", listener);
-        window.clearInterval(closeWatcher);
         window.clearTimeout(timeoutId);
 
         if (!event.data?.ok) {

@@ -68,6 +68,9 @@ export function registerGoogleCalendarRoutes(app: Express) {
     const emitToParent = (payload: Record<string, unknown>, parentOrigin: string) => {
       const safe = JSON.stringify(payload).replace(/</g, "\\u003c");
       const targetOrigin = JSON.stringify(parentOrigin);
+      res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+      res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
+      res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
       return res.status(200).send(`<!doctype html><html><body><script>(function(){ const data=${safe}; const target=${targetOrigin}; if(window.opener){ window.opener.postMessage({ type: 'orbia-google-calendar', ...data }, target); window.close(); } else { document.body.innerText = data.message || 'Podés cerrar esta ventana.'; } })();</script></body></html>`);
     };
 

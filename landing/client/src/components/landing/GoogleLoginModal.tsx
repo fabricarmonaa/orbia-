@@ -36,7 +36,8 @@ export function GoogleLoginModal({ trigger }: Props) {
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/google/start?tenantCode=${encodeURIComponent(tenantCode.trim())}`);
+      const parentOrigin = window.location.origin;
+      const res = await fetch(`${API_BASE}/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
       const data = await res.json();
 
       if (!res.ok || !data?.url) {
@@ -48,13 +49,19 @@ export function GoogleLoginModal({ trigger }: Props) {
         throw new Error("Tu navegador bloqueó la ventana emergente. Habilitá los popups para continuar.");
       }
 
+      const expectedOrigin = new URL(data.url).origin;
+      const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("message", listener);
+        setLoading(false);
+        setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
+      }, 60000);
+
       const listener = (event: MessageEvent) => {
-        // We do not check event.origin against window.location.origin here because 
-        // the message comes from API_BASE (which might be port 5000) to landing (port 5001).
-        // Since we specify targetOrigin appropriately in the backend, this is safe.
+        if (event.origin !== expectedOrigin) return;
         if (event.data?.type !== "orbia-google-auth") return;
 
         window.removeEventListener("message", listener);
+        window.clearTimeout(timeoutId);
 
         if (!event.data?.ok) {
           setError(event.data?.message || "Ocurrió un error en la autorización.");
@@ -62,8 +69,6 @@ export function GoogleLoginModal({ trigger }: Props) {
           return;
         }
 
-        // Successfully authenticated! We get the token and user.
-        // We now redirect to the main app's SSO endpoint to finalize login and set localStorage there.
         const token = event.data.token;
         const user = event.data.user;
         const ssoUrl = `${API_BASE}/login?ssoToken=${token}&ssoUser=${encodeURIComponent(JSON.stringify(user))}`;
