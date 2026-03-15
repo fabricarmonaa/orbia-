@@ -11,6 +11,7 @@ export function SignupTrial() {
   const [form, setForm] = useState({
     email: "",
     password: "",
+    businessName: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +96,7 @@ export function SignupTrial() {
                 </div>
                 <h3 className="text-xl font-bold">¡Cuenta creada con éxito!</h3>
                 <p className="text-muted-foreground text-sm">
-                  Ya podés ingresar a Orbia. Te vamos a pedir un par de datos de tu negocio en el primer inicio de sesión para terminar de configurarlo.
+                  Ya podés ingresar a Orbia con tu email y contraseña para empezar a usar tu panel.
                 </p>
                 <div className="pt-2">
                   <Button asChild className="w-full">
@@ -119,6 +120,7 @@ export function SignupTrial() {
                   </div>
                 </div>
 
+                <div><Label>Nombre del negocio</Label><Input value={form.businessName} onChange={(e) => setForm((s) => ({ ...s, businessName: e.target.value }))} placeholder="Ej: Kiosco Don Carlos" required /></div>
                 <div><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} required /></div>
                 <div><Label>Contraseña</Label><Input type="password" minLength={6} value={form.password} onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))} required /></div>
                 <div className="flex items-start gap-2">

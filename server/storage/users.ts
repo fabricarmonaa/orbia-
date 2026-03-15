@@ -11,24 +11,26 @@ export const userStorage = {
     return user;
   },
   async getUserByEmail(email: string, tenantId?: number | null) {
+    const normalizedEmail = email.trim().toLowerCase();
     if (tenantId) {
       const [user] = await db
         .select()
         .from(users)
-        .where(and(eq(users.email, email), eq(users.tenantId, tenantId), isNull(users.deletedAt)));
+        .where(and(eq(users.email, normalizedEmail), eq(users.tenantId, tenantId), isNull(users.deletedAt)));
       return user;
     }
     const [user] = await db
       .select()
       .from(users)
-      .where(and(eq(users.email, email), isNull(users.deletedAt)));
+      .where(and(eq(users.email, normalizedEmail), isNull(users.deletedAt)));
     return user;
   },
   async getSuperAdminByEmail(email: string) {
+    const normalizedEmail = email.trim().toLowerCase();
     const [user] = await db
       .select()
       .from(users)
-      .where(and(eq(users.email, email), eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
+      .where(and(eq(users.email, normalizedEmail), eq(users.isSuperAdmin, true), isNull(users.deletedAt)));
     return user;
   },
   async getSuperAdminById(id: number) {

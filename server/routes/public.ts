@@ -50,11 +50,13 @@ function legalHtmlPage(title: string, logoUrl: string | null, bodyText: string, 
 const signupSchema = z.object({
   email: z.string().email().max(255),
   password: z.string().min(6).max(120),
+  businessName: z.string().trim().min(2).max(120),
 });
 
 const onboardSchema = z.object({
   email: z.string().email().max(255),
   password: z.string().min(6).max(120),
+  businessName: z.string().trim().min(2).max(120),
 });
 
 export function registerPublicRoutes(app: Express) {
@@ -153,7 +155,7 @@ export function registerPublicRoutes(app: Express) {
       const email = payload.email.trim().toLowerCase();
       const ownerName = email.split('@')[0];
       const created = await createPublicTrialSignup({
-        tenantName: "Mi Negocio",
+        tenantName: payload.businessName.trim(),
         adminName: ownerName,
         email: email,
         password: payload.password,
@@ -185,7 +187,7 @@ export function registerPublicRoutes(app: Express) {
       const email = payload.email.trim().toLowerCase();
       const ownerName = email.split('@')[0];
       const created = await createPublicTrialSignup({
-        tenantName: "Mi Negocio",
+        tenantName: payload.businessName.trim(),
         adminName: ownerName,
         email: email,
         password: payload.password,
