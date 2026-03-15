@@ -15,6 +15,8 @@ import {
   listGoogleCalendars,
   refreshGoogleAccessToken,
   validateParentOrigin,
+  getRedirectUri,
+  getAllowedParentOrigins,
 } from "../services/google-oauth";
 import { getActiveConnection, getValidAccessToken } from "../services/google-calendar";
 
@@ -46,11 +48,32 @@ export function registerGoogleCalendarRoutes(app: Express) {
 
       // Determinar el parentOrigin validado para el postMessage del callback.
       const rawOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
-      const parentOrigin = validateParentOrigin(rawOrigin) || (process.env.APP_ORIGIN || "http://localhost:5000");
+      const resolvedParentOrigin = validateParentOrigin(rawOrigin);
+      const fallbackAllowed = getAllowedParentOrigins();
+      const parentOrigin = resolvedParentOrigin || (() => {
+        if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+          return fallbackAllowed.find((origin) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin)) || "https://app.orbiapanel.com";
+        }
+        return process.env.APP_ORIGIN || "http://localhost:5000";
+      })();
+
+      const redirectUri = getRedirectUri("calendar");
+      console.log("[google:calendar:connect-url]", {
+        requestId: req.requestId,
+        nodeEnv: process.env.NODE_ENV || null,
+        appOrigin: process.env.APP_ORIGIN || null,
+        publicAppUrl: process.env.PUBLIC_APP_URL || null,
+        backendUrl: process.env.BACKEND_URL || null,
+        googleAuthRedirectEnv: process.env.GOOGLE_OAUTH_REDIRECT_URI || null,
+        googleCalendarRedirectEnv: process.env.GOOGLE_CALENDAR_REDIRECT_URI || null,
+        parentOriginRaw: rawOrigin || null,
+        parentOriginResolved: parentOrigin,
+        redirectUri,
+      });
 
       const authUrl = buildGoogleAuthUrl({
         tenantId,
-        tenantCode: tenant.code,   // ✅ usar tenant.code, no String(tenantId)
+        tenantCode: tenant.code,
         intent: "calendar",
         userId,
         nonce: randomUUID(),
@@ -63,7 +86,17 @@ export function registerGoogleCalendarRoutes(app: Express) {
   });
 
   app.get("/api/google/calendar/callback", async (req, res) => {
-    const fallbackOrigin = process.env.APP_ORIGIN || "http://localhost:5000";
+    const fallbackOrigin = (() => {
+    const explicit = validateParentOrigin(process.env.APP_ORIGIN || process.env.PUBLIC_APP_URL || process.env.BACKEND_URL);
+    if (explicit) return explicit;
+    const allowed = getAllowedParentOrigins();
+    if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+      const nonLocalhost = allowed.find((origin) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin));
+      if (nonLocalhost) return nonLocalhost;
+      return "https://app.orbiapanel.com";
+    }
+    return "http://localhost:5000";
+  })();
 
     const emitToParent = (payload: Record<string, unknown>, parentOrigin: string) => {
       const safe = JSON.stringify(payload).replace(/</g, "\\u003c");
@@ -71,6 +104,7 @@ export function registerGoogleCalendarRoutes(app: Express) {
       res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
       res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
+      console.log("[google:calendar:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
       return res.status(200).send(`<!doctype html><html><body><script>(function(){ const data=${safe}; const target=${targetOrigin}; if(window.opener){ window.opener.postMessage({ type: 'orbia-google-calendar', ...data }, target); window.close(); } else { document.body.innerText = data.message || 'Podés cerrar esta ventana.'; } })();</script></body></html>`);
     };
 
@@ -80,9 +114,13 @@ export function registerGoogleCalendarRoutes(app: Express) {
     try {
       const code = String(req.query.code || "");
       const state = decodeState(String(req.query.state || ""));
-      if (!code || !state || state.intent !== "calendar" || !state.userId) return emit({ ok: false, message: "La conexión con Google Calendar no fue válida." });
+      if (!code || !state || state.intent !== "calendar" || !state.userId) {
+        console.warn("[google:calendar:callback] invalid state/code", { requestId: req.requestId, hasCode: !!code, hasState: !!state });
+        return emit({ ok: false, message: "La conexión con Google Calendar no fue válida." });
+      }
 
       const parentOrigin = validateParentOrigin(state.parentOrigin) || fallbackOrigin;
+      console.log("[google:calendar:callback]", { requestId: req.requestId, parentOrigin, redirectUri: getRedirectUri("calendar"), nodeEnv: process.env.NODE_ENV || null });
 
       const tokenData = await exchangeGoogleCode(code, "calendar");
       const profile = await fetchGoogleProfile(tokenData.accessToken);

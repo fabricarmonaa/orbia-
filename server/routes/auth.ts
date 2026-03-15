@@ -23,7 +23,7 @@ import { isMailerConfigured, sendMail } from "../services/mailer/gmailMailer";
 import { buildPasswordResetUrl, consumePasswordResetToken, issuePasswordResetToken, validatePasswordResetToken } from "../services/password-recovery";
 import { randomUUID } from "crypto";
 import { userGoogleConnections } from "@shared/schema";
-import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, validateParentOrigin } from "../services/google-oauth";
+import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, getAllowedParentOrigins, getRedirectUri, validateParentOrigin } from "../services/google-oauth";
 import { createPublicTrialSignup } from "../services/public-signup";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
@@ -517,6 +517,23 @@ export function registerAuthRoutes(app: Express) {
         });
       }
 
+      const redirectUri = getRedirectUri(intent);
+      console.log("[google:start]", {
+        requestId: req.requestId,
+        intent,
+        nodeEnv: process.env.NODE_ENV || null,
+        appOrigin: process.env.APP_ORIGIN || null,
+        publicAppUrl: process.env.PUBLIC_APP_URL || null,
+        backendUrl: process.env.BACKEND_URL || null,
+        googleAuthRedirectEnv: process.env.GOOGLE_OAUTH_REDIRECT_URI || null,
+        googleCalendarRedirectEnv: process.env.GOOGLE_CALENDAR_REDIRECT_URI || null,
+        parentOriginFromQuery: parentOriginFromQuery || null,
+        headerOrigin: headerOrigin || null,
+        refererOrigin: refererOrigin || null,
+        parentOriginResolved: parentOrigin,
+        redirectUri,
+      });
+
       const authUrl = buildGoogleAuthUrl({
         intent,
         nonce: randomUUID(),
@@ -541,6 +558,7 @@ export function registerAuthRoutes(app: Express) {
       // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 
+      console.log("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
       return res.status(200).send(`<!doctype html><html><body><script>
         (function(){
           const data = ${safe};
@@ -556,7 +574,17 @@ export function registerAuthRoutes(app: Express) {
     };
 
     // fallbackOrigin mientras no tengamos el state decodificado
-    const fallbackOrigin = process.env.APP_ORIGIN || "http://localhost:5000";
+    const fallbackOrigin = (() => {
+      const explicit = validateParentOrigin(process.env.APP_ORIGIN || process.env.PUBLIC_APP_URL || process.env.BACKEND_URL);
+      if (explicit) return explicit;
+      const allowed = getAllowedParentOrigins();
+      if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+        const nonLocalhost = allowed.find((origin) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin));
+        if (nonLocalhost) return nonLocalhost;
+        return "https://app.orbiapanel.com";
+      }
+      return "http://localhost:5000";
+    })();
     const emit = (payload: Record<string, unknown>, parentOrigin?: string) =>
       emitToParent(payload, parentOrigin || fallbackOrigin);
 
@@ -570,8 +598,12 @@ export function registerAuthRoutes(app: Express) {
         parentOrigin = validateParentOrigin(state.parentOrigin) || fallbackOrigin;
       }
 
-      if (!code || !state) return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
+      if (!code || !state) {
+        console.warn("[google:callback] invalid state/code", { requestId: req.requestId, hasCode: !!code, hasState: !!state, parentOrigin });
+        return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
+      }
 
+      console.log("[google:callback]", { requestId: req.requestId, nodeEnv: process.env.NODE_ENV || null, parentOrigin, redirectUri: getRedirectUri("login") });
       const tokenData = await exchangeGoogleCode(code, "login");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
 
