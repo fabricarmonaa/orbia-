@@ -191,7 +191,7 @@ export function superAuth(req: Request, res: Response, next: NextFunction) {
 
     storage.getSuperAdminById(payload.userId)
       .then((user) => {
-        if (!user || user.deletedAt || !user.isActive) {
+        if (!user || user.deletedAt || !user.isActive || user.disabled) {
           return unauthorizedResponse(res, "invalid");
         }
         if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
@@ -236,7 +236,7 @@ export function tenantAuth(req: Request, res: Response, next: NextFunction) {
 
         if (payload.userId > 0) {
           const user = await storage.getUserById(payload.userId, payload.tenantId!);
-          if (!user || user.deletedAt || !user.isActive) {
+          if (!user || user.deletedAt || !user.isActive || user.disabled) {
             return unauthorizedResponse(res, "invalid");
           }
           if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {

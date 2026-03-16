@@ -11,6 +11,7 @@ export function SignupTrial() {
   const [form, setForm] = useState({
     email: "",
     password: "",
+    businessName: "",
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,16 +46,26 @@ export function SignupTrial() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch(`${appOrigin}/api/auth/google/start?intent=login`);
+      const parentOrigin = window.location.origin;
+      const res = await fetch(`${appOrigin}/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
       const data = await res.json();
       if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google.");
 
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente.");
 
+      const expectedOrigin = new URL(appOrigin).origin;
+      const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("message", listener);
+        setLoading(false);
+        setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
+      }, 180000);
+
       const listener = (event: MessageEvent) => {
+        if (event.origin !== expectedOrigin) return;
         if (event.data?.type !== "orbia-google-auth") return;
         window.removeEventListener("message", listener);
+        window.clearTimeout(timeoutId);
 
         if (!event.data?.ok) {
           setError(event.data?.message || "Ocurrió un error en la autorización.");
@@ -95,7 +106,7 @@ export function SignupTrial() {
                 </div>
                 <h3 className="text-xl font-bold">¡Cuenta creada con éxito!</h3>
                 <p className="text-muted-foreground text-sm">
-                  Ya podés ingresar a Orbia. Te vamos a pedir un par de datos de tu negocio en el primer inicio de sesión para terminar de configurarlo.
+                  Ya podés ingresar a Orbia con tu email y contraseña para empezar a usar tu panel.
                 </p>
                 <div className="pt-2">
                   <Button asChild className="w-full">
@@ -119,6 +130,7 @@ export function SignupTrial() {
                   </div>
                 </div>
 
+                <div><Label>Nombre del negocio</Label><Input value={form.businessName} onChange={(e) => setForm((s) => ({ ...s, businessName: e.target.value }))} placeholder="Ej: Kiosco Don Carlos" required /></div>
                 <div><Label>Email</Label><Input type="email" value={form.email} onChange={(e) => setForm((s) => ({ ...s, email: e.target.value }))} required /></div>
                 <div><Label>Contraseña</Label><Input type="password" minLength={6} value={form.password} onChange={(e) => setForm((s) => ({ ...s, password: e.target.value }))} required /></div>
                 <div className="flex items-start gap-2">

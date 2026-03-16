@@ -23,7 +23,7 @@ import { isMailerConfigured, sendMail } from "../services/mailer/gmailMailer";
 import { buildPasswordResetUrl, consumePasswordResetToken, issuePasswordResetToken, validatePasswordResetToken } from "../services/password-recovery";
 import { randomUUID } from "crypto";
 import { userGoogleConnections } from "@shared/schema";
-import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, validateParentOrigin } from "../services/google-oauth";
+import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, getAllowedParentOrigins, getRedirectUri, validateParentOrigin } from "../services/google-oauth";
 import { createPublicTrialSignup } from "../services/public-signup";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
@@ -57,6 +57,7 @@ const resetPasswordSchema = z.object({
 
 const googleStartSchema = z.object({
   intent: z.enum(["login", "calendar"]).default("login"),
+  parentOrigin: z.string().trim().url().optional(),
 });
 
 const superLoginLimiter = createRateLimiter({
@@ -186,7 +187,7 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const user = await storage.getUserByEmail(normalizedEmail);
-      if (!user || !user.isActive || !user.tenantId) {
+      if (!user || !user.isActive || user.disabled || !user.tenantId) {
         console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
           requestId: req.requestId,
           email: normalizedEmail,
@@ -496,12 +497,44 @@ export function registerAuthRoutes(app: Express) {
 
   app.get("/api/auth/google/start", async (req, res) => {
     try {
-      const { intent } = googleStartSchema.parse(req.query || {});
-      const rawOrigin = req.headers.origin || (req.headers.referer ? new URL(req.headers.referer).origin : undefined);
-      const parentOrigin = validateParentOrigin(rawOrigin) || (process.env.APP_ORIGIN || "http://localhost:5000");
+      const { intent, parentOrigin: parentOriginFromQuery } = googleStartSchema.parse(req.query || {});
+      let refererOrigin: string | undefined;
+      if (req.headers.referer) {
+        try {
+          refererOrigin = new URL(req.headers.referer).origin;
+        } catch {
+          refererOrigin = undefined;
+        }
+      }
+      const headerOrigin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+
+      const candidateOrigins = [parentOriginFromQuery, headerOrigin, refererOrigin].filter(Boolean) as string[];
+      const parentOrigin = candidateOrigins.map((origin) => validateParentOrigin(origin)).find(Boolean);
+      if (!parentOrigin) {
+        return res.status(400).json({
+          error: "Origen no autorizado para Google Sign-In.",
+          code: "GOOGLE_ORIGIN_NOT_ALLOWED",
+        });
+      }
+
+      const redirectUri = getRedirectUri(intent);
+      console.log("[google:start]", {
+        requestId: req.requestId,
+        intent,
+        nodeEnv: process.env.NODE_ENV || null,
+        appOrigin: process.env.APP_ORIGIN || null,
+        publicAppUrl: process.env.PUBLIC_APP_URL || null,
+        backendUrl: process.env.BACKEND_URL || null,
+        googleAuthRedirectEnv: process.env.GOOGLE_OAUTH_REDIRECT_URI || null,
+        googleCalendarRedirectEnv: process.env.GOOGLE_CALENDAR_REDIRECT_URI || null,
+        parentOriginFromQuery: parentOriginFromQuery || null,
+        headerOrigin: headerOrigin || null,
+        refererOrigin: refererOrigin || null,
+        parentOriginResolved: parentOrigin,
+        redirectUri,
+      });
+
       const authUrl = buildGoogleAuthUrl({
-        tenantId: 0,
-        tenantCode: "tBD",
         intent,
         nonce: randomUUID(),
         parentOrigin,
@@ -519,11 +552,13 @@ export function registerAuthRoutes(app: Express) {
       // Esto garantiza que el mensaje solo llegue al origin correcto (app o landing).
       const targetOrigin = JSON.stringify(parentOrigin);
 
-      // Deshabilitamos COOP estricto para que window.opener no sea null en cross-origin.
+      // Deshabilitamos aislamiento cross-origin estricto para mantener window.opener en popup OAuth.
       res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+      res.setHeader("Cross-Origin-Embedder-Policy", "unsafe-none");
       // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 
+      console.log("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
       return res.status(200).send(`<!doctype html><html><body><script>
         (function(){
           const data = ${safe};
@@ -539,7 +574,17 @@ export function registerAuthRoutes(app: Express) {
     };
 
     // fallbackOrigin mientras no tengamos el state decodificado
-    const fallbackOrigin = process.env.APP_ORIGIN || "http://localhost:5000";
+    const fallbackOrigin = (() => {
+      const explicit = validateParentOrigin(process.env.APP_ORIGIN || process.env.PUBLIC_APP_URL || process.env.BACKEND_URL);
+      if (explicit) return explicit;
+      const allowed = getAllowedParentOrigins();
+      if (String(process.env.NODE_ENV || "").toLowerCase() === "production") {
+        const nonLocalhost = allowed.find((origin) => !/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin));
+        if (nonLocalhost) return nonLocalhost;
+        return "https://app.orbiapanel.com";
+      }
+      return "http://localhost:5000";
+    })();
     const emit = (payload: Record<string, unknown>, parentOrigin?: string) =>
       emitToParent(payload, parentOrigin || fallbackOrigin);
 
@@ -553,8 +598,12 @@ export function registerAuthRoutes(app: Express) {
         parentOrigin = validateParentOrigin(state.parentOrigin) || fallbackOrigin;
       }
 
-      if (!code || !state) return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
+      if (!code || !state) {
+        console.warn("[google:callback] invalid state/code", { requestId: req.requestId, hasCode: !!code, hasState: !!state, parentOrigin });
+        return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
+      }
 
+      console.log("[google:callback]", { requestId: req.requestId, nodeEnv: process.env.NODE_ENV || null, parentOrigin, redirectUri: getRedirectUri("login") });
       const tokenData = await exchangeGoogleCode(code, "login");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
 
@@ -584,6 +633,9 @@ export function registerAuthRoutes(app: Express) {
              user.avatarUrl = profile.picture;
           }
         } else {
+          if (user.disabled || !user.isActive) {
+            return emit({ ok: false, message: "Tu usuario está deshabilitado. Contactá al administrador." }, parentOrigin);
+          }
           currentTenantId = user.tenantId!;
           const tenant = await storage.getTenantById(currentTenantId);
           if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
@@ -645,7 +697,7 @@ export function registerAuthRoutes(app: Express) {
       const { email, password } = tenantLoginSchema.parse(req.body);
       
       const user = await storage.getUserByEmail(email);
-      if (!user || !user.isActive || !user.tenantId) {
+      if (!user || !user.isActive || user.disabled || !user.tenantId) {
         return res.status(401).json({ error: "Credenciales incorrectas", code: "AUTH_INVALID" });
       }
 

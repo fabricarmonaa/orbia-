@@ -5,6 +5,7 @@ const API_BASE = getAppOrigin();
 export async function postPublicOnboard(payload: {
   email: string;
   password: string;
+  businessName: string;
 }) {
   const res = await fetch(`${API_BASE}/api/public/onboard`, {
     method: "POST",

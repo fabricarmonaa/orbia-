@@ -9,8 +9,8 @@ const GOOGLE_CALENDAR_BASE = "https://www.googleapis.com/calendar/v3";
 type OAuthIntent = "login" | "calendar";
 
 export type GoogleOAuthState = {
-  tenantId: number;
-  tenantCode: string;
+  tenantId?: number;
+  tenantCode?: string;
   intent: OAuthIntent;
   userId?: number;
   nonce: string;
@@ -74,6 +74,75 @@ export function validateParentOrigin(origin: string | undefined): string | null 
   return allowed.includes(clean) ? clean : null;
 }
 
+const PROD_AUTH_CALLBACK_PATH = "/api/auth/google/callback";
+const PROD_CALENDAR_CALLBACK_PATH = "/api/google/calendar/callback";
+
+function isProductionEnv() {
+  return String(process.env.NODE_ENV || "").toLowerCase() === "production";
+}
+
+function normalizeRedirectUri(raw: string | undefined): string | null {
+  const value = String(raw || "").trim();
+  if (!value) return null;
+  try {
+    const parsed = new URL(value);
+    if (!/^https?:$/.test(parsed.protocol)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function getBaseAppUrl(): string | null {
+  const candidates = [process.env.APP_ORIGIN, process.env.PUBLIC_APP_URL, process.env.BACKEND_URL]
+    .map((v) => normalizeRedirectUri(v || undefined))
+    .filter(Boolean) as string[];
+  return candidates[0] || null;
+}
+
+export function getGoogleAuthRedirectUri(): string {
+  const explicit = normalizeRedirectUri(process.env.GOOGLE_OAUTH_REDIRECT_URI);
+  const fallback = (() => {
+    if (isProductionEnv()) {
+      const base = getBaseAppUrl();
+      return base ? new URL(PROD_AUTH_CALLBACK_PATH, base).toString() : null;
+    }
+    return "http://localhost:5000/api/auth/google/callback";
+  })();
+
+  const resolved = explicit || fallback;
+  if (!resolved) {
+    throw new Error("No se pudo resolver GOOGLE_OAUTH_REDIRECT_URI");
+  }
+
+  if (isProductionEnv() && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(resolved)) {
+    throw new Error("GOOGLE_OAUTH_REDIRECT_URI inválido en producción (localhost no permitido)");
+  }
+  return resolved;
+}
+
+export function getGoogleCalendarRedirectUri(): string {
+  const explicitCal = normalizeRedirectUri(process.env.GOOGLE_CALENDAR_REDIRECT_URI);
+  const explicitAuth = normalizeRedirectUri(process.env.GOOGLE_OAUTH_REDIRECT_URI);
+  const fallback = (() => {
+    if (isProductionEnv()) {
+      const base = getBaseAppUrl();
+      return base ? new URL(PROD_CALENDAR_CALLBACK_PATH, base).toString() : null;
+    }
+    return "http://localhost:5000/api/google/calendar/callback";
+  })();
+
+  const resolved = explicitCal || explicitAuth || fallback;
+  if (!resolved) {
+    throw new Error("No se pudo resolver GOOGLE_CALENDAR_REDIRECT_URI");
+  }
+
+  if (isProductionEnv() && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?\//i.test(resolved)) {
+    throw new Error("GOOGLE_CALENDAR_REDIRECT_URI inválido en producción (localhost no permitido)");
+  }
+  return resolved;
+}
+
 /**
  * Valida que todas las credenciales de Google OAuth estén configuradas.
  * Llamar al arranque del servidor para fallar claro y temprano.
@@ -81,12 +150,8 @@ export function validateParentOrigin(origin: string | undefined): string | null 
 export function assertGoogleOAuthConfigured() {
   getRequiredEnv("GOOGLE_OAUTH_CLIENT_ID");
   getRequiredEnv("GOOGLE_OAUTH_CLIENT_SECRET");
-  // Al menos uno de los dos redirect URIs debe estar configurado.
-  const authUri = process.env.GOOGLE_OAUTH_REDIRECT_URI;
-  const calUri = process.env.GOOGLE_CALENDAR_REDIRECT_URI;
-  if (!authUri && !calUri) {
-    throw new Error("Falta configurar GOOGLE_OAUTH_REDIRECT_URI o GOOGLE_CALENDAR_REDIRECT_URI");
-  }
+  getGoogleAuthRedirectUri();
+  getGoogleCalendarRedirectUri();
 }
 
 /**
@@ -94,30 +159,27 @@ export function assertGoogleOAuthConfigured() {
  * Usado para mostrar estado en logs sin cortar el arranque.
  */
 export function isGoogleOAuthConfigured(): boolean {
-  return Boolean(
-    process.env.GOOGLE_OAUTH_CLIENT_ID &&
-    process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
-    (process.env.GOOGLE_OAUTH_REDIRECT_URI || process.env.GOOGLE_CALENDAR_REDIRECT_URI),
-  );
+  try {
+    return Boolean(
+      process.env.GOOGLE_OAUTH_CLIENT_ID &&
+      process.env.GOOGLE_OAUTH_CLIENT_SECRET &&
+      getGoogleAuthRedirectUri() &&
+      getGoogleCalendarRedirectUri(),
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
  * Devuelve el redirect URI correcto según el intent.
- * - "login"    → GOOGLE_OAUTH_REDIRECT_URI
- * - "calendar" → GOOGLE_CALENDAR_REDIRECT_URI (o GOOGLE_OAUTH_REDIRECT_URI como fallback)
  */
 export function getRedirectUri(intent: OAuthIntent): string {
-  if (intent === "calendar") {
-    const calUri = process.env.GOOGLE_CALENDAR_REDIRECT_URI;
-    if (calUri) return calUri;
-    // Fallback al redirect general si no hay uno de calendar específico.
-    return getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
-  }
-  return getRequiredEnv("GOOGLE_OAUTH_REDIRECT_URI");
+  return intent === "calendar" ? getGoogleCalendarRedirectUri() : getGoogleAuthRedirectUri();
 }
 
 function getStateSecret() {
-  return process.env.GOOGLE_OAUTH_STATE_SECRET || process.env.SESSION_SECRET || "orbia-google-state";
+  return process.env.GOOGLE_OAUTH_STATE_SECRET || "orbia-google-state";
 }
 
 function encodeState(payload: GoogleOAuthState) {
@@ -133,7 +195,10 @@ export function decodeState(raw: string): GoogleOAuthState | null {
     const expected = crypto.createHmac("sha256", getStateSecret()).update(body).digest("base64url");
     if (!crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) return null;
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as GoogleOAuthState;
-    if (!payload.tenantId || !payload.tenantCode || !payload.intent || !payload.nonce) return null;
+    if (!payload.intent || !payload.nonce || !payload.parentOrigin) return null;
+    if (payload.intent === "calendar") {
+      if (!payload.tenantId || !payload.tenantCode || !payload.userId) return null;
+    }
     return payload;
   } catch {
     return null;

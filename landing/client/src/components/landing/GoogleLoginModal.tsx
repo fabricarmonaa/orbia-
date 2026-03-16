@@ -1,7 +1,5 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { getAppOrigin } from "@/lib/app-origin";
 
@@ -11,7 +9,6 @@ interface Props {
 
 export function GoogleLoginModal({ trigger }: Props) {
   const [open, setOpen] = useState(false);
-  const [tenantCode, setTenantCode] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -19,7 +16,6 @@ export function GoogleLoginModal({ trigger }: Props) {
 
   useEffect(() => {
     if (!open) {
-      setTenantCode("");
       setError(null);
       setLoading(false);
     }
@@ -27,16 +23,12 @@ export function GoogleLoginModal({ trigger }: Props) {
 
   async function handleGoogleLogin(e: React.FormEvent) {
     e.preventDefault();
-    if (!tenantCode.trim()) {
-      setError("Ingresá tu código de negocio.");
-      return;
-    }
-
     setLoading(true);
     setError(null);
 
     try {
-      const res = await fetch(`${API_BASE}/api/auth/google/start?tenantCode=${encodeURIComponent(tenantCode.trim())}`);
+      const parentOrigin = window.location.origin;
+      const res = await fetch(`${API_BASE}/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
       const data = await res.json();
 
       if (!res.ok || !data?.url) {
@@ -48,13 +40,19 @@ export function GoogleLoginModal({ trigger }: Props) {
         throw new Error("Tu navegador bloqueó la ventana emergente. Habilitá los popups para continuar.");
       }
 
+      const expectedOrigin = new URL(API_BASE).origin;
+      const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("message", listener);
+        setLoading(false);
+        setError("No pudimos completar la autorización con Google. Intentá nuevamente.");
+      }, 180000);
+
       const listener = (event: MessageEvent) => {
-        // We do not check event.origin against window.location.origin here because 
-        // the message comes from API_BASE (which might be port 5000) to landing (port 5001).
-        // Since we specify targetOrigin appropriately in the backend, this is safe.
+        if (event.origin !== expectedOrigin) return;
         if (event.data?.type !== "orbia-google-auth") return;
 
         window.removeEventListener("message", listener);
+        window.clearTimeout(timeoutId);
 
         if (!event.data?.ok) {
           setError(event.data?.message || "Ocurrió un error en la autorización.");
@@ -62,8 +60,6 @@ export function GoogleLoginModal({ trigger }: Props) {
           return;
         }
 
-        // Successfully authenticated! We get the token and user.
-        // We now redirect to the main app's SSO endpoint to finalize login and set localStorage there.
         const token = event.data.token;
         const user = event.data.user;
         const ssoUrl = `${API_BASE}/login?ssoToken=${token}&ssoUser=${encodeURIComponent(JSON.stringify(user))}`;
@@ -89,24 +85,14 @@ export function GoogleLoginModal({ trigger }: Props) {
         </DialogHeader>
         <div className="py-2">
           <p className="text-sm text-muted-foreground mb-4">
-            Ingresá el código de negocio de tu empresa para continuar con tu cuenta de Google.
+            Continuá con Google para ingresar o crear tu cuenta automáticamente.
           </p>
           <form onSubmit={handleGoogleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="tenantCode">Código de negocio</Label>
-              <Input
-                id="tenantCode"
-                placeholder="Ej: miempresa"
-                value={tenantCode}
-                onChange={(e) => setTenantCode(e.target.value)}
-                required
-              />
-            </div>
             {error && <p className="text-sm text-red-600">{error}</p>}
             <Button
               type="submit"
               className="w-full"
-              disabled={loading || !tenantCode.trim()}
+              disabled={loading}
             >
               {loading ? "Conectando..." : "Continuar con Google"}
             </Button>

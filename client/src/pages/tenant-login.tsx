@@ -85,15 +85,23 @@ export default function TenantLogin() {
 
   async function handleGoogleLogin() {
     try {
-      const res = await fetch(`/api/auth/google/start?intent=login`);
+      const parentOrigin = window.location.origin;
+      const res = await fetch(`/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
       const data = await res.json();
       if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google");
       const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
       if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente de Google.");
+      const expectedOrigin = window.location.origin;
+      const timeoutId = window.setTimeout(() => {
+        window.removeEventListener("message", listener);
+        toast({ title: "No se pudo ingresar con Google", description: "La autorización tardó demasiado. Intentá nuevamente.", variant: "destructive" });
+      }, 180000);
+
       const listener = (event: MessageEvent) => {
-        if (event.origin !== window.location.origin) return;
+        if (event.origin !== expectedOrigin) return;
         if (event.data?.type !== "orbia-google-auth") return;
         window.removeEventListener("message", listener);
+        window.clearTimeout(timeoutId);
         if (!event.data?.ok) {
           toast({ title: "No se pudo ingresar con Google", description: event.data?.message || "Intentá nuevamente.", variant: "destructive" });
           return;
