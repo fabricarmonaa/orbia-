@@ -178,6 +178,34 @@ async function resolveUniqueFieldKey(
   throw new HttpError(409, "ORDER_FIELD_KEY_CONFLICT", "No se pudo generar un field_key único");
 }
 
+
+async function ensureDefaultPresetAndAttachLegacyFields(tenantId: number, orderTypeId: number) {
+  let [defaultPreset] = await db
+    .select()
+    .from(orderTypePresets)
+    .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, orderTypeId), eq(orderTypePresets.code, "default")))
+    .limit(1);
+
+  if (!defaultPreset) {
+    const [created] = await db.insert(orderTypePresets).values({
+      tenantId,
+      orderTypeId,
+      code: "default",
+      label: "Default",
+      isActive: true,
+      sortOrder: 0,
+    }).returning();
+    defaultPreset = created;
+  }
+
+  await db
+    .update(orderFieldDefinitions)
+    .set({ presetId: defaultPreset.id })
+    .where(and(eq(orderFieldDefinitions.tenantId, tenantId), eq(orderFieldDefinitions.orderTypeId, orderTypeId), isNull(orderFieldDefinitions.presetId)));
+
+  return defaultPreset;
+}
+
 // ─────────────────────────────────────────────
 // Storage API
 // ─────────────────────────────────────────────
@@ -227,6 +255,7 @@ export const orderPresetsStorage = {
   // ── Presets ──────────────────────────────────────────────────────────────
   async listPresetsByType(tenantId: number, code: string) {
     const typeRow = await getTypeOrThrow(tenantId, code);
+    await ensureDefaultPresetAndAttachLegacyFields(tenantId, typeRow.id);
     const presets = await db
       .select()
       .from(orderTypePresets)
@@ -363,6 +392,7 @@ export const orderPresetsStorage = {
   // ── Fields by preset ─────────────────────────────────────────────────────
   async listFieldsByPreset(tenantId: number, presetId: number) {
     const preset = await getPresetOrThrow(tenantId, presetId);
+    await ensureDefaultPresetAndAttachLegacyFields(tenantId, preset.orderTypeId);
     const fields = await db
       .select()
       .from(orderFieldDefinitions)

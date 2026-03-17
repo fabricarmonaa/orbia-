@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe, ChevronRight } from "lucide-react";
+import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 import { DEFAULT_TRACKING_BLOCK_ORDER, DEFAULT_TRACKING_VISIBILITY, type TrackingDisplayConfig, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
@@ -201,7 +201,6 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
       <div className={layout === "stepper" ? "max-w-4xl mx-auto space-y-5" : "max-w-xl mx-auto space-y-5"}>
         {blockOrder.map((id) => <div key={id}>{blocks[id]}</div>)}
-        {branding.texts.trackingCta ? <p className="text-center text-sm inline-flex items-center justify-center gap-1" style={{ color: mutedText }}>{branding.texts.trackingCta} <ChevronRight className="w-4 h-4" /></p> : null}
       </div>
     </div>
   );

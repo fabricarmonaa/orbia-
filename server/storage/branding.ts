@@ -31,7 +31,6 @@ const DEFAULT_TEXTS = {
   trackingSubtitle: "Podés ver el estado actualizado en tiempo real.",
   trackingFooter: "Gracias por tu compra",
   trackingThanks: "Gracias por confiar en nosotros.",
-  trackingCta: "¿Necesitás ayuda? Escribinos.",
 };
 
 const DEFAULT_LINKS = {

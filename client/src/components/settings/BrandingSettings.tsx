@@ -273,10 +273,6 @@ export function BrandingSettings({
                     <Label>Texto de agradecimiento</Label>
                     <Input value={(brandingForm.texts as any).trackingThanks || ""} onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingThanks: e.target.value } as any })} placeholder="Ej: Gracias por confiar en nosotros." />
                   </div>
-                  <div className="space-y-2">
-                    <Label>Texto de soporte / CTA</Label>
-                    <Input value={(brandingForm.texts as any).trackingCta || ""} onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingCta: e.target.value } as any })} placeholder="Ej: Si necesitás ayuda, escribinos." />
-                  </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Texto de términos y condiciones</Label>
                     <Input value={brandingForm.texts.trackingFooter} placeholder="Ej: Al realizar tu pedido aceptás nuestros Términos y condiciones." onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingFooter: e.target.value } })} />

@@ -71,7 +71,6 @@ const tenantBrandingSchema = z.object({
       trackingSubtitle: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
       trackingFooter: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
       trackingThanks: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
-      trackingCta: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
     })
     .optional(),
   links: z

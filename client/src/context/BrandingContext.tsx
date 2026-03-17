@@ -23,7 +23,6 @@ export interface TenantBrandingTexts {
   trackingSubtitle: string;
   trackingFooter: string;
   trackingThanks: string;
-  trackingCta: string;
 }
 
 export interface TenantBrandingLinks {
@@ -83,7 +82,6 @@ const defaultTenantBranding: TenantBranding = {
     trackingSubtitle: "Podés ver el estado actualizado en tiempo real.",
     trackingFooter: "",
     trackingThanks: "Gracias por confiar en nosotros.",
-    trackingCta: "¿Necesitás ayuda? Escribinos.",
   },
   links: {
     instagram: "",
