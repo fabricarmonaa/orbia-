@@ -206,6 +206,54 @@ async function ensureDefaultPresetAndAttachLegacyFields(tenantId: number, orderT
   return defaultPreset;
 }
 
+async function ensureSystemDefaultsForPreset(tenantId: number, orderTypeId: number, presetId: number) {
+  const systemDefaults = await db
+    .select()
+    .from(orderFieldDefinitions)
+    .where(
+      and(
+        eq(orderFieldDefinitions.tenantId, tenantId),
+        eq(orderFieldDefinitions.orderTypeId, orderTypeId),
+        eq(orderFieldDefinitions.isSystemDefault, true)
+      )
+    )
+    .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
+
+  if (systemDefaults.length === 0) return;
+
+  const existingTarget = await db
+    .select({ id: orderFieldDefinitions.id, fieldKey: orderFieldDefinitions.fieldKey })
+    .from(orderFieldDefinitions)
+    .where(
+      and(
+        eq(orderFieldDefinitions.tenantId, tenantId),
+        eq(orderFieldDefinitions.orderTypeId, orderTypeId),
+        eq(orderFieldDefinitions.presetId, presetId)
+      )
+    );
+
+  const existingKeys = new Set(existingTarget.map((r) => r.fieldKey));
+
+  for (const source of systemDefaults) {
+    if (existingKeys.has(source.fieldKey)) continue;
+    await db.insert(orderFieldDefinitions).values({
+      tenantId,
+      orderTypeId,
+      presetId,
+      fieldKey: source.fieldKey,
+      label: source.label,
+      fieldType: source.fieldType,
+      required: source.required,
+      sortOrder: source.sortOrder,
+      config: source.config || {},
+      isActive: true,
+      isSystemDefault: true,
+      visibleInTracking: source.visibleInTracking,
+      useInAgenda: source.useInAgenda,
+    });
+  }
+}
+
 // ─────────────────────────────────────────────
 // Storage API
 // ─────────────────────────────────────────────
@@ -341,6 +389,7 @@ export const orderPresetsStorage = {
     };
 
     const [created] = await db.insert(orderTypePresets).values(values).returning();
+    await ensureSystemDefaultsForPreset(tenantId, typeRow.id, created.id);
     return { type: typeRow, preset: created };
   },
 
@@ -393,14 +442,14 @@ export const orderPresetsStorage = {
   async listFieldsByPreset(tenantId: number, presetId: number) {
     const preset = await getPresetOrThrow(tenantId, presetId);
     await ensureDefaultPresetAndAttachLegacyFields(tenantId, preset.orderTypeId);
+    await ensureSystemDefaultsForPreset(tenantId, preset.orderTypeId, presetId);
     const fields = await db
       .select()
       .from(orderFieldDefinitions)
       .where(
         and(
           eq(orderFieldDefinitions.tenantId, tenantId),
-          eq(orderFieldDefinitions.presetId, presetId),
-          eq(orderFieldDefinitions.isActive, true)
+          eq(orderFieldDefinitions.presetId, presetId)
         )
       )
       .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
