@@ -81,7 +81,7 @@ export interface IStorage {
   getOrderByTrackingId(trackingId: string): Promise<Order | undefined>;
   createOrder(data: InsertOrder): Promise<Order>;
   updateOrderStatus(id: number, tenantId: number, statusId: number | null, statusCode?: string | null): Promise<void>;
-  updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date): Promise<void>;
+  updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date | null): Promise<void>;
   linkOrderSale(id: number, tenantId: number, saleId: number, salePublicToken: string | null): Promise<void>;
   getNextOrderNumber(tenantId: number): Promise<number>;
   countOrders(tenantId: number, branchId?: number | null): Promise<number>;

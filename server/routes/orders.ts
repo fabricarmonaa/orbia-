@@ -433,11 +433,8 @@ export function registerOrderRoutes(app: Express) {
         note: note || null,
       });
       if (targetDefinition.isFinal) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
-        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
         if (order.publicTrackingId) {
-          await storage.updateOrderTracking(orderId, tenantId, order.publicTrackingId, expiresAt);
+          await storage.updateOrderTracking(orderId, tenantId, order.publicTrackingId, null);
         }
       }
       await syncOrderAgendaEvents(tenantId, orderId, req.auth!.userId);
@@ -581,11 +578,8 @@ export function registerOrderRoutes(app: Express) {
       const status = statuses.find((s) => s.code === order.statusCode);
 
       if (!order.publicTrackingId) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
         const trackingId = generatePublicToken();
-        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
-        await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
+        await storage.updateOrderTracking(orderId, tenantId, trackingId, null);
         order.publicTrackingId = trackingId as any;
       }
 
@@ -641,11 +635,8 @@ export function registerOrderRoutes(app: Express) {
       const status = statuses.find((s) => s.code === order.statusCode);
 
       if (!order.publicTrackingId) {
-        const config = await storage.getConfig(tenantId);
-        const hours = config?.trackingExpirationHours || 24;
         const trackingId = generatePublicToken();
-        const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
-        await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
+        await storage.updateOrderTracking(orderId, tenantId, trackingId, null);
         order.publicTrackingId = trackingId as any;
       }
 
@@ -686,12 +677,9 @@ export function registerOrderRoutes(app: Express) {
       const orderId = parseInt(req.params.id as string);
       const order = await storage.getOrderById(orderId, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-      const config = await storage.getConfig(tenantId);
-      const hours = config?.trackingExpirationHours || 24;
       const trackingId = generatePublicToken();
-      const expiresAt = new Date(Date.now() + hours * 60 * 60 * 1000);
-      await storage.updateOrderTracking(orderId, tenantId, trackingId, expiresAt);
-      res.json({ data: { publicTrackingId: trackingId, expiresAt } });
+      await storage.updateOrderTracking(orderId, tenantId, trackingId, null);
+      res.json({ data: { publicTrackingId: trackingId, permanent: true } });
     } catch (err: any) {
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }

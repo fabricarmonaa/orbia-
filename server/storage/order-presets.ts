@@ -61,11 +61,15 @@ function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "
       ? { ...(config as Record<string, unknown>) }
       : {};
 
-  if (fieldType === "SELECT") {
-    const rawOptions = Array.isArray((base as any).options) ? (base as any).options : [];
+  if (fieldType === "SELECT" || fieldType === "CHECKBOX") {
+    const source = (base as any).options;
+    const rawOptions = Array.isArray(source)
+      ? source
+      : (typeof source === "string" ? source.split(",") : []);
     const options = Array.from(new Set(rawOptions.map((x: unknown) => String(x || "").trim()).filter(Boolean))).slice(0, 100);
-    if (options.length === 0) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El campo desplegable requiere opciones");
-    base.options = options;
+    if (fieldType === "SELECT" && options.length === 0) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El campo desplegable requiere opciones");
+    if (options.length > 0) base.options = options;
+    else delete (base as any).options;
     return base;
   }
 

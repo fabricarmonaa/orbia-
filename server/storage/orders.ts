@@ -78,7 +78,7 @@ export const orderStorage = {
       .set({ statusId, statusCode: statusCode || null, updatedAt: new Date() })
       .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
   },
-  async updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date) {
+  async updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date | null) {
     await db
       .update(orders)
       .set({ publicTrackingId: trackingId, trackingExpiresAt: expiresAt, trackingRevoked: false })

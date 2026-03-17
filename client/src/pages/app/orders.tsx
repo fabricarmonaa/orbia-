@@ -203,7 +203,7 @@ export default function OrdersPage() {
       const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
-      const fields = allFields.filter((f) => !f.isSystemDefault);
+      const fields = allFields;
       setPresetFields(fields);
       setCustomFieldInputs((prev) => {
         const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
@@ -638,7 +638,7 @@ export default function OrdersPage() {
                 </div>
                 {presetFields.length > 0 && (
                   <div className="space-y-3 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos adicionales</p>
+                    <p className="text-sm font-medium">Campos del pedido</p>
                     {presetFields.map((field) => (
                       <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
                         <div className="flex items-center justify-between">
@@ -652,13 +652,19 @@ export default function OrdersPage() {
                             Visible
                           </label>
                         </div>
-                        {field.fieldType === "TEXT" || field.fieldType === "TEXT_LONG" || field.fieldType === "DATE" || field.fieldType === "TIME" || field.fieldType === "DATETIME" || field.fieldType === "SELECT" ? (
+                        {field.fieldType === "TEXT" || field.fieldType === "TEXT_LONG" || field.fieldType === "DATE" || field.fieldType === "TIME" || field.fieldType === "DATETIME" ? (
                           <Input
                             type={field.fieldType === "DATE" ? "date" : field.fieldType === "TIME" ? "time" : field.fieldType === "DATETIME" ? "datetime-local" : "text"}
                             value={customFieldInputs[field.id]?.valueText || ""}
                             onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
-                            placeholder={field.fieldType === "SELECT" ? `Opciones: ${((field.config as any)?.options || []).join(", ")}` : undefined}
                           />
+                        ) : field.fieldType === "SELECT" ? (
+                          <Select value={customFieldInputs[field.id]?.valueText || ""} onValueChange={(val) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: val } }))}>
+                            <SelectTrigger><SelectValue placeholder="Seleccionar opción" /></SelectTrigger>
+                            <SelectContent>
+                              {((field.config as any)?.options || []).map((opt: string) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
                         ) : field.fieldType === "CHECKBOX" ? (
                           <div className="flex flex-col gap-2">
                             {((field.config as any)?.options?.length ? (field.config as any).options : ["Marcar"]).map((opt: string) => {
@@ -1143,7 +1149,7 @@ export default function OrdersPage() {
 
                 {detailCustomFields.length > 0 && (
                   <div className="space-y-4 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos adicionales</p>
+                    <p className="text-sm font-medium">Campos del pedido</p>
                     <div className="space-y-3">
                       {detailCustomFields.map((f) => (
                         <div key={`${f.fieldId}-${f.fieldKey || "x"}`} className="text-sm flex flex-col justify-between gap-1 border-b border-muted pb-3 last:border-0 last:pb-0">

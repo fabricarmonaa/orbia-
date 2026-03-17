@@ -1,21 +1,29 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/lib/auth";
-import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
+import { DEFAULT_TRACKING_VISIBILITY, DEFAULT_TRACKING_BLOCK_ORDER, type TrackingDisplayConfig } from "@shared/tracking-config";
 
 export interface TenantBrandingColors {
   primary: string;
   secondary: string;
   accent: string;
   background: string;
+  surface: string;
+  border: string;
   text: string;
+  textSecondary: string;
   trackingButton: string;
+  trackingButtonHover: string;
   trackingHeader: string;
   trackingBadge: string;
+  timeline: string;
 }
 
 export interface TenantBrandingTexts {
   trackingHeader: string;
+  trackingSubtitle: string;
   trackingFooter: string;
+  trackingThanks: string;
+  trackingCta: string;
 }
 
 export interface TenantBrandingLinks {
@@ -36,7 +44,7 @@ export interface TenantBranding {
   colors: TenantBrandingColors;
   texts: TenantBrandingTexts;
   links: TenantBrandingLinks;
-  trackingConfig: TrackingVisibilityConfig;
+  trackingConfig: TrackingDisplayConfig;
   pdfConfig: TenantBrandingPdfConfig;
 }
 
@@ -60,21 +68,29 @@ const defaultTenantBranding: TenantBranding = {
     secondary: "#8b5cf6",
     accent: "#10b981",
     background: "#ffffff",
+    surface: "#ffffff",
+    border: "#e5e7eb",
     text: "#111827",
+    textSecondary: "#4b5563",
     trackingButton: "#6366f1",
+    trackingButtonHover: "#4f46e5",
     trackingHeader: "#111827",
     trackingBadge: "#10b981",
+    timeline: "#6366f1",
   },
   texts: {
     trackingHeader: "Seguimiento de tu pedido",
+    trackingSubtitle: "Podés ver el estado actualizado en tiempo real.",
     trackingFooter: "",
+    trackingThanks: "Gracias por confiar en nosotros.",
+    trackingCta: "¿Necesitás ayuda? Escribinos.",
   },
   links: {
     instagram: "",
     whatsapp: "",
     web: "",
   },
-  trackingConfig: DEFAULT_TRACKING_VISIBILITY,
+  trackingConfig: { ...DEFAULT_TRACKING_VISIBILITY, blockOrder: [...DEFAULT_TRACKING_BLOCK_ORDER] },
   pdfConfig: {
     headerText: "",
     footerText: "",

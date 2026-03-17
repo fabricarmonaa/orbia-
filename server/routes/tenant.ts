@@ -34,7 +34,6 @@ const tenantConfigSchema = z.object({
   businessType: z.string().trim().max(80).optional(),
   businessDescription: z.string().trim().max(500).optional(),
   currency: z.string().trim().max(10).optional(),
-  trackingExpirationHours: z.coerce.number().int().min(1).max(720).optional(),
   language: z.string().trim().max(10).optional(),
   trackingLayout: z.string().trim().max(40).optional(),
   trackingPrimaryColor: z.string().trim().max(30).optional(),
@@ -213,20 +212,6 @@ export function registerTenantRoutes(app: Express) {
     try {
       const tenantId = req.auth!.tenantId!;
       const payload = tenantConfigSchema.parse(req.body);
-      const plan = await getTenantPlan(tenantId);
-      if (plan && payload.trackingExpirationHours !== undefined) {
-        const hours = parseInt(String(payload.trackingExpirationHours));
-        const minH = plan.limits.tracking_retention_min_hours || 1;
-        const maxH = plan.limits.tracking_retention_max_hours || 24;
-        if (hours < minH || hours > maxH) {
-          return res.status(400).json({
-            error: `Tu plan "${plan.name}" permite entre ${minH}h y ${maxH}h de retención de tracking.`,
-            code: "LIMIT_EXCEEDED",
-            min: minH,
-            max: maxH,
-          });
-        }
-      }
       const config = await storage.upsertConfig({
         tenantId,
         ...payload,

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -24,13 +25,61 @@ type OrderField = {
   visibleInTracking: boolean;
   useInAgenda?: boolean;
   sortOrder: number;
-  config?: { allowedExtensions?: string[] };
+  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean };
+  isSystemDefault: boolean;
   isActive: boolean;
 };
 
 type ApiErr = { message: string; code?: string };
 
 const FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
+
+
+const CRITICAL_FIELD_HINTS: Record<string, { affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean }> = {
+  cliente: { affectsCustomers: true, affectsReports: true },
+  customer: { affectsCustomers: true, affectsReports: true },
+  customer_name: { affectsCustomers: true, affectsReports: true },
+  telefono: { affectsCustomers: true },
+  pago: { affectsCash: true, affectsReports: true },
+  sena: { affectsCash: true, affectsReports: true },
+  seña: { affectsCash: true, affectsReports: true },
+  paid_amount: { affectsCash: true, affectsReports: true },
+  total_amount: { affectsCash: true, affectsReports: true },
+};
+
+function normalizeOptions(values: string[]) {
+  const map = new Map<string, string>();
+  for (const v of values) {
+    const trimmed = String(v || "").trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLocaleLowerCase("es-AR");
+    if (!map.has(key)) map.set(key, trimmed);
+  }
+  return Array.from(map.values());
+}
+
+function isCriticalField(field: OrderField | null) {
+  if (!field) return false;
+  const cfg = (field.config || {}) as any;
+  if (cfg.isCriticalField) return true;
+  const key = String(field.fieldKey || "").toLowerCase();
+  return Boolean(field.isSystemDefault || CRITICAL_FIELD_HINTS[key]);
+}
+
+function getCriticalWarning(field: OrderField | null) {
+  if (!field) return "";
+  const key = String(field.fieldKey || "").toLowerCase();
+  const cfg = (field.config || {}) as any;
+  const hints = { ...(CRITICAL_FIELD_HINTS[key] || {}), affectsCustomers: Boolean(cfg.affectsCustomers || (CRITICAL_FIELD_HINTS[key] || {}).affectsCustomers), affectsCash: Boolean(cfg.affectsCash || (CRITICAL_FIELD_HINTS[key] || {}).affectsCash), affectsReports: Boolean(cfg.affectsReports || (CRITICAL_FIELD_HINTS[key] || {}).affectsReports) };
+  const impacts = [
+    hints.affectsCustomers ? "clientes" : null,
+    hints.affectsCash ? "caja y cobros" : null,
+    hints.affectsReports ? "reportes" : null,
+  ].filter(Boolean);
+  const suffix = impacts.length ? ` (${impacts.join(", ")})` : "";
+  return `Si quitás o desactivás este campo, algunas funciones del sistema pueden dejar de funcionar correctamente${suffix}.`;
+}
+
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await authFetch(path, {
@@ -70,6 +119,7 @@ export function OrderPresetsSettings() {
   const [fields, setFields] = useState<OrderField[]>([]);
 
   const [saving, setSaving] = useState(false);
+  const [criticalDeactivateTarget, setCriticalDeactivateTarget] = useState<OrderField | null>(null);
 
   // Preset Create/Edit Modals
   const [openCreatePreset, setOpenCreatePreset] = useState(false);
@@ -88,7 +138,7 @@ export function OrderPresetsSettings() {
     visibleInTracking: false,
     useInAgenda: false,
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
-    selectOptions: ["Opción 1", "Opción 2"] as string[],
+    selectOptions: [""] as string[],
   });
   const [editTarget, setEditTarget] = useState<OrderField | null>(null);
   const [editForm, setEditForm] = useState({
@@ -239,14 +289,14 @@ export function OrderPresetsSettings() {
         payload.config = { allowedExtensions: createForm.allowedExtensions };
       }
       if (createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX") {
-        payload.config = { options: (createForm as any).selectOptions.filter((x: string) => x.trim()) };
+        payload.config = { options: normalizeOptions((createForm as any).selectOptions || []) };
       }
       await apiJson(`/api/order-presets/presets/${activePresetId}/fields`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: ["Opción 1", "Opción 2"] } as any);
+      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""] } as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -306,7 +356,20 @@ export function OrderPresetsSettings() {
         <CardContent>
           <p className="text-sm text-muted-foreground">Solo administradores pueden gestionar esta configuración.</p>
         </CardContent>
-      </Card>
+  
+      <AlertDialog open={Boolean(criticalDeactivateTarget)} onOpenChange={(open: boolean) => { if (!open) setCriticalDeactivateTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Advertencia de campo crítico</AlertDialogTitle>
+            <AlertDialogDescription>{getCriticalWarning(criticalDeactivateTarget)}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; const id = criticalDeactivateTarget.id; setCriticalDeactivateTarget(null); await deactivateField(id); }}>Continuar y desactivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </Card>
     );
   }
 
@@ -430,11 +493,11 @@ export function OrderPresetsSettings() {
                             visibleInTracking: f.visibleInTracking,
                             useInAgenda: Boolean((f as any).useInAgenda),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
-                            selectOptions: (f.config as any)?.options || [],
+                            selectOptions: normalizeOptions((f.config as any)?.options || [""]),
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="destructive" onClick={() => deactivateField(f.id)}>Desactivar</Button>
+                        <Button size="sm" variant="destructive" onClick={() => { if (isCriticalField(f)) { setCriticalDeactivateTarget(f); } else { deactivateField(f.id); } }}>Desactivar</Button>
                       </div>
                     </div>
                   ))}
@@ -584,12 +647,27 @@ export function OrderPresetsSettings() {
 
             {createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX" ? (
               <div className="space-y-3 p-3 bg-muted/50 rounded-md">
-                <Label>Opciones del desplegable (separadas por coma)</Label>
-                <Input
-                  value={createForm.selectOptions.join(", ")}
-                  onChange={(e) => setCreateForm(s => ({ ...s, selectOptions: e.target.value.split(",").map(x => x.trim()) }))}
-                  placeholder="Opción 1, Opción 2, Opción 3"
-                />
+                <Label>Opciones</Label>
+                <div className="space-y-2">
+                  {createForm.selectOptions.map((opt, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <Input
+                        value={opt}
+                        onChange={(e) => setCreateForm((prev) => {
+                          const next = [...prev.selectOptions];
+                          next[idx] = e.target.value;
+                          if (idx === next.length - 1 && e.target.value.trim()) next.push("");
+                          return { ...prev, selectOptions: next };
+                        })}
+                        placeholder={`Opción ${idx + 1}`}
+                      />
+                      <Button type="button" variant="outline" size="icon" disabled={createForm.selectOptions.length <= 1} onClick={() => setCreateForm((prev) => ({ ...prev, selectOptions: prev.selectOptions.filter((_, i) => i !== idx) || [""] }))}>×</Button>
+                      <Button type="button" variant="ghost" size="icon" disabled={idx === 0} onClick={() => setCreateForm((prev) => { const next=[...prev.selectOptions]; [next[idx-1],next[idx]]=[next[idx],next[idx-1]]; return { ...prev, selectOptions: next }; })}><ArrowUp className="w-4 h-4" /></Button>
+                      <Button type="button" variant="ghost" size="icon" disabled={idx >= createForm.selectOptions.length - 1} onClick={() => setCreateForm((prev) => { const next=[...prev.selectOptions]; [next[idx+1],next[idx]]=[next[idx],next[idx+1]]; return { ...prev, selectOptions: next }; })}><ArrowDown className="w-4 h-4" /></Button>
+                    </div>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">Completá una opción y se agrega la siguiente automáticamente.</p>
               </div>
             ) : null}
           </div>
@@ -649,12 +727,17 @@ export function OrderPresetsSettings() {
 
             {editTarget?.fieldType === "SELECT" || editTarget?.fieldType === "CHECKBOX" ? (
               <div className="space-y-3 p-3 bg-muted/50 rounded-md">
-                <Label>Opciones (separadas por coma)</Label>
-                <Input
-                  value={editForm.selectOptions.join(", ")}
-                  onChange={(e) => setEditForm(s => ({ ...s, selectOptions: e.target.value.split(",").map(x => x.trim()) }))}
-                  placeholder="Opción 1, Opción 2, Opción 3"
-                />
+                <Label>Opciones</Label>
+                <div className="space-y-2">
+                  {editForm.selectOptions.map((opt, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <Input value={opt} onChange={(e) => setEditForm((prev) => { const next=[...prev.selectOptions]; next[idx]=e.target.value; if (idx===next.length-1 && e.target.value.trim()) next.push(""); return { ...prev, selectOptions: next }; })} placeholder={`Opción ${idx + 1}`} />
+                      <Button type="button" variant="outline" size="icon" disabled={editForm.selectOptions.length <= 1} onClick={() => setEditForm((prev) => ({ ...prev, selectOptions: prev.selectOptions.filter((_, i) => i !== idx) || [""] }))}>×</Button>
+                      <Button type="button" variant="ghost" size="icon" disabled={idx === 0} onClick={() => setEditForm((prev) => { const next=[...prev.selectOptions]; [next[idx-1],next[idx]]=[next[idx],next[idx-1]]; return { ...prev, selectOptions: next }; })}><ArrowUp className="w-4 h-4" /></Button>
+                      <Button type="button" variant="ghost" size="icon" disabled={idx >= editForm.selectOptions.length - 1} onClick={() => setEditForm((prev) => { const next=[...prev.selectOptions]; [next[idx+1],next[idx]]=[next[idx],next[idx+1]]; return { ...prev, selectOptions: next }; })}><ArrowDown className="w-4 h-4" /></Button>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
@@ -677,7 +760,7 @@ export function OrderPresetsSettings() {
                   }
                   if (editTarget.fieldType === "FILE") patch.config = { allowedExtensions: editForm.allowedExtensions };
                   if (editTarget.fieldType === "SELECT" || editTarget.fieldType === "CHECKBOX") {
-                    patch.config = { ...(editTarget.config || {}), options: editForm.selectOptions.filter(x => x.trim()) };
+                    patch.config = { ...(editTarget.config || {}), options: normalizeOptions(editForm.selectOptions || []) };
                   }
                   await patchField(editTarget.id, patch, "Campo actualizado");
                   setOpenEditField(false);
@@ -691,6 +774,19 @@ export function OrderPresetsSettings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={Boolean(criticalDeactivateTarget)} onOpenChange={(open: boolean) => { if (!open) setCriticalDeactivateTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Advertencia de campo crítico</AlertDialogTitle>
+            <AlertDialogDescription>{getCriticalWarning(criticalDeactivateTarget)}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; const id = criticalDeactivateTarget.id; setCriticalDeactivateTarget(null); await deactivateField(id); }}>Continuar y desactivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

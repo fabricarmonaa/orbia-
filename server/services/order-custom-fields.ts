@@ -216,6 +216,7 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
       visibleOverride: v.visibleOverride,
       createdAt: v.createdAt,
       config: map.get(v.fieldDefinitionId)?.config || null,
+      sortOrder: map.get(v.fieldDefinitionId)?.sortOrder ?? 9999,
     }))
-    .sort((a, b) => +new Date(String(b.createdAt || 0)) - +new Date(String(a.createdAt || 0)));
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || +new Date(String(a.createdAt || 0)) - +new Date(String(b.createdAt || 0)));
 }
