@@ -90,6 +90,46 @@ type MessageTemplate = {
   isActive: boolean;
 };
 
+function normalizeSemanticKey(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+const NATIVE_ORDER_FIELD_KEYS = new Set([
+  "cliente",
+  "customer",
+  "customer_name",
+  "nombre_cliente",
+  "telefono",
+  "telefono_cliente",
+  "customer_phone",
+  "phone",
+  "descripcion",
+  "description",
+  "detalle",
+  "sena",
+  "seña",
+  "pago",
+  "senia",
+  "paid_amount",
+  "pagado",
+  "valor_total",
+  "total",
+  "total_amount",
+  "monto_total",
+]);
+
+function isNativeOrderField(field: OrderPresetField): boolean {
+  const key = normalizeSemanticKey(field.fieldKey);
+  if (key && NATIVE_ORDER_FIELD_KEYS.has(key)) return true;
+  const labelKey = normalizeSemanticKey(field.label);
+  return Boolean(labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
+}
+
 export default function OrdersPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -203,7 +243,7 @@ export default function OrdersPage() {
       const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
-      const fields = allFields;
+      const fields = allFields.filter((field) => !isNativeOrderField(field));
       setPresetFields(fields);
       setCustomFieldInputs((prev) => {
         const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
