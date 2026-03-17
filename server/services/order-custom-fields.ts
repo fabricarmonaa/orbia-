@@ -15,6 +15,29 @@ export type CustomFieldPayload = {
 
 const FILE_ALLOWED = new Set(["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]);
 
+function normalizeSemanticKey(value: string | null | undefined): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+const NATIVE_ORDER_FIELD_KEYS = new Set([
+  "cliente", "customer", "customer_name", "nombre_cliente",
+  "telefono", "telefono_cliente", "customer_phone", "phone",
+  "descripcion", "description", "detalle",
+  "sena", "senia", "pago", "paid_amount", "pagado",
+  "valor_total", "total", "total_amount", "monto_total",
+]);
+
+function isNativeOrderField(def: { fieldKey?: string | null; label?: string | null }) {
+  const fieldKey = normalizeSemanticKey(def.fieldKey);
+  const labelKey = normalizeSemanticKey(def.label);
+  return (fieldKey && NATIVE_ORDER_FIELD_KEYS.has(fieldKey)) || (labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
+}
+
 function getExt(name: string) {
   const clean = String(name || "").trim().toLowerCase();
   const i = clean.lastIndexOf(".");
@@ -63,10 +86,12 @@ export async function validateAndNormalizeCustomFields(
     .where(and(...conditions));
 
   const byId = new Map(defs.map((d) => [d.id, d]));
-  const byKey = new Map(defs.map((d) => [d.fieldKey, d]));
+  const byKey = new Map(defs.map((d) => [normalizeSemanticKey(d.fieldKey), d]));
 
   const normalized = customFields.map((row) => {
-    const def = row.fieldId ? byId.get(Number(row.fieldId)) : (row.fieldKey ? byKey.get(String(row.fieldKey)) : undefined);
+    const def = row.fieldId
+      ? byId.get(Number(row.fieldId))
+      : (row.fieldKey ? byKey.get(normalizeSemanticKey(String(row.fieldKey))) : undefined);
     if (!def) {
       throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Campo personalizado inválido", { fieldId: row.fieldId ?? null, fieldKey: row.fieldKey ?? null });
     }
@@ -152,7 +177,7 @@ export async function validateAndNormalizeCustomFields(
     };
   });
 
-  const requiredMissing = defs.filter((d) => d.required && !normalized.some((n) => n.fieldDefinitionId === d.id));
+  const requiredMissing = defs.filter((d) => d.required && !isNativeOrderField(d) && !normalized.some((n) => n.fieldDefinitionId === d.id));
   if (requiredMissing.length > 0) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Faltan campos requeridos: ${requiredMissing.map((r) => r.label).join(", ")}`, { missing: requiredMissing.map((r) => ({ fieldId: r.id, fieldKey: r.fieldKey })) });
   }

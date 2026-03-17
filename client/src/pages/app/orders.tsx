@@ -90,6 +90,8 @@ type MessageTemplate = {
   isActive: boolean;
 };
 
+const ORDER_DRAFT_KEY = "orbia_order_draft_v1";
+
 function normalizeSemanticKey(value: string | null | undefined): string {
   return String(value || "")
     .normalize("NFD")
@@ -190,6 +192,7 @@ export default function OrdersPage() {
   const [hasCashOpen, setHasCashOpen] = useState<boolean | null>(null);
   const [quickAddCustomerOpen, setQuickAddCustomerOpen] = useState(false);
   const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
+  const [draftRestored, setDraftRestored] = useState(false);
 
   const customPresetFields = useMemo(
     () => presetFields.filter((field) => !isNativeOrderField(field)),
@@ -245,6 +248,30 @@ export default function OrdersPage() {
       })
       .catch(() => { });
   }, []);
+
+  useEffect(() => {
+    if (!dialogOpen || draftRestored) return;
+    try {
+      const raw = sessionStorage.getItem(ORDER_DRAFT_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { newOrder?: typeof newOrder; customFieldInputs?: typeof customFieldInputs };
+      if (parsed.newOrder) setNewOrder((prev) => ({ ...prev, ...parsed.newOrder }));
+      if (parsed.customFieldInputs) setCustomFieldInputs(parsed.customFieldInputs);
+    } catch {
+      // ignore invalid draft payload
+    } finally {
+      setDraftRestored(true);
+    }
+  }, [dialogOpen, draftRestored]);
+
+  useEffect(() => {
+    if (!dialogOpen) return;
+    try {
+      sessionStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify({ newOrder, customFieldInputs }));
+    } catch {
+      // ignore storage failures
+    }
+  }, [dialogOpen, newOrder, customFieldInputs]);
 
   async function loadPresetsForType(typeCode: string) {
     try {
@@ -360,6 +387,8 @@ export default function OrdersPage() {
       setDialogOpen(false);
       setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusCode: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
       setCustomFieldInputs({});
+      sessionStorage.removeItem(ORDER_DRAFT_KEY);
+      setDraftRestored(false);
       await loadPresetsForType("PEDIDO");
       fetchData();
     } catch (err: any) {
@@ -448,9 +477,18 @@ export default function OrdersPage() {
     try {
       const res = await apiRequest("POST", `/api/orders/${orderId}/tracking-link`);
       const data = await res.json();
-      const link = `${window.location.origin}/tracking/${data.data.publicTrackingId}`;
-      await navigator.clipboard.writeText(link);
-      toast({ title: "Link copiado al portapapeles" });
+      const trackingId = data?.data?.publicTrackingId;
+      if (!trackingId) throw new Error("No se pudo generar el link de seguimiento");
+      const link = data?.data?.publicUrl || `${window.location.origin}/tracking/${trackingId}`;
+      try {
+        await navigator.clipboard.writeText(link);
+        toast({ title: "Link copiado al portapapeles" });
+      } catch {
+        toast({ title: "Link generado", description: link });
+      }
+      if (selectedOrder && selectedOrder.id === orderId) {
+        setSelectedOrder({ ...selectedOrder, publicTrackingId: trackingId } as any);
+      }
       fetchData();
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -546,7 +584,13 @@ export default function OrdersPage() {
               Dictar
             </Button>
           )}
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(open) => {
+              setDialogOpen(open);
+              if (!open) setDraftRestored(false);
+            }}
+          >
             <DialogTrigger asChild>
               <Button data-testid="button-create-order">
                 <Plus className="w-4 h-4 mr-2" />

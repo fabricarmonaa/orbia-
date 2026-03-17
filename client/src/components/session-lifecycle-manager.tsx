@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { getToken, gracefulLogout, stopSessionActivity } from "@/lib/auth";
+import { stopSessionActivity } from "@/lib/auth";
 
 export function SessionLifecycleManager() {
   const { toast } = useToast();
@@ -36,10 +36,6 @@ export function SessionLifecycleManager() {
 
     const onBeforeUnload = () => {
       stopSessionActivity();
-      const token = getToken();
-      if (token && navigator.sendBeacon) {
-        navigator.sendBeacon("/api/auth/logout", new Blob([], { type: "application/json" }));
-      }
     };
 
     const onVisibilityChange = () => {
@@ -62,14 +58,6 @@ export function SessionLifecycleManager() {
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [toast]);
-
-  useEffect(() => {
-    const token = getToken();
-    if (!token) return;
-    if (navigator.onLine === false) {
-      void gracefulLogout("offline");
-    }
-  }, []);
 
   return null;
 }

@@ -677,9 +677,13 @@ export function registerOrderRoutes(app: Express) {
       const orderId = parseInt(req.params.id as string);
       const order = await storage.getOrderById(orderId, tenantId);
       if (!order) return res.status(404).json({ error: "Pedido no encontrado" });
-      const trackingId = generatePublicToken();
-      await storage.updateOrderTracking(orderId, tenantId, trackingId, null);
-      res.json({ data: { publicTrackingId: trackingId, permanent: true } });
+      const trackingId = order.publicTrackingId || generatePublicToken();
+      if (!order.publicTrackingId) {
+        await storage.updateOrderTracking(orderId, tenantId, trackingId, null);
+      }
+      const base = (process.env.PUBLIC_APP_URL || "").trim().replace(/\/$/, "") || "";
+      const publicUrl = `${base || ""}/tracking/${trackingId}`;
+      res.json({ data: { publicTrackingId: trackingId, publicUrl, permanent: true } });
     } catch (err: any) {
       res.status(500).json({ error: "No se pudo procesar la orden", code: "ORDER_ERROR" });
     }
