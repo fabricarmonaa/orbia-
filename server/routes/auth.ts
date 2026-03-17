@@ -546,6 +546,14 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
+    const GOOGLE_AUTH_EVENT_TYPE = "orbia-google-auth";
+    const maskToken = (token: unknown) => {
+      const raw = String(token || "");
+      if (!raw) return "<empty>";
+      if (raw.length <= 16) return `${raw.slice(0, 4)}***${raw.slice(-2)}`;
+      return `${raw.slice(0, 10)}...${raw.slice(-6)}`;
+    };
+
     const emitToParent = (payload: Record<string, unknown>, parentOrigin: string) => {
       const safe = JSON.stringify(payload).replace(/</g, "\u003c");
       // Usamos el parentOrigin validado (guardado en state durante /start) como targetOrigin.
@@ -558,19 +566,43 @@ export function registerAuthRoutes(app: Express) {
       // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 
-      console.log("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
-      return res.status(200).send(`<!doctype html><html><body><script>
+      console.log("[google:callback:postmessage]", {
+        requestId: (req as any).requestId,
+        targetOrigin: parentOrigin,
+        eventType: GOOGLE_AUTH_EVENT_TYPE,
+        payloadSummary: {
+          ok: Boolean(payload.ok),
+          mode: payload.mode || null,
+          hasToken: Boolean(payload.token),
+          tokenPreview: maskToken(payload.token),
+          hasUser: Boolean(payload.user),
+          userId: (payload.user as any)?.id || null,
+          tenantId: (payload.user as any)?.tenantId || null,
+          message: payload.message || null,
+        },
+      });
+
+      const html = `<!doctype html><html><body><script>
         (function(){
           const data = ${safe};
           const target = ${targetOrigin};
+          const eventType = ${JSON.stringify(GOOGLE_AUTH_EVENT_TYPE)};
           if (window.opener) {
-            window.opener.postMessage({ type: 'orbia-google-auth', ...data }, target);
+            window.opener.postMessage({ type: eventType, ...data }, target);
             window.close();
           } else {
             document.body.innerText = data.message || 'Podés cerrar esta ventana.';
           }
         })();
-      </script></body></html>`);
+      </script></body></html>`;
+
+      console.log("[google:callback:html]", {
+        requestId: (req as any).requestId,
+        eventType: GOOGLE_AUTH_EVENT_TYPE,
+        hasWindowOpenerBranch: true,
+        htmlPreview: html.slice(0, 220),
+      });
+      return res.status(200).send(html);
     };
 
     // fallbackOrigin mientras no tengamos el state decodificado
@@ -606,10 +638,24 @@ export function registerAuthRoutes(app: Express) {
       console.log("[google:callback]", { requestId: req.requestId, nodeEnv: process.env.NODE_ENV || null, parentOrigin, redirectUri: getRedirectUri("login") });
       const tokenData = await exchangeGoogleCode(code, "login");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
+      console.log("[google:callback:profile]", {
+        requestId: req.requestId,
+        intent: state.intent,
+        email: profile.email,
+        sub: profile.sub,
+        emailVerified: Boolean(profile.email_verified),
+      });
 
       if (state.intent === "login") {
         let user = await storage.getUserByEmail(profile.email);
         let currentTenantId: number;
+        console.log("[google:callback:login:user-lookup]", {
+          requestId: req.requestId,
+          email: profile.email,
+          found: Boolean(user),
+          userId: user?.id || null,
+          tenantId: user?.tenantId || null,
+        });
         
         if (!user) {
           const ownerName = profile.email.split('@')[0];
@@ -638,6 +684,14 @@ export function registerAuthRoutes(app: Express) {
           }
           currentTenantId = user.tenantId!;
           const tenant = await storage.getTenantById(currentTenantId);
+          console.log("[google:callback:login:tenant-lookup]", {
+            requestId: req.requestId,
+            tenantId: currentTenantId,
+            tenantFound: Boolean(tenant),
+            tenantActive: Boolean(tenant?.isActive),
+            tenantBlocked: Boolean(tenant?.isBlocked),
+            tenantDeleted: Boolean(tenant?.deletedAt),
+          });
           if (!tenant || tenant.deletedAt || !tenant.isActive || tenant.isBlocked) {
             return emit({ ok: false, message: "El negocio ya no está disponible o está inactivo." }, parentOrigin);
           }
@@ -671,6 +725,14 @@ export function registerAuthRoutes(app: Express) {
           isSuperAdmin: false,
           branchId: user.branchId,
           scope: user.scope || "TENANT",
+        });
+        console.log("[google:callback:login:jwt-generated]", {
+          requestId: req.requestId,
+          userId: user.id,
+          tenantId: currentTenantId,
+          role: user.role,
+          scope: user.scope || "TENANT",
+          tokenPreview: maskToken(jwt),
         });
         return emit({ ok: true, mode: "login", token: jwt, user: {
           id: user.id,
