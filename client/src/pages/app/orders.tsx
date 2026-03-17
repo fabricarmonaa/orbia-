@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -130,6 +130,18 @@ function isNativeOrderField(field: OrderPresetField): boolean {
   return Boolean(labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
 }
 
+type NativeOrderFieldKind = "customer" | "phone" | "description" | "paid" | "total";
+
+function resolveNativeOrderFieldKind(field: OrderPresetField): NativeOrderFieldKind | null {
+  const values = [normalizeSemanticKey(field.fieldKey), normalizeSemanticKey(field.label)].filter(Boolean);
+  if (values.some((v) => ["cliente", "customer", "customer_name", "nombre_cliente"].includes(v))) return "customer";
+  if (values.some((v) => ["telefono", "telefono_cliente", "customer_phone", "phone"].includes(v))) return "phone";
+  if (values.some((v) => ["descripcion", "description", "detalle"].includes(v))) return "description";
+  if (values.some((v) => ["sena", "seña", "senia", "pago", "paid_amount", "pagado"].includes(v))) return "paid";
+  if (values.some((v) => ["valor_total", "total", "total_amount", "monto_total"].includes(v))) return "total";
+  return null;
+}
+
 export default function OrdersPage() {
   const { user } = useAuth();
   const [, setLocation] = useLocation();
@@ -178,6 +190,29 @@ export default function OrdersPage() {
   const [hasCashOpen, setHasCashOpen] = useState<boolean | null>(null);
   const [quickAddCustomerOpen, setQuickAddCustomerOpen] = useState(false);
   const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
+
+  const customPresetFields = useMemo(
+    () => presetFields.filter((field) => !isNativeOrderField(field)),
+    [presetFields]
+  );
+
+  const nativeVisibility = useMemo(() => {
+    if (!newOrder.orderPresetId) {
+      return { customer: true, phone: true, description: true, paid: true, total: true };
+    }
+    const activeKinds = new Set<NativeOrderFieldKind>();
+    for (const field of presetFields) {
+      const kind = resolveNativeOrderFieldKind(field);
+      if (kind) activeKinds.add(kind);
+    }
+    return {
+      customer: activeKinds.has("customer"),
+      phone: activeKinds.has("phone"),
+      description: activeKinds.has("description"),
+      paid: activeKinds.has("paid"),
+      total: activeKinds.has("total"),
+    };
+  }, [presetFields, newOrder.orderPresetId]);
 
   useEffect(() => {
     fetchData();
@@ -243,11 +278,13 @@ export default function OrdersPage() {
       const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
-      const fields = allFields.filter((field) => !isNativeOrderField(field));
-      setPresetFields(fields);
+      setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
         const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
-        for (const f of fields) next[f.id] = prev[f.id] || { visibleOverride: null };
+        for (const f of allFields) {
+          if (isNativeOrderField(f)) continue;
+          next[f.id] = prev[f.id] || { visibleOverride: null };
+        }
         return next;
       });
     } catch {
@@ -293,7 +330,7 @@ export default function OrdersPage() {
       });
     }
     try {
-      const customFields = presetFields.map((field) => {
+      const customFields = customPresetFields.map((field) => {
         const raw = customFieldInputs[field.id] || {};
         return {
           fieldId: field.id,
@@ -592,6 +629,7 @@ export default function OrdersPage() {
                     </Select>
                   </div>
                 </div>
+                {nativeVisibility.customer && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label>Cliente</Label>
@@ -617,6 +655,8 @@ export default function OrdersPage() {
                   />
                   <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
                 </div>
+                )}
+                {nativeVisibility.phone && (
                 <div className="space-y-2">
                   <Label>Teléfono (Opcional)</Label>
                   <Input
@@ -626,7 +666,10 @@ export default function OrdersPage() {
                     data-testid="input-customer-phone"
                   />
                 </div>
+                )}
+                {(nativeVisibility.paid || nativeVisibility.total) && (
                 <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
+                  {nativeVisibility.paid ? (
                   <div className="space-y-2">
                     <Label>Seña o Pago</Label>
                     <Input
@@ -645,6 +688,8 @@ export default function OrdersPage() {
                       data-testid="input-paid-amount"
                     />
                   </div>
+                  ) : <div />}
+                  {nativeVisibility.total ? (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
                       <Label>Valor Total</Label>
@@ -665,8 +710,11 @@ export default function OrdersPage() {
                       data-testid="input-total-amount"
                     />
                   </div>
+                  ) : <div />}
                 </div>
+                )}
 
+                {nativeVisibility.description && (
                 <div className="space-y-2">
                   <Label>Descripción (Opcional)</Label>
                   <Textarea
@@ -676,10 +724,11 @@ export default function OrdersPage() {
                     data-testid="input-description"
                   />
                 </div>
-                {presetFields.length > 0 && (
+                )}
+                {customPresetFields.length > 0 && (
                   <div className="space-y-3 border rounded-md p-3">
                     <p className="text-sm font-medium">Campos del pedido</p>
-                    {presetFields.map((field) => (
+                    {customPresetFields.map((field) => (
                       <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
                         <div className="flex items-center justify-between">
                           <Label>{field.label}{field.required ? " *" : ""}</Label>
