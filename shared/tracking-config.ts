@@ -25,6 +25,8 @@ export interface TrackingVisibilityConfig {
 export interface TrackingDisplayConfig extends TrackingVisibilityConfig {
   layout?: TrackingLayout;
   blockOrder?: string[];
+  blockAlignments?: Partial<Record<string, "left" | "center" | "right">>;
+  dynamicFieldsAlign?: "left" | "center" | "right";
 }
 
 export const DEFAULT_TRACKING_VISIBILITY: TrackingVisibilityConfig = {
@@ -63,6 +65,8 @@ export function normalizeTrackingVisibilityConfig(input?: Partial<TrackingDispla
     ...raw,
     layout: raw.layout && ["classic", "cards", "stepper", "minimal"].includes(raw.layout) ? raw.layout : undefined,
     blockOrder: normalizedOrder,
+    blockAlignments: raw.blockAlignments || {},
+    dynamicFieldsAlign: raw.dynamicFieldsAlign && ["left", "center", "right"].includes(raw.dynamicFieldsAlign) ? raw.dynamicFieldsAlign : "left",
     showPoweredBy: true,
   };
 }
