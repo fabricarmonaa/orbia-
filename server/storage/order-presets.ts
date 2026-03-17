@@ -206,7 +206,28 @@ async function ensureDefaultPresetAndAttachLegacyFields(tenantId: number, orderT
   return defaultPreset;
 }
 
-async function ensureSystemDefaultsForPreset(tenantId: number, orderTypeId: number, presetId: number) {
+function dedupeByFieldKey<T extends { fieldKey: string; id: number }>(rows: T[]): T[] {
+  const byKey = new Map<string, T>();
+  for (const row of rows) {
+    const current = byKey.get(row.fieldKey);
+    if (!current || row.id > current.id) byKey.set(row.fieldKey, row);
+  }
+  return Array.from(byKey.values());
+}
+
+async function getSystemDefaultTemplates(tenantId: number, orderTypeId: number) {
+  const [defaultPreset] = await db
+    .select({ id: orderTypePresets.id })
+    .from(orderTypePresets)
+    .where(
+      and(
+        eq(orderTypePresets.tenantId, tenantId),
+        eq(orderTypePresets.orderTypeId, orderTypeId),
+        eq(orderTypePresets.code, "default")
+      )
+    )
+    .limit(1);
+
   const systemDefaults = await db
     .select()
     .from(orderFieldDefinitions)
@@ -214,11 +235,19 @@ async function ensureSystemDefaultsForPreset(tenantId: number, orderTypeId: numb
       and(
         eq(orderFieldDefinitions.tenantId, tenantId),
         eq(orderFieldDefinitions.orderTypeId, orderTypeId),
-        eq(orderFieldDefinitions.isSystemDefault, true)
+        eq(orderFieldDefinitions.isSystemDefault, true),
+        defaultPreset
+          ? eq(orderFieldDefinitions.presetId, defaultPreset.id)
+          : isNull(orderFieldDefinitions.presetId)
       )
     )
     .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
 
+  return dedupeByFieldKey(systemDefaults);
+}
+
+async function cloneMissingSystemDefaultsForPreset(tenantId: number, orderTypeId: number, presetId: number) {
+  const systemDefaults = await getSystemDefaultTemplates(tenantId, orderTypeId);
   if (systemDefaults.length === 0) return;
 
   const existingTarget = await db
@@ -389,7 +418,7 @@ export const orderPresetsStorage = {
     };
 
     const [created] = await db.insert(orderTypePresets).values(values).returning();
-    await ensureSystemDefaultsForPreset(tenantId, typeRow.id, created.id);
+    await cloneMissingSystemDefaultsForPreset(tenantId, typeRow.id, created.id);
     return { type: typeRow, preset: created };
   },
 
@@ -439,21 +468,22 @@ export const orderPresetsStorage = {
   },
 
   // ── Fields by preset ─────────────────────────────────────────────────────
-  async listFieldsByPreset(tenantId: number, presetId: number) {
+  async listFieldsByPreset(tenantId: number, presetId: number, options?: { includeInactive?: boolean }) {
     const preset = await getPresetOrThrow(tenantId, presetId);
     await ensureDefaultPresetAndAttachLegacyFields(tenantId, preset.orderTypeId);
-    await ensureSystemDefaultsForPreset(tenantId, preset.orderTypeId, presetId);
+    const includeInactive = options?.includeInactive ?? false;
+    const conditions = [
+      eq(orderFieldDefinitions.tenantId, tenantId),
+      eq(orderFieldDefinitions.presetId, presetId),
+    ];
+    if (!includeInactive) conditions.push(eq(orderFieldDefinitions.isActive, true));
+
     const fields = await db
       .select()
       .from(orderFieldDefinitions)
-      .where(
-        and(
-          eq(orderFieldDefinitions.tenantId, tenantId),
-          eq(orderFieldDefinitions.presetId, presetId)
-        )
-      )
+      .where(and(...conditions))
       .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
-    return { preset, fields };
+    return { preset, fields: dedupeByFieldKey(fields) };
   },
 
   // Legacy: list fields by type code (uses ALL fields with presetId = null OR any preset of that type)

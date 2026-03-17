@@ -205,7 +205,7 @@ export function OrderPresetsSettings() {
     }
     setLoadingFields(true);
     try {
-      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields`);
+      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields?includeInactive=1`);
       setFields(json.data || []);
     } catch (err: any) {
       toast({ title: "Error al cargar campos", description: err?.message || "No se pudo cargar", variant: "destructive" });
@@ -319,13 +319,11 @@ export function OrderPresetsSettings() {
     }
   }
 
-  async function deactivateField(id: number) {
+  async function setFieldActive(field: OrderField, nextActive: boolean) {
     try {
-      await apiJson(`/api/order-presets/fields/${id}/deactivate`, { method: "POST" });
-      await loadFields(activePresetId);
-      toast({ title: "Campo desactivado" });
-    } catch (err: any) {
-      toast({ title: "No se pudo desactivar", description: err?.message || "Error", variant: "destructive" });
+      await patchField(field.id, { isActive: nextActive }, nextActive ? "Campo activado" : "Campo desactivado");
+    } catch {
+      // toast already handled in patchField
     }
   }
 
@@ -337,7 +335,7 @@ export function OrderPresetsSettings() {
     const [item] = reordered.splice(idx, 1);
     reordered.splice(target, 0, item);
     try {
-      await apiJson(`/api/order-presets/types/${encodeURIComponent(activeCode)}/fields/reorder`, {
+      await apiJson(`/api/order-presets/presets/${activePresetId}/fields/reorder`, {
         method: "POST",
         body: JSON.stringify({ orderedFieldIds: reordered.map((f) => f.id) }),
       });
@@ -365,7 +363,7 @@ export function OrderPresetsSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; const id = criticalDeactivateTarget.id; setCriticalDeactivateTarget(null); await deactivateField(id); }}>Continuar y desactivar</AlertDialogAction>
+            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; const target = criticalDeactivateTarget; setCriticalDeactivateTarget(null); await setFieldActive(target, false); }}>Continuar y desactivar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -450,7 +448,11 @@ export function OrderPresetsSettings() {
                         <p className="text-xs text-muted-foreground">key: {f.fieldKey}</p>
                       </div>
 
-                      <Badge variant="secondary" className="mr-auto">{f.fieldType}</Badge>
+                      <div className="mr-auto flex items-center gap-2">
+                        <Badge variant="secondary">{f.fieldType}</Badge>
+                        <Badge variant={f.isSystemDefault ? "outline" : "default"}>{f.isSystemDefault ? "Default" : "Custom"}</Badge>
+                        <Badge variant={f.isActive ? "default" : "secondary"}>{f.isActive ? "Activo" : "Inactivo"}</Badge>
+                      </div>
 
                       <div className="flex items-center gap-6 text-sm">
                         <label className="flex items-center gap-2 cursor-pointer">
@@ -482,6 +484,19 @@ export function OrderPresetsSettings() {
                       </div>
 
                       <div className="flex items-center gap-1">
+                        <label className="flex items-center gap-2 px-2 text-sm cursor-pointer">
+                          <Switch
+                            checked={f.isActive}
+                            onCheckedChange={(checked) => {
+                              if (!checked && isCriticalField(f)) {
+                                setCriticalDeactivateTarget(f);
+                                return;
+                              }
+                              void setFieldActive(f, checked);
+                            }}
+                          />
+                          {f.isActive ? "Activo" : "Inactivo"}
+                        </label>
                         <Button size="icon" variant="ghost" disabled={idx === 0} onClick={() => moveField(f.id, -1)}><ArrowUp className="w-4 h-4" /></Button>
                         <Button size="icon" variant="ghost" disabled={idx === sortedFields.length - 1} onClick={() => moveField(f.id, 1)}><ArrowDown className="w-4 h-4" /></Button>
                         <Button size="icon" variant="outline" onClick={() => {
@@ -497,11 +512,23 @@ export function OrderPresetsSettings() {
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
-                        <Button size="sm" variant="destructive" onClick={() => { if (isCriticalField(f)) { setCriticalDeactivateTarget(f); } else { deactivateField(f.id); } }}>Desactivar</Button>
+                        <Button
+                          size="sm"
+                          variant={f.isActive ? "destructive" : "secondary"}
+                          onClick={() => {
+                            if (f.isActive && isCriticalField(f)) {
+                              setCriticalDeactivateTarget(f);
+                              return;
+                            }
+                            void setFieldActive(f, !f.isActive);
+                          }}
+                        >
+                          {f.isActive ? "Desactivar" : "Activar"}
+                        </Button>
                       </div>
                     </div>
                   ))}
-                  {!loadingFields && sortedFields.length === 0 ? <p className="text-sm text-muted-foreground">No hay campos activos para este preset.</p> : null}
+                  {!loadingFields && sortedFields.length === 0 ? <p className="text-sm text-muted-foreground">No hay campos para este preset.</p> : null}
                 </div>
               </div>
             ) : null}
@@ -783,7 +810,7 @@ export function OrderPresetsSettings() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; const id = criticalDeactivateTarget.id; setCriticalDeactivateTarget(null); await deactivateField(id); }}>Continuar y desactivar</AlertDialogAction>
+            <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; setCriticalDeactivateTarget(null); await setFieldActive(criticalDeactivateTarget, false); }}>Continuar y desactivar</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
