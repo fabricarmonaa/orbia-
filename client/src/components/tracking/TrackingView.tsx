@@ -1,6 +1,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe } from "lucide-react";
+import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe, FileText, Download } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 import { DEFAULT_TRACKING_BLOCK_ORDER, DEFAULT_TRACKING_VISIBILITY, type TrackingDisplayConfig, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
@@ -20,7 +20,19 @@ export interface TrackingOrderData {
   closedAt: string | null;
   history: Array<{ status: string; color: string; date: string; note: string | null }>;
   publicComments: Array<{ content: string; date: string }>;
-  customFields?: Array<{ label: string; value: string | null; fieldType: string; updatedAt?: string | null; downloadUrl?: string | null; previewUrl?: string | null; mimeType?: string | null }>;
+  customFields?: Array<{
+    label: string;
+    value: string | null;
+    fieldType: string;
+    updatedAt?: string | null;
+    downloadUrl?: string | null;
+    previewUrl?: string | null;
+    mimeType?: string | null;
+    align?: "left" | "center" | "right" | null;
+    groupId?: string | null;
+    groupLabel?: string | null;
+    slotIndex?: number | null;
+  }>;
   trackingLayout: string;
   trackingTosText?: string | null;
   tosUrl?: string | null;
@@ -62,6 +74,15 @@ function prettifyStatusCode(code?: string | null) {
   return normalized.toLowerCase().split("_").filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
+function isImageAttachment(field: NonNullable<TrackingOrderData["customFields"]>[number]) {
+  if (field.previewUrl) return true;
+  return typeof field.mimeType === "string" && field.mimeType.startsWith("image/");
+}
+
+function normalizeAlignment(value?: string | null): "left" | "center" | "right" {
+  return value === "center" || value === "right" ? value : "left";
+}
+
 export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
   if (loading) return <div className="min-h-screen flex items-center justify-center p-4">Cargando...</div>;
   if (error) return <div className="min-h-screen flex items-center justify-center p-4"><div className="text-center"><AlertCircle className="w-16 h-16 mx-auto mb-4 text-red-500" /><p>{error}</p></div></div>;
@@ -77,6 +98,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   const mutedText = colors.textSecondary || (getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.70)" : "#4b5563");
   const timelineColor = colors.timeline || colors.accent || colors.primary;
   const blockOrder = Array.isArray(v.blockOrder) && v.blockOrder.length ? v.blockOrder : [...DEFAULT_TRACKING_BLOCK_ORDER];
+  const blockAlignments = (v.blockAlignments || {}) as Record<string, "left" | "center" | "right">;
 
   const infoItems = [
     { show: v.showOrderType, label: "Tipo", value: order.type || "-" },
@@ -123,24 +145,80 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
           <div className="space-y-2">
             <p className="text-sm font-semibold">Datos adicionales</p>
             <div className="space-y-2">
-              {order.customFields.map((field, idx) => (
-                <div key={`${field.label}-${idx}`} className="rounded-md p-3" style={{ backgroundColor: `${colors.accent}14` }}>
-                  <p className="text-xs" style={{ color: mutedText }}>{field.label}</p>
-                  {field.previewUrl ? (
-                    <div className="space-y-2">
-                      <a href={field.downloadUrl || field.previewUrl} target="_blank" rel="noreferrer noopener" className="inline-block rounded-md overflow-hidden border" style={{ borderColor }}>
-                        <img src={field.previewUrl} alt={field.label} className="max-h-40 object-cover" loading="lazy" />
-                      </a>
-                      <p className="text-xs" style={{ color: mutedText }}>{field.value || "Imagen adjunta"}</p>
+              {(() => {
+                const grouped = new Map<string, {
+                  key: string;
+                  label: string;
+                  align: "left" | "center" | "right";
+                  items: NonNullable<TrackingOrderData["customFields"]>;
+                }>();
+                (order.customFields || []).forEach((field, idx) => {
+                  const align = normalizeAlignment(field.align || v.dynamicFieldsAlign);
+                  const groupKey = field.fieldType === "FILE" ? (field.groupId || `file-${idx}`) : `value-${idx}`;
+                  const label = field.groupLabel || field.label;
+                  if (!grouped.has(groupKey)) grouped.set(groupKey, { key: groupKey, label, align, items: [] as NonNullable<TrackingOrderData["customFields"]> });
+                  grouped.get(groupKey)!.items.push(field);
+                });
+
+                return Array.from(grouped.values()).map((group, idx) => {
+                  const images = (group.items || [])
+                    .filter((f) => f.fieldType === "FILE" && isImageAttachment(f))
+                    .sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
+                  const documents = (group.items || [])
+                    .filter((f) => f.fieldType === "FILE" && !isImageAttachment(f))
+                    .sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
+                  const firstUpdatedAt = group.items?.find((f) => f.updatedAt)?.updatedAt;
+
+                  return (
+                    <div key={`${group.key}-${idx}`} className="rounded-md p-3 space-y-2" style={{ backgroundColor: `${colors.accent}14`, textAlign: group.align }}>
+                      <p className="text-xs" style={{ color: mutedText }}>{group.label}</p>
+
+                      {images.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {images.map((img, imageIdx) => (
+                            <a
+                              key={`${group.key}-img-${imageIdx}`}
+                              href={img.downloadUrl || img.previewUrl || "#"}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="block rounded-md overflow-hidden border aspect-square bg-black/5"
+                              style={{ borderColor }}
+                              title={img.value || group.label}
+                            >
+                              <img src={img.previewUrl || img.downloadUrl || ""} alt={group.label} className="w-full h-full object-cover" loading="lazy" />
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {documents.length > 0 ? (
+                        <div className="space-y-2">
+                          {documents.map((doc, docIdx) => (
+                            <a
+                              key={`${group.key}-doc-${docIdx}`}
+                              href={doc.downloadUrl || "#"}
+                              className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+                              style={{ borderColor }}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <FileText className="w-4 h-4 flex-shrink-0" style={{ color: mutedText }} />
+                                <span className="truncate">{doc.value || "Archivo adjunto"}</span>
+                              </span>
+                              <Download className="w-4 h-4 flex-shrink-0" style={{ color: colors.primary }} />
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {images.length === 0 && documents.length === 0 ? <p className="text-sm font-medium">{group.items?.[0]?.value || "-"}</p> : null}
+
+                      {v.showDynamicFieldUpdatedAt && firstUpdatedAt ? <p className="text-xs mt-1" style={{ color: mutedText }}>Actualizado: {formatDate(firstUpdatedAt)}</p> : null}
                     </div>
-                  ) : field.downloadUrl ? (
-                    <a href={field.downloadUrl} className="text-sm font-medium underline" style={{ color: colors.primary }} target="_blank" rel="noreferrer noopener">{field.value || "Descargar archivo"}</a>
-                  ) : (
-                    <p className="text-sm font-medium">{field.value || "-"}</p>
-                  )}
-                  {v.showDynamicFieldUpdatedAt && field.updatedAt ? <p className="text-xs mt-1" style={{ color: mutedText }}>Actualizado: {formatDate(field.updatedAt)}</p> : null}
-                </div>
-              ))}
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
@@ -200,7 +278,10 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
       <div className={layout === "stepper" ? "max-w-4xl mx-auto space-y-5" : "max-w-xl mx-auto space-y-5"}>
-        {blockOrder.map((id) => <div key={id}>{blocks[id]}</div>)}
+        {blockOrder.map((id) => {
+          const alignment = normalizeAlignment(blockAlignments[id]);
+          return <div key={id} style={{ textAlign: alignment }}>{blocks[id]}</div>;
+        })}
       </div>
     </div>
   );

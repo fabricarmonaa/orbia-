@@ -88,7 +88,12 @@ const defaultTenantBranding: TenantBranding = {
     whatsapp: "",
     web: "",
   },
-  trackingConfig: { ...DEFAULT_TRACKING_VISIBILITY, blockOrder: [...DEFAULT_TRACKING_BLOCK_ORDER] },
+  trackingConfig: {
+    ...DEFAULT_TRACKING_VISIBILITY,
+    blockOrder: [...DEFAULT_TRACKING_BLOCK_ORDER],
+    blockAlignments: {},
+    dynamicFieldsAlign: "left",
+  },
   pdfConfig: {
     headerText: "",
     footerText: "",

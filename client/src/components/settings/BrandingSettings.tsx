@@ -15,6 +15,7 @@ import {
 import { Palette, Save, Upload, Settings, Eye, ExternalLink, RotateCcw } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 import { TrackingView } from "@/components/tracking/TrackingView";
+import { DEFAULT_TRACKING_BLOCK_ORDER } from "@shared/tracking-config";
 
 interface ConfigForm {
   businessName: string;
@@ -94,6 +95,20 @@ export function BrandingSettings({
     { key: "showDynamicFieldUpdatedAt", label: "Mostrar 'Actualizado' en dinámicos" },
     { key: "showTos", label: "Mostrar Términos y condiciones" },
     { key: "showSocialLinks", label: "Mostrar links sociales" },
+  ] as const;
+  const blockLabels: Record<string, string> = {
+    header: "Header",
+    summary: "Resumen",
+    history: "Historial",
+    comments: "Observaciones",
+    tos: "Términos",
+    social: "Redes",
+    footer: "Pie",
+  };
+  const alignmentOptions = [
+    { value: "left", label: "Izquierda" },
+    { value: "center", label: "Centro" },
+    { value: "right", label: "Derecha" },
   ] as const;
 
 
@@ -440,6 +455,60 @@ export function BrandingSettings({
                   </p>
                 </div>
 
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <Label>Alineación de bloques y campos</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Configurá izquierda/centro/derecha por bloque y para los campos dinámicos.</p>
+                  </div>
+                  <div className="space-y-3">
+                    {(brandingForm.trackingConfig?.blockOrder || [...DEFAULT_TRACKING_BLOCK_ORDER]).map((block) => (
+                      <div key={`align-${block}`} className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2 items-center">
+                        <p className="text-sm">{blockLabels[block] || block}</p>
+                        <Select
+                          value={(brandingForm.trackingConfig?.blockAlignments?.[block] || "left") as string}
+                          onValueChange={(value: "left" | "center" | "right") =>
+                            setBrandingForm((prev) => ({
+                              ...prev,
+                              trackingConfig: {
+                                ...(prev as any).trackingConfig,
+                                blockAlignments: {
+                                  ...((prev as any).trackingConfig?.blockAlignments || {}),
+                                  [block]: value,
+                                },
+                              },
+                            }))
+                          }
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {alignmentOptions.map((opt) => <SelectItem key={`${block}-${opt.value}`} value={opt.value}>{opt.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2 items-center pt-2 border-t">
+                    <p className="text-sm">Campos dinámicos (default)</p>
+                    <Select
+                      value={(brandingForm.trackingConfig?.dynamicFieldsAlign || "left") as string}
+                      onValueChange={(value: "left" | "center" | "right") =>
+                        setBrandingForm((prev) => ({
+                          ...prev,
+                          trackingConfig: {
+                            ...(prev as any).trackingConfig,
+                            dynamicFieldsAlign: value,
+                          },
+                        }))
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {alignmentOptions.map((opt) => <SelectItem key={`dynamic-${opt.value}`} value={opt.value}>{opt.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
 
 
                 <div className="space-y-3 rounded-lg border p-4">
@@ -450,7 +519,7 @@ export function BrandingSettings({
                   <div className="space-y-2">
                     {((brandingForm as any).trackingConfig?.blockOrder || ["header", "summary", "history", "comments", "tos", "social", "footer"]).map((block: string, idx: number, arr: string[]) => (
                       <div key={block} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
-                        <span className="text-sm capitalize">{block === "summary" ? "Resumen" : block === "comments" ? "Observaciones" : block === "tos" ? "Términos" : block === "social" ? "Redes" : block === "footer" ? "Pie" : block}</span>
+                        <span className="text-sm">{blockLabels[block] || block}</span>
                         <div className="flex gap-1">
                           <Button type="button" variant="outline" size="sm" disabled={idx === 0} onClick={() => {
                             const next = [...arr];

@@ -103,6 +103,8 @@ const tenantBrandingSchema = z.object({
       showPoweredBy: z.boolean().optional(),
       layout: z.enum(["classic", "cards", "stepper", "minimal"]).optional(),
       blockOrder: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      blockAlignments: z.record(z.enum(["left", "center", "right"])).optional(),
+      dynamicFieldsAlign: z.enum(["left", "center", "right"]).optional(),
     })
     .optional(),
   pdfConfig: z
