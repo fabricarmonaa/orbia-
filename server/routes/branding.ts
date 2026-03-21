@@ -54,16 +54,23 @@ const tenantBrandingSchema = z.object({
       secondary: colorValue.optional(),
       accent: colorValue.optional(),
       background: colorValue.optional(),
+      surface: colorValue.optional(),
+      border: colorValue.optional(),
       text: colorValue.optional(),
+      textSecondary: colorValue.optional(),
       trackingButton: colorValue.optional(),
+      trackingButtonHover: colorValue.optional(),
       trackingHeader: colorValue.optional(),
       trackingBadge: colorValue.optional(),
+      timeline: colorValue.optional(),
     })
     .optional(),
   texts: z
     .object({
       trackingHeader: z.string().transform((value) => sanitizeShortText(value, 120)).optional(),
-      trackingFooter: z.string().transform((value) => sanitizeShortText(value, 120)).optional(),
+      trackingSubtitle: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
+      trackingFooter: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
+      trackingThanks: z.string().transform((value) => sanitizeShortText(value, 180)).optional(),
     })
     .optional(),
   links: z
@@ -94,6 +101,10 @@ const tenantBrandingSchema = z.object({
       showTos: z.boolean().optional(),
       showSocialLinks: z.boolean().optional(),
       showPoweredBy: z.boolean().optional(),
+      layout: z.enum(["classic", "cards", "stepper", "minimal"]).optional(),
+      blockOrder: z.array(z.string().trim().min(1).max(40)).max(20).optional(),
+      blockAlignments: z.record(z.enum(["left", "center", "right"])).optional(),
+      dynamicFieldsAlign: z.enum(["left", "center", "right"]).optional(),
     })
     .optional(),
   pdfConfig: z

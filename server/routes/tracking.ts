@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import fs from "fs";
 import path from "path";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
 import { orderAttachments } from "@shared/schema";
@@ -12,11 +12,14 @@ import { normalizeTrackingVisibilityConfig } from "@shared/tracking-config";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
+function isImageMimeType(mime: string | null | undefined) {
+  return /^image\/(jpeg|jpg|png|webp|gif)$/i.test(String(mime || ""));
+}
+
 async function resolvePublicOrder(trackingId: string): Promise<TrackingResolveResult> {
   const order = await storage.getOrderByTrackingId(trackingId);
   if (!order) return { status: 404 as const, body: { error: "Seguimiento no encontrado" } };
   if (order.trackingRevoked) return { status: 410 as const, body: { error: "Link de seguimiento revocado" } };
-  if (order.trackingExpiresAt && new Date(order.trackingExpiresAt) < new Date()) return { status: 410 as const, body: { error: "Link de seguimiento expirado" } };
   return { order };
 }
 
@@ -26,16 +29,18 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const { order } = resolved as { order: NonNullable<Awaited<ReturnType<typeof storage.getOrderByTrackingId>>> };
 
   const tenantId = order.tenantId;
-  const [definitions, defaultStatus, history, publicComments, config, branding] = await Promise.all([
+  const [definitions, defaultStatus, history, publicComments, config, branding, legacyStatuses] = await Promise.all([
     getStatuses(tenantId, "ORDER", true),
     getDefaultStatus(tenantId, "ORDER"),
     storage.getOrderHistory(order.id, tenantId),
     storage.getPublicOrderComments(order.id),
     storage.getConfig(tenantId),
     storage.getTenantBranding(tenantId),
+    storage.getOrderStatuses(tenantId),
   ]);
 
   const definitionsByCode = new Map(definitions.map((s) => [s.code, s]));
+  const legacyById = new Map<number, string>(legacyStatuses.map((s) => [s.id, String(s.name || "")]));
   const currentCode = normalizeStatusCode(String(order.statusCode || ""));
   const resolvedCurrent = definitionsByCode.get(currentCode)
     || (defaultStatus ? definitionsByCode.get(defaultStatus.code) : undefined)
@@ -50,17 +55,31 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const trackingVisibility = normalizeTrackingVisibilityConfig((branding as any).trackingConfig || {});
 
   const historyFormatted = history.map((h) => {
-    const maybeCode = normalizeStatusCode(String((h as any).statusCode || (h as any).status_code || ""));
-    const s = maybeCode ? definitionsByCode.get(maybeCode) : null;
+    const fallbackLegacyName = legacyById.get(Number((h as any).statusId || 0)) || "";
+    const rawCode = String((h as any).statusCode || (h as any).status_code || fallbackLegacyName || "");
+    const maybeCode = normalizeStatusCode(rawCode);
+    const definition = maybeCode ? definitionsByCode.get(maybeCode) : null;
+    const prettifiedCode = maybeCode
+      ? maybeCode.toLowerCase().split("_").filter(Boolean).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ")
+      : "";
     return {
-      status: s?.label || s?.code || "Desconocido",
-      color: s?.color || "#6B7280",
+      status: definition?.label || fallbackLegacyName || prettifiedCode || "Sin estado",
+      color: definition?.color || "#6B7280",
       date: h.createdAt,
       note: h.note,
     };
   });
 
   const allCustomFields = await getOrderCustomFields(order.id, tenantId);
+  const attachmentIds = allCustomFields
+    .map((f) => String(f.fileStorageKey || "").match(/^att:(\d+)$/)?.[1])
+    .filter(Boolean)
+    .map((id) => Number(id));
+  const attachments = attachmentIds.length
+    ? await db.select().from(orderAttachments).where(and(eq(orderAttachments.orderId, order.id), eq(orderAttachments.tenantId, tenantId), inArray(orderAttachments.id, attachmentIds)))
+    : [];
+  const attachmentById = new Map(attachments.map((a) => [a.id, a]));
+
   const publicCustomFields = trackingVisibility.showDynamicFields ? allCustomFields
     .filter((f) => {
       if (f.visibleOverride === true) return true;
@@ -70,12 +89,21 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
     .map((f) => {
       let displayValue: string | null = null;
       let downloadUrl: string | null = null;
+      let previewUrl: string | null = null;
+      let mimeType: string | null = null;
       if (f.fieldType === "FILE" && f.fileStorageKey) {
         const match = String(f.fileStorageKey).match(/^att:(\d+)$/);
         if (match) {
           const attachmentId = Number(match[1]);
+          const attachment = attachmentById.get(attachmentId);
           downloadUrl = `/api/public/tracking/${trackingId}/attachments/${attachmentId}`;
-          displayValue = "Archivo adjunto";
+          mimeType = attachment?.mimeType || null;
+          if (isImageMimeType(mimeType)) {
+            previewUrl = downloadUrl;
+            displayValue = attachment?.originalName || "Imagen adjunta";
+          } else {
+            displayValue = attachment?.originalName || "Archivo adjunto";
+          }
         }
       } else if (f.fieldType === "NUMBER") {
         displayValue = f.valueNumber !== null ? String(f.valueNumber) : null;
@@ -87,8 +115,14 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         label: f.label || "Campo",
         value: displayValue,
         fieldType: f.fieldType,
+        align: ((f.config as any)?.align as string) || null,
+        groupId: ((f.config as any)?.fileGroupId as string) || null,
+        groupLabel: ((f.config as any)?.groupLabel as string) || null,
+        slotIndex: Number((f.config as any)?.fileSlotIndex || 0) || null,
         updatedAt: (f as any).updatedAt || f.createdAt || null,
         downloadUrl,
+        previewUrl,
+        mimeType,
       };
     }) : [];
 
@@ -118,7 +152,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
           date: c.createdAt,
         })),
         customFields: publicCustomFields,
-        trackingLayout: config?.trackingLayout || "classic",
+        trackingLayout: ((trackingVisibility as any)?.layout as string) || config?.trackingLayout || "classic",
         trackingTosText: (branding.texts as any)?.trackingFooter || null,
         tosUrl,
         trackingVisibility,
@@ -193,8 +227,10 @@ export function registerTrackingRoutes(app: Express) {
       const absolutePath = path.join(process.cwd(), "storage", normalized);
       if (!fs.existsSync(absolutePath)) return res.status(404).json({ error: "Archivo no encontrado" });
 
-      res.setHeader("Content-Type", attachment.mimeType || "application/octet-stream");
-      res.setHeader("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`);
+      const mime = attachment.mimeType || "application/octet-stream";
+      const inline = isImageMimeType(mime) && String(req.query.download || "") !== "1";
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Content-Disposition", `${inline ? "inline" : "attachment"}; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`);
       res.setHeader("Cache-Control", "public, max-age=300");
       fs.createReadStream(absolutePath).pipe(res);
     } catch (err: any) {

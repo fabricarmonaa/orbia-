@@ -546,6 +546,8 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/google/callback", async (req, res) => {
+    const GOOGLE_AUTH_EVENT_TYPE = "orbia-google-auth";
+
     const emitToParent = (payload: Record<string, unknown>, parentOrigin: string) => {
       const safe = JSON.stringify(payload).replace(/</g, "\u003c");
       // Usamos el parentOrigin validado (guardado en state durante /start) como targetOrigin.
@@ -559,18 +561,22 @@ export function registerAuthRoutes(app: Express) {
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 
       console.log("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
-      return res.status(200).send(`<!doctype html><html><body><script>
+
+      const html = `<!doctype html><html><body><script>
         (function(){
           const data = ${safe};
           const target = ${targetOrigin};
+          const eventType = ${JSON.stringify(GOOGLE_AUTH_EVENT_TYPE)};
           if (window.opener) {
-            window.opener.postMessage({ type: 'orbia-google-auth', ...data }, target);
+            window.opener.postMessage({ type: eventType, ...data }, target);
             window.close();
           } else {
             document.body.innerText = data.message || 'Podés cerrar esta ventana.';
           }
         })();
-      </script></body></html>`);
+      </script></body></html>`;
+
+      return res.status(200).send(html);
     };
 
     // fallbackOrigin mientras no tengamos el state decodificado

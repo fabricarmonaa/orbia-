@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ import {
 import { Palette, Save, Upload, Settings, Eye, ExternalLink, RotateCcw } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
 import { TrackingView } from "@/components/tracking/TrackingView";
+import { DEFAULT_TRACKING_BLOCK_ORDER } from "@shared/tracking-config";
 
 interface ConfigForm {
   businessName: string;
@@ -22,7 +23,6 @@ interface ConfigForm {
   businessDescription: string;
   logoUrl: string;
   currency: string;
-  trackingExpirationHours: number;
   language: string;
   trackingLayout: string;
   trackingPrimaryColor: string;
@@ -44,8 +44,6 @@ interface BrandingSettingsProps {
   setConfig: (value: ConfigForm) => void;
   saveConfig: (e: React.FormEvent) => void;
   savingConfig: boolean;
-  minTrackingHours: number;
-  maxTrackingHours: number;
   brandingForm: TenantBranding;
   setBrandingForm: (value: TenantBranding | ((prev: TenantBranding) => TenantBranding)) => void;
   brandingSaving: boolean;
@@ -56,6 +54,7 @@ interface BrandingSettingsProps {
   resetBranding: () => void;
   previewOrder: any;
   layoutPresets: LayoutPreset[];
+  onOpenPublicPreview: () => void;
 }
 
 export function BrandingSettings({
@@ -63,8 +62,6 @@ export function BrandingSettings({
   setConfig,
   saveConfig,
   savingConfig,
-  minTrackingHours,
-  maxTrackingHours,
   brandingForm,
   setBrandingForm,
   brandingSaving,
@@ -75,12 +72,9 @@ export function BrandingSettings({
   resetBranding,
   previewOrder,
   layoutPresets,
+  onOpenPublicPreview,
   planCode,
 }: BrandingSettingsProps) {
-  const [trackingHoursError, setTrackingHoursError] = useState<string>("");
-  const minHours = minTrackingHours > 0 ? minTrackingHours : 1;
-  const maxHours = maxTrackingHours > 0 ? maxTrackingHours : 24;
-  const trackingPlanText = useMemo(() => `Tu plan permite entre ${minHours} y ${maxHours} horas.`, [minHours, maxHours]);
   const isEconomic = (planCode || "").toUpperCase() === "ECONOMICO";
   const trackingFieldToggles = [
     { key: "showLogo", label: "Mostrar logo" },
@@ -101,6 +95,20 @@ export function BrandingSettings({
     { key: "showDynamicFieldUpdatedAt", label: "Mostrar 'Actualizado' en dinámicos" },
     { key: "showTos", label: "Mostrar Términos y condiciones" },
     { key: "showSocialLinks", label: "Mostrar links sociales" },
+  ] as const;
+  const blockLabels: Record<string, string> = {
+    header: "Header",
+    summary: "Resumen",
+    history: "Historial",
+    comments: "Observaciones",
+    tos: "Términos",
+    social: "Redes",
+    footer: "Pie",
+  };
+  const alignmentOptions = [
+    { value: "left", label: "Izquierda" },
+    { value: "center", label: "Centro" },
+    { value: "right", label: "Derecha" },
   ] as const;
 
 
@@ -136,7 +144,7 @@ export function BrandingSettings({
               </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label>Moneda</Label>
                 <Select value={config.currency} onValueChange={(v) => setConfig({ ...config, currency: v })}>
@@ -150,44 +158,6 @@ export function BrandingSettings({
                 </Select>
               </div>
 
-              <div className="space-y-2">
-                <Label>
-                  Duración del enlace de seguimiento
-                  <span className="text-xs text-muted-foreground ml-1">
-                    (entre {minHours}h y {maxHours}h)
-                  </span>
-                </Label>
-                <Input
-                  type="number"
-                  min={minHours}
-                  max={maxHours}
-                  value={config.trackingExpirationHours}
-                  onChange={(e) => {
-                    const raw = parseInt(e.target.value);
-                    if (Number.isNaN(raw)) {
-                      setTrackingHoursError("");
-                      setConfig({ ...config, trackingExpirationHours: minHours });
-                      return;
-                    }
-                    if (raw > maxHours) {
-                      setTrackingHoursError(`Máximo permitido: ${maxHours}h`);
-                    } else if (raw < minHours) {
-                      setTrackingHoursError(`Mínimo permitido: ${minHours}h`);
-                    } else {
-                      setTrackingHoursError("");
-                    }
-                    setConfig({
-                      ...config,
-                      trackingExpirationHours: Math.min(Math.max(raw, minHours), maxHours),
-                    });
-                  }}
-                />
-                {trackingHoursError ? (
-                  <p className="text-xs text-destructive">{trackingHoursError}</p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">{trackingPlanText}</p>
-                )}
-              </div>
             </div>
 
             <Button type="submit" disabled={savingConfig}>
@@ -257,24 +227,29 @@ export function BrandingSettings({
 
                 {/* Paleta de colores */}
                 <div className="space-y-3">
-                  <Label>Paleta de colores</Label>
+                  <Label>Colores de la vista pública</Label>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {[
-                      { key: "primary", label: "Primario" },
-                      { key: "secondary", label: "Secundario" },
-                      { key: "accent", label: "Acento" },
-                      { key: "background", label: "Fondo" },
-                      { key: "text", label: "Texto" },
-                      { key: "trackingButton", label: "Botón del seguimiento" },
-                      { key: "trackingHeader", label: "Encabezado del seguimiento" },
-                      { key: "trackingBadge", label: "Badge del seguimiento" },
+                      { key: "background", label: "Fondo general" },
+                      { key: "surface", label: "Fondo de tarjetas/bloques" },
+                      { key: "border", label: "Borde" },
+                      { key: "trackingHeader", label: "Header/Hero" },
+                      { key: "primary", label: "Color primario" },
+                      { key: "secondary", label: "Color secundario" },
+                      { key: "accent", label: "Acentos" },
+                      { key: "timeline", label: "Timeline / Stepper" },
+                      { key: "text", label: "Texto principal" },
+                      { key: "textSecondary", label: "Texto secundario" },
+                      { key: "trackingBadge", label: "Badge de estado" },
+                      { key: "trackingButton", label: "Botón" },
+                      { key: "trackingButtonHover", label: "Botón hover" },
                     ].map((item) => (
                       <div key={item.key} className="space-y-1.5">
                         <Label className="text-xs text-muted-foreground">{item.label}</Label>
                         <div className="flex items-center gap-2">
                           <Input
                             type="color"
-                            value={(brandingForm.colors as any)[item.key]}
+                            value={(brandingForm.colors as any)[item.key] || "#000000"}
                             onChange={(e) =>
                               setBrandingForm({
                                 ...brandingForm,
@@ -284,7 +259,7 @@ export function BrandingSettings({
                             className="w-10 h-9 p-1 cursor-pointer"
                           />
                           <Input
-                            value={(brandingForm.colors as any)[item.key]}
+                            value={(brandingForm.colors as any)[item.key] || ""}
                             onChange={(e) =>
                               setBrandingForm({
                                 ...brandingForm,
@@ -302,36 +277,26 @@ export function BrandingSettings({
                 {/* Textos */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label>Encabezado del seguimiento</Label>
-                    <Input
-                      value={brandingForm.texts.trackingHeader}
-                      onChange={(e) =>
-                        setBrandingForm({
-                          ...brandingForm,
-                          texts: { ...brandingForm.texts, trackingHeader: e.target.value },
-                        })
-                      }
-                      placeholder="Ej: ¡Gracias por tu pedido!"
-                    />
+                    <Label>Título principal</Label>
+                    <Input value={brandingForm.texts.trackingHeader} onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingHeader: e.target.value } })} placeholder="Ej: Seguimiento de tu pedido" />
                   </div>
                   <div className="space-y-2">
-                    <Label>Texto Términos y condiciones</Label>
-                    <Input
-                      value={brandingForm.texts.trackingFooter}
-                      placeholder="Ej: Al realizar tu pedido aceptás nuestros Términos y condiciones."
-                      onChange={(e) =>
-                        setBrandingForm({
-                          ...brandingForm,
-                          texts: { ...brandingForm.texts, trackingFooter: e.target.value },
-                        })
-                      }
-                    />
+                    <Label>Subtítulo</Label>
+                    <Input value={(brandingForm.texts as any).trackingSubtitle || ""} onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingSubtitle: e.target.value } as any })} placeholder="Ej: Estado actualizado en tiempo real." />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Texto de agradecimiento</Label>
+                    <Input value={(brandingForm.texts as any).trackingThanks || ""} onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingThanks: e.target.value } as any })} placeholder="Ej: Gracias por confiar en nosotros." />
+                  </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Texto de términos y condiciones</Label>
+                    <Input value={brandingForm.texts.trackingFooter} placeholder="Ej: Al realizar tu pedido aceptás nuestros Términos y condiciones." onChange={(e) => setBrandingForm({ ...brandingForm, texts: { ...brandingForm.texts, trackingFooter: e.target.value } })} />
                   </div>
                 </div>
 
                 {/* Links */}
                 {!isEconomic ? (
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Instagram</Label>
                       <Input
@@ -440,7 +405,13 @@ export function BrandingSettings({
                         <button
                           key={preset.value}
                           type="button"
-                          onClick={() => setConfig({ ...config, trackingLayout: preset.value })}
+                          onClick={() => {
+                            setConfig({ ...config, trackingLayout: preset.value });
+                            setBrandingForm((prev) => ({
+                              ...prev,
+                              trackingConfig: { ...(prev as any).trackingConfig, layout: preset.value },
+                            }));
+                          }}
                           className={`rounded-md border p-3 text-center transition-colors ${isSelected ? "border-primary bg-primary/5" : "border-border"}`}
                         >
                           <preset.Icon
@@ -484,7 +455,89 @@ export function BrandingSettings({
                   </p>
                 </div>
 
-                {/* Save buttons */}
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <Label>Alineación de bloques y campos</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Configurá izquierda/centro/derecha por bloque y para los campos dinámicos.</p>
+                  </div>
+                  <div className="space-y-3">
+                    {(brandingForm.trackingConfig?.blockOrder || [...DEFAULT_TRACKING_BLOCK_ORDER]).map((block) => (
+                      <div key={`align-${block}`} className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2 items-center">
+                        <p className="text-sm">{blockLabels[block] || block}</p>
+                        <Select
+                          value={(brandingForm.trackingConfig?.blockAlignments?.[block] || "left") as string}
+                          onValueChange={(value: "left" | "center" | "right") =>
+                            setBrandingForm((prev) => ({
+                              ...prev,
+                              trackingConfig: {
+                                ...(prev as any).trackingConfig,
+                                blockAlignments: {
+                                  ...((prev as any).trackingConfig?.blockAlignments || {}),
+                                  [block]: value,
+                                },
+                              },
+                            }))
+                          }
+                        >
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {alignmentOptions.map((opt) => <SelectItem key={`${block}-${opt.value}`} value={opt.value}>{opt.label}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-2 items-center pt-2 border-t">
+                    <p className="text-sm">Campos dinámicos (default)</p>
+                    <Select
+                      value={(brandingForm.trackingConfig?.dynamicFieldsAlign || "left") as string}
+                      onValueChange={(value: "left" | "center" | "right") =>
+                        setBrandingForm((prev) => ({
+                          ...prev,
+                          trackingConfig: {
+                            ...(prev as any).trackingConfig,
+                            dynamicFieldsAlign: value,
+                          },
+                        }))
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {alignmentOptions.map((opt) => <SelectItem key={`dynamic-${opt.value}`} value={opt.value}>{opt.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+
+
+                <div className="space-y-3 rounded-lg border p-4">
+                  <div>
+                    <Label>Orden de bloques en la vista pública</Label>
+                    <p className="text-xs text-muted-foreground mt-1">Mové cada bloque para definir el orden de lectura del link público.</p>
+                  </div>
+                  <div className="space-y-2">
+                    {((brandingForm as any).trackingConfig?.blockOrder || ["header", "summary", "history", "comments", "tos", "social", "footer"]).map((block: string, idx: number, arr: string[]) => (
+                      <div key={block} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2">
+                        <span className="text-sm">{blockLabels[block] || block}</span>
+                        <div className="flex gap-1">
+                          <Button type="button" variant="outline" size="sm" disabled={idx === 0} onClick={() => {
+                            const next = [...arr];
+                            [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+                            setBrandingForm((prev) => ({ ...prev, trackingConfig: { ...(prev as any).trackingConfig, blockOrder: next } }));
+                          }}>↑</Button>
+                          <Button type="button" variant="outline" size="sm" disabled={idx === arr.length - 1} onClick={() => {
+                            const next = [...arr];
+                            [next[idx + 1], next[idx]] = [next[idx], next[idx + 1]];
+                            setBrandingForm((prev) => ({ ...prev, trackingConfig: { ...(prev as any).trackingConfig, blockOrder: next } }));
+                          }}>↓</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                                {/* Save buttons */}
                 <div className="flex items-center gap-2">
                   <Button type="submit" disabled={brandingSaving}>
                     <Save className="w-4 h-4 mr-2" />
@@ -518,7 +571,7 @@ export function BrandingSettings({
                     variant="outline"
                     size="sm"
                     className="flex-1"
-                    onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+                    onClick={onOpenPublicPreview}
                   >
                     <ExternalLink className="w-4 h-4 mr-2" />
                     Ir a la vista previa

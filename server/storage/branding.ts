@@ -8,22 +8,29 @@ import {
   type InsertTenantBranding,
   type InsertAppBranding,
 } from "@shared/schema";
-import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
+import { DEFAULT_TRACKING_VISIBILITY, DEFAULT_TRACKING_BLOCK_ORDER, type TrackingDisplayConfig } from "@shared/tracking-config";
 
 const DEFAULT_COLORS = {
   primary: "#6366f1",
   secondary: "#8b5cf6",
   accent: "#10b981",
   background: "#ffffff",
+  surface: "#ffffff",
+  border: "#e5e7eb",
   text: "#111827",
+  textSecondary: "#4b5563",
   trackingButton: "#6366f1",
+  trackingButtonHover: "#4f46e5",
   trackingHeader: "#111827",
   trackingBadge: "#10b981",
+  timeline: "#6366f1",
 };
 
 const DEFAULT_TEXTS = {
   trackingHeader: "Seguimiento de tu pedido",
+  trackingSubtitle: "Podés ver el estado actualizado en tiempo real.",
   trackingFooter: "Gracias por tu compra",
+  trackingThanks: "Gracias por confiar en nosotros.",
 };
 
 const DEFAULT_LINKS = {
@@ -38,7 +45,7 @@ const DEFAULT_PDF = {
   showLogo: true,
 };
 
-const DEFAULT_TRACKING_CONFIG: TrackingVisibilityConfig = DEFAULT_TRACKING_VISIBILITY;
+const DEFAULT_TRACKING_CONFIG: TrackingDisplayConfig = { ...DEFAULT_TRACKING_VISIBILITY, blockOrder: [...DEFAULT_TRACKING_BLOCK_ORDER] };
 const DEFAULT_TRACKING_CONFIG_RECORD = DEFAULT_TRACKING_CONFIG as unknown as Record<string, unknown>;
 
 function withCacheBusting(url: string | null, updatedAt?: Date | null) {

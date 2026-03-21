@@ -1,3 +1,5 @@
+export type TrackingLayout = "classic" | "cards" | "stepper" | "minimal";
+
 export interface TrackingVisibilityConfig {
   showLogo: boolean;
   showBusinessName: boolean;
@@ -18,6 +20,13 @@ export interface TrackingVisibilityConfig {
   showTos: boolean;
   showSocialLinks: boolean;
   showPoweredBy: boolean;
+}
+
+export interface TrackingDisplayConfig extends TrackingVisibilityConfig {
+  layout?: TrackingLayout;
+  blockOrder?: string[];
+  blockAlignments?: Partial<Record<string, "left" | "center" | "right">>;
+  dynamicFieldsAlign?: "left" | "center" | "right";
 }
 
 export const DEFAULT_TRACKING_VISIBILITY: TrackingVisibilityConfig = {
@@ -42,6 +51,22 @@ export const DEFAULT_TRACKING_VISIBILITY: TrackingVisibilityConfig = {
   showPoweredBy: true,
 };
 
-export function normalizeTrackingVisibilityConfig(input?: Partial<TrackingVisibilityConfig> | null): TrackingVisibilityConfig {
-  return { ...DEFAULT_TRACKING_VISIBILITY, ...(input || {}), showPoweredBy: true };
+export const DEFAULT_TRACKING_BLOCK_ORDER = ["header", "summary", "history", "comments", "tos", "social", "footer"] as const;
+
+export function normalizeTrackingVisibilityConfig(input?: Partial<TrackingDisplayConfig> | null): TrackingDisplayConfig {
+  const raw = input || {};
+  const incomingOrder = Array.isArray(raw.blockOrder) ? raw.blockOrder.filter((x): x is string => typeof x === "string") : [];
+  const normalizedOrder = [
+    ...incomingOrder.filter((id, idx, arr) => DEFAULT_TRACKING_BLOCK_ORDER.includes(id as any) && arr.indexOf(id) === idx),
+    ...DEFAULT_TRACKING_BLOCK_ORDER.filter((id) => !incomingOrder.includes(id)),
+  ];
+  return {
+    ...DEFAULT_TRACKING_VISIBILITY,
+    ...raw,
+    layout: raw.layout && ["classic", "cards", "stepper", "minimal"].includes(raw.layout) ? raw.layout : undefined,
+    blockOrder: normalizedOrder,
+    blockAlignments: raw.blockAlignments || {},
+    dynamicFieldsAlign: raw.dynamicFieldsAlign && ["left", "center", "right"].includes(raw.dynamicFieldsAlign) ? raw.dynamicFieldsAlign : "left",
+    showPoweredBy: true,
+  };
 }

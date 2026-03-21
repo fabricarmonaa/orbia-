@@ -11,6 +11,8 @@ import { useBranding } from "@/context/BrandingContext";
 import { BrandLogo } from "@/components/branding/BrandLogo";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
+const GOOGLE_AUTH_EVENT_TYPE = "orbia-google-auth";
+
 export default function TenantLogin() {
   const [, setLocation] = useLocation();
   const [tenantCode, setTenantCode] = useState("");
@@ -86,31 +88,50 @@ export default function TenantLogin() {
   async function handleGoogleLogin() {
     try {
       const parentOrigin = window.location.origin;
-      const res = await fetch(`/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
-      const data = await res.json();
-      if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google");
-      const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
-      if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente de Google.");
       const expectedOrigin = window.location.origin;
-      const timeoutId = window.setTimeout(() => {
+      let timeoutId: number | null = null;
+      let resolved = false;
+
+      const cleanup = () => {
         window.removeEventListener("message", listener);
-        toast({ title: "No se pudo ingresar con Google", description: "La autorización tardó demasiado. Intentá nuevamente.", variant: "destructive" });
-      }, 180000);
+        if (timeoutId !== null) window.clearTimeout(timeoutId);
+      };
+
+      const finalize = () => {
+        if (resolved) return;
+        resolved = true;
+        cleanup();
+      };
 
       const listener = (event: MessageEvent) => {
         if (event.origin !== expectedOrigin) return;
-        if (event.data?.type !== "orbia-google-auth") return;
-        window.removeEventListener("message", listener);
-        window.clearTimeout(timeoutId);
+        if (!event.data || event.data.type !== GOOGLE_AUTH_EVENT_TYPE) return;
+
+        finalize();
+
         if (!event.data?.ok) {
           toast({ title: "No se pudo ingresar con Google", description: event.data?.message || "Intentá nuevamente.", variant: "destructive" });
           return;
         }
+
         login(event.data.token, event.data.user);
+
         toast({ title: "Sesión iniciada", description: "Ingresaste con Google correctamente." });
         setLocation("/app");
       };
+
       window.addEventListener("message", listener);
+      const res = await fetch(`/api/auth/google/start?intent=login&parentOrigin=${encodeURIComponent(parentOrigin)}`);
+      const data = await res.json();
+      if (!res.ok || !data?.url) throw new Error(data.error || "No se pudo iniciar Google");
+
+      const popup = window.open(data.url, "orbia-google-login", "width=520,height=720");
+      if (!popup) throw new Error("Tu navegador bloqueó la ventana emergente de Google.");
+
+      timeoutId = window.setTimeout(() => {
+        finalize();
+        toast({ title: "No se pudo ingresar con Google", description: "La autorización tardó demasiado. Intentá nuevamente.", variant: "destructive" });
+      }, 180000);
     } catch (err: any) {
       toast({ title: "Error", description: err.message || "No se pudo iniciar Google Sign-In", variant: "destructive" });
     }

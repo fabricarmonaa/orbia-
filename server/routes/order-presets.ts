@@ -166,9 +166,11 @@ export function registerOrderPresetRoutes(app: Express) {
     validateParams(presetIdParamSchema),
     async (req, res) => {
       try {
+        const includeInactive = req.query.includeInactive === "1" || req.query.includeInactive === "true";
         const result = await orderPresetsStorage.listFieldsByPreset(
           req.auth!.tenantId!,
-          Number(req.params.presetId)
+          Number(req.params.presetId),
+          { includeInactive }
         );
         return res.json({ data: result.fields, preset: result.preset });
       } catch (err) {

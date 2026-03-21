@@ -1,8 +1,8 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe } from "lucide-react";
+import { PackageSearch, Clock, AlertCircle, CheckCircle2, ArrowRight, Globe, FileText, Download } from "lucide-react";
 import type { TenantBranding } from "@/context/BrandingContext";
-import { DEFAULT_TRACKING_VISIBILITY, type TrackingVisibilityConfig } from "@shared/tracking-config";
+import { DEFAULT_TRACKING_BLOCK_ORDER, DEFAULT_TRACKING_VISIBILITY, type TrackingDisplayConfig, type TrackingVisibilityConfig } from "@shared/tracking-config";
 
 export interface TrackingOrderData {
   orderNumber: number;
@@ -20,11 +20,23 @@ export interface TrackingOrderData {
   closedAt: string | null;
   history: Array<{ status: string; color: string; date: string; note: string | null }>;
   publicComments: Array<{ content: string; date: string }>;
-  customFields?: Array<{ label: string; value: string | null; fieldType: string; updatedAt?: string | null; downloadUrl?: string | null }>;
+  customFields?: Array<{
+    label: string;
+    value: string | null;
+    fieldType: string;
+    updatedAt?: string | null;
+    downloadUrl?: string | null;
+    previewUrl?: string | null;
+    mimeType?: string | null;
+    align?: "left" | "center" | "right" | null;
+    groupId?: string | null;
+    groupLabel?: string | null;
+    slotIndex?: number | null;
+  }>;
   trackingLayout: string;
   trackingTosText?: string | null;
   tosUrl?: string | null;
-  trackingVisibility?: Partial<TrackingVisibilityConfig>;
+  trackingVisibility?: Partial<TrackingDisplayConfig>;
 }
 
 interface TrackingViewProps {
@@ -53,7 +65,7 @@ function getContrastText(hex: string) {
   const g = parseInt(parsed.slice(3, 5), 16);
   const b = parseInt(parsed.slice(5, 7), 16);
   const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return lum > 0.5 ? "#1a1a1a" : "#ffffff";
+  return lum > 0.5 ? "#111827" : "#ffffff";
 }
 
 function prettifyStatusCode(code?: string | null) {
@@ -62,21 +74,31 @@ function prettifyStatusCode(code?: string | null) {
   return normalized.toLowerCase().split("_").filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join(" ");
 }
 
-export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
-  if (loading) {
-    return <div className="min-h-screen bg-background flex items-center justify-center p-4"><div className="w-full max-w-md space-y-4"><div className="h-8 w-48 mx-auto bg-muted rounded-md" /><div className="h-48 w-full rounded-md bg-muted" /><div className="h-32 w-full rounded-md bg-muted" /></div></div>;
-  }
-  if (error) {
-    return <div className="min-h-screen bg-background flex items-center justify-center p-4"><div className="text-center"><AlertCircle className="w-16 h-16 mx-auto text-destructive mb-4" /><h1 className="text-xl font-bold mb-2">No disponible</h1><p className="text-muted-foreground">{error}</p></div></div>;
-  }
+function isImageAttachment(field: NonNullable<TrackingOrderData["customFields"]>[number]) {
+  if (field.previewUrl) return true;
+  return typeof field.mimeType === "string" && field.mimeType.startsWith("image/");
+}
 
-  const v = { ...DEFAULT_TRACKING_VISIBILITY, ...(branding.trackingConfig || {}), ...(order.trackingVisibility || {}) };
-  const layout = order.trackingLayout || "classic";
+function normalizeAlignment(value?: string | null): "left" | "center" | "right" {
+  return value === "center" || value === "right" ? value : "left";
+}
+
+export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
+  if (loading) return <div className="min-h-screen flex items-center justify-center p-4">Cargando...</div>;
+  if (error) return <div className="min-h-screen flex items-center justify-center p-4"><div className="text-center"><AlertCircle className="w-16 h-16 mx-auto mb-4 text-red-500" /><p>{error}</p></div></div>;
+
+  const v = { ...DEFAULT_TRACKING_VISIBILITY, ...(branding.trackingConfig || {}), ...(order.trackingVisibility || {}) } as TrackingDisplayConfig;
+  const layout = (order.trackingLayout || v.layout || "classic") as "classic" | "cards" | "stepper" | "minimal";
   const renderedStatus = order.statusLabel || order.status || prettifyStatusCode(order.statusCode) || "Sin estado";
   const colors = branding.colors;
   const bgColor = colors.background || "#ffffff";
   const textColor = colors.text || getContrastText(bgColor);
-  const mutedText = getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.56)";
+  const surfaceColor = colors.surface || "#ffffff";
+  const borderColor = colors.border || "#e5e7eb";
+  const mutedText = colors.textSecondary || (getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.70)" : "#4b5563");
+  const timelineColor = colors.timeline || colors.accent || colors.primary;
+  const blockOrder = Array.isArray(v.blockOrder) && v.blockOrder.length ? v.blockOrder : [...DEFAULT_TRACKING_BLOCK_ORDER];
+  const blockAlignments = (v.blockAlignments || {}) as Record<string, "left" | "center" | "right">;
 
   const infoItems = [
     { show: v.showOrderType, label: "Tipo", value: order.type || "-" },
@@ -89,77 +111,141 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     { show: v.showClosedAt && !!order.closedAt, label: "Cerrado", value: formatDate(order.closedAt) || "-" },
   ].filter((x) => x.show);
 
+  const cardBase = { backgroundColor: surfaceColor, borderColor };
+
   const headerSection = (
-    <div className="text-center py-5 rounded-xl" style={{ backgroundColor: colors.trackingHeader }}>
+    <div className="text-center py-6 px-4 rounded-xl" style={{ backgroundColor: colors.trackingHeader }}>
       {v.showLogo && (branding.logoUrl ? <img src={branding.logoUrl} alt={branding.displayName} className="w-14 h-14 rounded-md object-cover mx-auto mb-3" data-testid="img-tracking-logo" /> : <div className="inline-flex items-center justify-center w-12 h-12 rounded-md mb-3" style={{ backgroundColor: colors.trackingButton }}><PackageSearch className="w-6 h-6" style={{ color: getContrastText(colors.trackingButton) }} /></div>)}
-      <h1 className="text-lg font-bold tracking-tight" style={{ color: getContrastText(colors.trackingHeader) }}>{branding.texts.trackingHeader || "Seguimiento"}</h1>
-      {v.showBusinessName && branding.displayName ? <p className="text-sm mt-1" style={{ color: mutedText }}>{branding.displayName}</p> : null}
+      <h1 className="text-xl font-bold tracking-tight" style={{ color: getContrastText(colors.trackingHeader) }}>{branding.texts.trackingHeader || "Seguimiento"}</h1>
+      {branding.texts.trackingSubtitle ? <p className="text-sm mt-1" style={{ color: getContrastText(colors.trackingHeader) === "#ffffff" ? "rgba(255,255,255,0.75)" : "rgba(17,24,39,0.7)" }}>{branding.texts.trackingSubtitle}</p> : null}
+      {v.showBusinessName && branding.displayName ? <p className="text-sm mt-2" style={{ color: getContrastText(colors.trackingHeader) === "#ffffff" ? "rgba(255,255,255,0.75)" : "rgba(17,24,39,0.7)" }}>{branding.displayName}</p> : null}
     </div>
   );
 
-  const orderInfoSection = (
-    <Card style={{ borderColor: `${colors.primary}20` }}>
+  const summarySection = (
+    <Card style={cardBase}>
       <CardContent className="pt-6 space-y-5">
         {(v.showOrderNumber || v.showCurrentStatus) && (
           <div className="flex items-center justify-between gap-4">
-            {v.showOrderNumber ? <div><p className="text-sm text-muted-foreground">Pedido</p><p className="text-xl font-bold" data-testid="text-tracking-order-number">#{order.orderNumber}</p></div> : <span />}
+            {v.showOrderNumber ? <div><p className="text-sm" style={{ color: mutedText }}>Pedido</p><p className="text-2xl font-bold" data-testid="text-tracking-order-number">#{order.orderNumber}</p></div> : <span />}
             {v.showCurrentStatus ? <Badge style={{ backgroundColor: order.statusColor || colors.trackingBadge, color: "#fff" }} className="text-sm" data-testid="badge-tracking-status">{renderedStatus}</Badge> : null}
           </div>
         )}
-
-        {infoItems.length > 0 ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5 text-sm">
-            {infoItems.map((item) => (
-              <div key={item.label} className="space-y-1.5">
-                <p className="text-muted-foreground">{item.label}</p>
-                <p className="font-medium break-words">{item.value}</p>
+        {infoItems.length > 0 && (
+          <div className={layout === "cards" ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 sm:grid-cols-2 gap-4"}>
+            {infoItems.map((it) => (
+              <div key={it.label} className="rounded-md p-3" style={{ backgroundColor: layout === "minimal" ? "transparent" : `${colors.primary}0F`, border: layout === "minimal" ? `1px solid ${borderColor}` : "none" }}>
+                <p className="text-xs" style={{ color: mutedText }}>{it.label}</p>
+                <p className="text-sm font-medium mt-1">{it.value}</p>
               </div>
             ))}
           </div>
-        ) : null}
-
-        {v.showDynamicFields && order.customFields && order.customFields.length > 0 ? (
-          <div className="pt-2 space-y-3">
+        )}
+        {v.showDynamicFields && order.customFields && order.customFields.length > 0 && (
+          <div className="space-y-2">
             <p className="text-sm font-semibold">Datos adicionales</p>
-            {order.customFields.map((field, idx) => (
-              <div key={`${field.label}-${idx}`} className="rounded-lg border bg-muted/20 p-3.5 space-y-2.5">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">{field.label}</p>
-                <p className="font-medium break-words">{field.value || "-"}</p>
-                <div className="flex items-center justify-between gap-3 flex-wrap pt-1">
-                  {field.downloadUrl ? <a className="text-xs underline" href={field.downloadUrl} target="_blank" rel="noreferrer">Ver/descargar archivo</a> : <span />}
-                  {v.showDynamicFieldUpdatedAt ? <p className="text-xs text-muted-foreground/80">Actualizado: {formatDate(field.updatedAt) || "-"}</p> : null}
-                </div>
-              </div>
-            ))}
+            <div className="space-y-2">
+              {(() => {
+                const grouped = new Map<string, {
+                  key: string;
+                  label: string;
+                  align: "left" | "center" | "right";
+                  items: NonNullable<TrackingOrderData["customFields"]>;
+                }>();
+                (order.customFields || []).forEach((field, idx) => {
+                  const align = normalizeAlignment(field.align || v.dynamicFieldsAlign);
+                  const groupKey = field.fieldType === "FILE" ? (field.groupId || `file-${idx}`) : `value-${idx}`;
+                  const label = field.groupLabel || field.label;
+                  if (!grouped.has(groupKey)) grouped.set(groupKey, { key: groupKey, label, align, items: [] as NonNullable<TrackingOrderData["customFields"]> });
+                  grouped.get(groupKey)!.items.push(field);
+                });
+
+                return Array.from(grouped.values()).map((group, idx) => {
+                  const images = (group.items || [])
+                    .filter((f) => f.fieldType === "FILE" && isImageAttachment(f))
+                    .sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
+                  const documents = (group.items || [])
+                    .filter((f) => f.fieldType === "FILE" && !isImageAttachment(f))
+                    .sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
+                  const firstUpdatedAt = group.items?.find((f) => f.updatedAt)?.updatedAt;
+
+                  return (
+                    <div key={`${group.key}-${idx}`} className="rounded-md p-3 space-y-2" style={{ backgroundColor: `${colors.accent}14`, textAlign: group.align }}>
+                      <p className="text-xs" style={{ color: mutedText }}>{group.label}</p>
+
+                      {images.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          {images.map((img, imageIdx) => (
+                            <a
+                              key={`${group.key}-img-${imageIdx}`}
+                              href={img.downloadUrl || img.previewUrl || "#"}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                              className="block rounded-md overflow-hidden border aspect-square bg-black/5"
+                              style={{ borderColor }}
+                              title={img.value || group.label}
+                            >
+                              <img src={img.previewUrl || img.downloadUrl || ""} alt={group.label} className="w-full h-full object-cover" loading="lazy" />
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {documents.length > 0 ? (
+                        <div className="space-y-2">
+                          {documents.map((doc, docIdx) => (
+                            <a
+                              key={`${group.key}-doc-${docIdx}`}
+                              href={doc.downloadUrl || "#"}
+                              className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+                              style={{ borderColor }}
+                              target="_blank"
+                              rel="noreferrer noopener"
+                            >
+                              <span className="flex items-center gap-2 min-w-0">
+                                <FileText className="w-4 h-4 flex-shrink-0" style={{ color: mutedText }} />
+                                <span className="truncate">{doc.value || "Archivo adjunto"}</span>
+                              </span>
+                              <Download className="w-4 h-4 flex-shrink-0" style={{ color: colors.primary }} />
+                            </a>
+                          ))}
+                        </div>
+                      ) : null}
+
+                      {images.length === 0 && documents.length === 0 ? <p className="text-sm font-medium">{group.items?.[0]?.value || "-"}</p> : null}
+
+                      {v.showDynamicFieldUpdatedAt && firstUpdatedAt ? <p className="text-xs mt-1" style={{ color: mutedText }}>Actualizado: {formatDate(firstUpdatedAt)}</p> : null}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
           </div>
-        ) : null}
+        )}
       </CardContent>
     </Card>
   );
 
   const classicHistory = v.showStatusHistory && order.history.length > 0 && (
-    <Card>
-      <CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader>
-      <CardContent><div className="space-y-4">{order.history.map((h, i) => <div key={i} className="flex gap-3"><div className="flex flex-col items-center"><div className="w-3 h-3 rounded-full flex-shrink-0 mt-1" style={{ backgroundColor: h.color }} />{i < order.history.length - 1 && <div className="w-px flex-1 bg-border mt-1" />}</div><div className="pb-4"><p className="text-sm font-medium">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>{h.note && <p className="text-sm text-muted-foreground mt-1">{h.note}</p>}</div></div>)}</div></CardContent>
-    </Card>
+    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="space-y-1">{order.history.map((h, i) => <div key={i} className="flex gap-3"><div className="flex flex-col items-center"><div className="w-3 h-3 rounded-full mt-1" style={{ backgroundColor: h.color || timelineColor }} />{i < order.history.length - 1 && <div className="w-px flex-1 mt-1" style={{ backgroundColor: timelineColor }} />}</div><div className="pb-4"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-sm mt-1" style={{ color: mutedText }}>{h.note}</p>}</div></div>)}</div></CardContent></Card>
   );
 
   const cardsHistory = v.showStatusHistory && order.history.length > 0 && (
-    <div><h3 className="font-semibold flex items-center gap-2 mb-3"><Clock className="w-4 h-4" />Historial</h3><div className="grid grid-cols-2 gap-3">{order.history.map((h, i) => <Card key={i} style={{ borderLeftColor: h.color, borderLeftWidth: "3px" }}><CardContent className="p-3"><p className="text-sm font-medium">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date)}</p>{h.note && <p className="text-xs text-muted-foreground mt-1">{h.note}</p>}</CardContent></Card>)}</div></div>
+    <div><h3 className="font-semibold flex items-center gap-2 mb-3"><Clock className="w-4 h-4" />Historial</h3><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{order.history.map((h, i) => <Card key={i} style={{ ...cardBase, borderLeftColor: h.color || timelineColor, borderLeftWidth: "4px" }}><CardContent className="p-3"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-xs mt-1" style={{ color: mutedText }}>{h.note}</p>}</CardContent></Card>)}</div></div>
   );
 
   const stepperHistory = v.showStatusHistory && order.history.length > 0 && (
-    <Card><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="flex items-center gap-1 overflow-x-auto pb-2">{order.history.map((h, i) => <div key={i} className="flex items-center flex-shrink-0"><div className="flex flex-col items-center"><div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ backgroundColor: h.color }}><CheckCircle2 className="w-4 h-4 text-white" /></div><p className="text-xs font-medium mt-1 text-center max-w-[80px] truncate">{h.status}</p><p className="text-xs text-muted-foreground">{formatDate(h.date).split(",")[0]}</p></div>{i < order.history.length - 1 && <ArrowRight className="w-4 h-4 text-muted-foreground mx-1 flex-shrink-0" />}</div>)}</div></CardContent></Card>
+    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="flex items-center gap-1 overflow-x-auto pb-2">{order.history.map((h, i) => <div key={i} className="flex items-center flex-shrink-0"><div className="flex flex-col items-center"><div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: h.color || timelineColor }}><CheckCircle2 className="w-4 h-4 text-white" /></div><p className="text-xs font-medium mt-1 text-center max-w-[90px] truncate">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date).split(",")[0]}</p></div>{i < order.history.length - 1 && <ArrowRight className="w-4 h-4 mx-1 flex-shrink-0" style={{ color: timelineColor }} />}</div>)}</div></CardContent></Card>
   );
 
   const minimalHistory = v.showStatusHistory && order.history.length > 0 && (
-    <div className="space-y-2">{order.history.map((h, i) => <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}><div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: h.color }} /><span className="text-sm font-medium flex-1">{h.status}</span><span className="text-xs text-muted-foreground">{formatDate(h.date)}</span></div>)}</div>
+    <div className="space-y-2 rounded-xl p-4" style={{ backgroundColor: surfaceColor, border: `1px solid ${borderColor}` }}>{order.history.map((h, i) => <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: i === order.history.length - 1 ? "none" : `1px solid ${borderColor}` }}><div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: h.color || timelineColor }} /><span className="text-sm font-medium flex-1">{h.status}</span><span className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</span></div>)}</div>
   );
 
   const historySection = layout === "cards" ? cardsHistory : layout === "stepper" ? stepperHistory : layout === "minimal" ? minimalHistory : classicHistory;
 
   const commentsSection = v.showPublicComments && order.publicComments.length > 0 && (
-    <Card><CardHeader className="pb-3"><h3 className="font-semibold">Notas</h3></CardHeader><CardContent><div className="space-y-3">{order.publicComments.map((c, i) => <div key={i} className="p-3 rounded-md bg-muted/50"><p className="text-sm">{c.content}</p><p className="text-xs text-muted-foreground mt-1">{formatDate(c.date)}</p></div>)}</div></CardContent></Card>
+    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold">Observaciones</h3></CardHeader><CardContent><div className="space-y-3">{order.publicComments.map((c, i) => <div key={i} className="p-3 rounded-md" style={{ backgroundColor: `${colors.accent}12` }}><p className="text-sm">{c.content}</p><p className="text-xs mt-1" style={{ color: mutedText }}>{formatDate(c.date)}</p></div>)}</div></CardContent></Card>
   );
 
   const hasLinks = v.showSocialLinks && (branding.links?.instagram || branding.links?.whatsapp || branding.links?.web);
@@ -177,16 +263,25 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
     return null;
   })() : null;
 
+  const footerSection = mode === "public" && v.showPoweredBy ? <p className="text-center text-xs py-4" style={{ color: mutedText }}>{branding.texts.trackingThanks || "Gracias por tu compra"} · Powered by {appName || "ORBIA"}</p> : null;
+
+  const blocks: Record<string, React.ReactNode> = {
+    header: headerSection,
+    summary: summarySection,
+    history: historySection,
+    comments: commentsSection,
+    tos: tosSection,
+    social: socialLinksSection,
+    footer: footerSection,
+  };
+
   return (
     <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
-      <div className="max-w-xl mx-auto space-y-5">
-        {headerSection}
-        {orderInfoSection}
-        {historySection}
-        {commentsSection}
-        {socialLinksSection}
-        {tosSection}
-        {mode === "public" && <p className="text-center text-xs py-4" style={{ color: mutedText }}>Powered by {appName || "ORBIA"}</p>}
+      <div className={layout === "stepper" ? "max-w-4xl mx-auto space-y-5" : "max-w-xl mx-auto space-y-5"}>
+        {blockOrder.map((id) => {
+          const alignment = normalizeAlignment(blockAlignments[id]);
+          return <div key={id} style={{ textAlign: alignment }}>{blocks[id]}</div>;
+        })}
       </div>
     </div>
   );

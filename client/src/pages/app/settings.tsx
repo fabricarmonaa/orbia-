@@ -34,7 +34,6 @@ interface Config {
   businessDescription: string;
   logoUrl: string;
   currency: string;
-  trackingExpirationHours: number;
   language: string;
   trackingLayout: string;
   trackingPrimaryColor: string;
@@ -73,14 +72,13 @@ const layoutPresets = [
 export default function SettingsPage() {
   const { user } = useAuth();
   const { tenantBranding, refreshBranding } = useBranding();
-  const { plan, loading: planLoading, getLimit } = usePlan();
+  const { plan, loading: planLoading } = usePlan();
   const [config, setConfig] = useState<Config>({
     businessName: "",
     businessType: "",
     businessDescription: "",
     logoUrl: "",
     currency: "ARS",
-    trackingExpirationHours: 24,
     language: "es",
     trackingLayout: "classic",
     trackingPrimaryColor: "#6366f1",
@@ -102,8 +100,6 @@ export default function SettingsPage() {
   const [slugSaving, setSlugSaving] = useState(false);
   const [addonStatus, setAddonStatus] = useState<Record<string, boolean>>({});
 
-  const minTrackingHours = getLimit("tracking_retention_min_hours") || 1;
-  const maxTrackingHours = getLimit("tracking_retention_max_hours") || 24;
   const previewOrder = {
     orderNumber: 123,
     type: "Pedido",
@@ -122,7 +118,44 @@ export default function SettingsPage() {
       { status: "Listo", color: "#e5e7eb", date: "", note: null },
     ],
     publicComments: [{ content: "Estamos preparando tu pedido", date: new Date().toISOString() }],
-    customFields: [{ label: "Fecha de entrega", value: "Mañana 18:00", fieldType: "DATETIME", updatedAt: new Date().toISOString() }],
+    customFields: [
+      { label: "Fecha de entrega", value: "Mañana 18:00", fieldType: "DATETIME", updatedAt: new Date().toISOString() },
+      {
+        label: "Adjuntos",
+        groupLabel: "Adjuntos",
+        groupId: "preview-attachments",
+        slotIndex: 0,
+        value: "Comprobante 1",
+        fieldType: "FILE",
+        previewUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='100%25' height='100%25' fill='%23dbeafe'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%231d4ed8' font-size='20'%3EImagen%201%3C/text%3E%3C/svg%3E",
+        downloadUrl: "#",
+        mimeType: "image/svg+xml",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        label: "Adjuntos",
+        groupLabel: "Adjuntos",
+        groupId: "preview-attachments",
+        slotIndex: 1,
+        value: "Comprobante 2",
+        fieldType: "FILE",
+        previewUrl: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Crect width='100%25' height='100%25' fill='%23dcfce7'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%23166534' font-size='20'%3EImagen%202%3C/text%3E%3C/svg%3E",
+        downloadUrl: "#",
+        mimeType: "image/svg+xml",
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        label: "Adjuntos",
+        groupLabel: "Adjuntos",
+        groupId: "preview-attachments",
+        slotIndex: 2,
+        value: "factura-demo.pdf",
+        fieldType: "FILE",
+        downloadUrl: "#",
+        mimeType: "application/pdf",
+        updatedAt: new Date().toISOString(),
+      },
+    ],
     trackingLayout: config.trackingLayout || "classic",
     trackingTosText: brandingForm.texts.trackingFooter,
     trackingVisibility: brandingForm.trackingConfig,
@@ -156,7 +189,7 @@ export default function SettingsPage() {
         colors: { ...defaultTenantBranding.colors, ...tenantBranding.colors },
         texts: { ...defaultTenantBranding.texts, ...tenantBranding.texts },
         links: { ...defaultTenantBranding.links, ...tenantBranding.links },
-        trackingConfig: { ...defaultTenantBranding.trackingConfig, ...(tenantBranding as any).trackingConfig },
+        trackingConfig: { ...defaultTenantBranding.trackingConfig, ...(tenantBranding as any).trackingConfig, layout: (tenantBranding as any)?.trackingConfig?.layout || config.trackingLayout || "classic" },
         pdfConfig: { ...defaultTenantBranding.pdfConfig, ...tenantBranding.pdfConfig },
       });
     }
@@ -173,7 +206,6 @@ export default function SettingsPage() {
           businessDescription: configData.data.businessDescription || "",
           logoUrl: configData.data.logoUrl || "",
           currency: configData.data.currency || "ARS",
-          trackingExpirationHours: configData.data.trackingExpirationHours || 24,
           language: configData.data.language || "es",
           trackingLayout: configData.data.trackingLayout || "classic",
           trackingPrimaryColor: configData.data.trackingPrimaryColor || "#6366f1",
@@ -242,7 +274,7 @@ export default function SettingsPage() {
         colors: brandingForm.colors,
         texts: brandingForm.texts,
         links: brandingForm.links,
-        trackingConfig: brandingForm.trackingConfig,
+        trackingConfig: { ...brandingForm.trackingConfig, layout: config.trackingLayout, blockOrder: (brandingForm as any).trackingConfig?.blockOrder || (defaultTenantBranding as any).trackingConfig?.blockOrder },
         pdfConfig: brandingForm.pdfConfig,
       });
       toast({ title: "Personalización guardada" });
@@ -265,7 +297,7 @@ export default function SettingsPage() {
         colors: reset.colors,
         texts: reset.texts,
         links: reset.links,
-        trackingConfig: reset.trackingConfig,
+        trackingConfig: { ...reset.trackingConfig, layout: "classic" },
         pdfConfig: reset.pdfConfig,
       });
       toast({ title: "Valores restaurados" });
@@ -329,6 +361,30 @@ export default function SettingsPage() {
     }
   }
 
+
+  async function openPublicTrackingPreview() {
+    try {
+      const res = await apiRequest("GET", "/api/orders?limit=15");
+      const json = await res.json();
+      const orders = Array.isArray(json?.data) ? json.data : [];
+      const target = orders.find((o: any) => o?.publicTrackingId) || orders[0];
+      if (!target?.id) {
+        toast({ title: "No hay pedidos para previsualizar", description: "Creá al menos un pedido para abrir la vista pública real.", variant: "destructive" });
+        return;
+      }
+      let trackingId = target.publicTrackingId;
+      if (!trackingId) {
+        const linkRes = await apiRequest("POST", `/api/orders/${target.id}/tracking-link`, {});
+        const linkJson = await linkRes.json();
+        trackingId = linkJson?.data?.publicTrackingId;
+      }
+      if (!trackingId) throw new Error("No se pudo generar el link de seguimiento");
+      window.open(`/tracking/${trackingId}`, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      toast({ title: "No se pudo abrir la vista previa", description: err.message || "Intentá nuevamente", variant: "destructive" });
+    }
+  }
+
   const slugPreview = `${window.location.origin}/t/${tenantSlug || "mi-negocio"}/tos`;
   const slugValid = /^[a-z0-9-]{1,120}$/.test(tenantSlug || "");
 
@@ -367,8 +423,6 @@ export default function SettingsPage() {
               setConfig={setConfig}
               saveConfig={saveConfig}
               savingConfig={saving}
-              minTrackingHours={minTrackingHours}
-              maxTrackingHours={maxTrackingHours}
               brandingForm={brandingForm}
               setBrandingForm={setBrandingForm}
               brandingSaving={brandingSaving}
@@ -379,6 +433,7 @@ export default function SettingsPage() {
               resetBranding={resetBranding}
               previewOrder={previewOrder}
               layoutPresets={layoutPresets}
+              onOpenPublicPreview={openPublicTrackingPreview}
               planCode={planCode}
             />
           ),
