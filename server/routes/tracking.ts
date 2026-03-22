@@ -9,6 +9,11 @@ import { getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
 import { normalizeTrackingVisibilityConfig } from "@shared/tracking-config";
+import {
+  formatMoneyValue,
+  resolveNativeOrderFieldKind,
+  shouldDisplayOrderFieldInTracking,
+} from "@shared/order-fields";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -20,6 +25,9 @@ async function resolvePublicOrder(trackingId: string): Promise<TrackingResolveRe
   const order = await storage.getOrderByTrackingId(trackingId);
   if (!order) return { status: 404 as const, body: { error: "Seguimiento no encontrado" } };
   if (order.trackingRevoked) return { status: 410 as const, body: { error: "Link de seguimiento revocado" } };
+  if (order.trackingExpiresAt && new Date(order.trackingExpiresAt).getTime() < Date.now()) {
+    return { status: 410 as const, body: { error: "El enlace de seguimiento expiró" } };
+  }
   return { order };
 }
 
@@ -81,11 +89,21 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
   const attachmentById = new Map(attachments.map((a) => [a.id, a]));
 
   const publicCustomFields = trackingVisibility.showDynamicFields ? allCustomFields
-    .filter((f) => {
-      if (f.visibleOverride === true) return true;
-      if (f.visibleOverride === false) return false;
-      return f.visibleInTracking;
-    })
+    .filter((f) => shouldDisplayOrderFieldInTracking({
+      id: f.fieldId,
+      fieldKey: f.fieldKey,
+      label: f.label,
+      fieldType: String(f.fieldType || ""),
+      visibleInTracking: f.visibleInTracking,
+      config: (f.config || {}) as Record<string, unknown>,
+      isActive: (f as any).isActive !== false,
+      deletedAt: (f as any).deletedAt || null,
+    }, {
+      valueText: f.valueText,
+      valueNumber: f.valueNumber,
+      fileStorageKey: f.fileStorageKey,
+      visibleOverride: f.visibleOverride,
+    }))
     .map((f) => {
       let displayValue: string | null = null;
       let downloadUrl: string | null = null;
@@ -107,6 +125,10 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         }
       } else if (f.fieldType === "NUMBER") {
         displayValue = f.valueNumber !== null ? String(f.valueNumber) : null;
+      } else if (f.fieldType === "MONEY") {
+        displayValue = f.valueNumber !== null
+          ? formatMoneyValue(f.valueNumber, String((f.config as any)?.currencyCode || "ARS"))
+          : null;
       } else {
         displayValue = f.valueText;
       }
@@ -128,6 +150,10 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
 
   const safeHistory = trackingVisibility.showStatusHistory ? historyFormatted : [];
   const safeComments = trackingVisibility.showPublicComments ? publicComments : [];
+  const fallbackCustomerName = allCustomFields.find((field) => resolveNativeOrderFieldKind({
+    fieldKey: field.fieldKey,
+    label: field.label,
+  }) === "customer" && String(field.valueText || "").trim())?.valueText || "";
 
   return {
     status: 200,
@@ -139,7 +165,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         statusCode: resolvedCurrent?.code || currentCode || null,
         statusLabel: resolvedCurrent?.label || null,
         statusColor: resolvedCurrent?.color || "#6B7280",
-        customerName: order.customerName || "",
+        customerName: order.customerName || fallbackCustomerName || "",
         customerPhone: order.customerPhone || null,
         deliveryAddress: [order.deliveryAddress, order.deliveryCity].filter(Boolean).join(", ") || null,
         createdAt: order.createdAt,

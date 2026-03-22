@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowDown, ArrowUp, Pencil, Plus, Eye, EyeOff } from "lucide-react";
+import { ArrowDown, ArrowUp, Pencil, Plus, Eye, EyeOff, Trash2 } from "lucide-react";
 
 type OrderType = { id: number; code: string; label: string; isActive: boolean };
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
@@ -20,12 +20,13 @@ type OrderField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
+  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
   required: boolean;
   visibleInTracking: boolean;
   useInAgenda?: boolean;
   sortOrder: number;
-  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean };
+  deletedAt?: string | null;
+  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean };
   isSystemDefault: boolean;
   isActive: boolean;
 };
@@ -133,10 +134,13 @@ export function OrderPresetsSettings() {
   const [openEditField, setOpenEditField] = useState(false);
   const [createForm, setCreateForm] = useState({
     label: "",
-    fieldType: "TEXT" as "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
+    fieldType: "TEXT" as "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
     required: false,
     visibleInTracking: false,
     useInAgenda: false,
+    placeholder: "",
+    defaultValue: "",
+    currencyCode: "ARS",
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
     selectOptions: [""] as string[],
   });
@@ -147,6 +151,9 @@ export function OrderPresetsSettings() {
     isActive: true,
     visibleInTracking: false,
     useInAgenda: false,
+    placeholder: "",
+    defaultValue: "",
+    currencyCode: "ARS",
     allowedExtensions: [] as string[],
     selectOptions: [] as string[],
   });
@@ -281,22 +288,28 @@ export function OrderPresetsSettings() {
       const payload: any = {
         label: createForm.label.trim(),
         fieldType: createForm.fieldType,
-        required: createForm.required,
+        required: createForm.fieldType === "FILE" ? false : createForm.required,
         visibleInTracking: createForm.visibleInTracking,
         useInAgenda: (createForm as any).useInAgenda,
+        config: {
+          placeholder: createForm.placeholder || undefined,
+          defaultValue: createForm.defaultValue === "" ? undefined : (createForm.fieldType === "NUMBER" || createForm.fieldType === "MONEY" ? Number(createForm.defaultValue) : createForm.defaultValue),
+          currencyCode: createForm.fieldType === "MONEY" ? createForm.currencyCode : undefined,
+          visibleInForm: true,
+        },
       };
       if (createForm.fieldType === "FILE") {
-        payload.config = { allowedExtensions: createForm.allowedExtensions };
+        payload.config = { ...payload.config, allowedExtensions: createForm.allowedExtensions };
       }
       if (createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX") {
-        payload.config = { options: normalizeOptions((createForm as any).selectOptions || []) };
+        payload.config = { ...payload.config, options: normalizeOptions((createForm as any).selectOptions || []) };
       }
       await apiJson(`/api/order-presets/presets/${activePresetId}/fields`, {
         method: "POST",
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""] } as any);
+      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, placeholder: "", defaultValue: "", currencyCode: "ARS", allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""] } as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -324,6 +337,18 @@ export function OrderPresetsSettings() {
       await patchField(field.id, { isActive: nextActive }, nextActive ? "Campo activado" : "Campo desactivado");
     } catch {
       // toast already handled in patchField
+    }
+  }
+
+  async function deleteField(field: OrderField) {
+    try {
+      await apiJson(`/api/order-presets/fields/${field.id}`, {
+        method: "DELETE",
+      });
+      await loadFields(activePresetId);
+      toast({ title: "Campo eliminado" });
+    } catch (err: any) {
+      toast({ title: "No se pudo eliminar", description: err?.message || "Error", variant: "destructive" });
     }
   }
 
@@ -457,7 +482,8 @@ export function OrderPresetsSettings() {
                       <div className="flex items-center gap-6 text-sm">
                         <label className="flex items-center gap-2 cursor-pointer">
                           <Switch
-                            checked={f.required}
+                            checked={f.fieldType === "FILE" ? false : f.required}
+                            disabled={f.fieldType === "FILE"}
                             onCheckedChange={(checked) => patchField(f.id, { required: checked })}
                           />
                           Requerido
@@ -507,11 +533,26 @@ export function OrderPresetsSettings() {
                             isActive: f.isActive,
                             visibleInTracking: f.visibleInTracking,
                             useInAgenda: Boolean((f as any).useInAgenda),
+                            placeholder: String((f.config as any)?.placeholder || ""),
+                            defaultValue: String((f.config as any)?.defaultValue ?? ""),
+                            currencyCode: String((f.config as any)?.currencyCode || "ARS"),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
                             selectOptions: normalizeOptions((f.config as any)?.options || [""]),
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
+                        <Button
+                          size="icon"
+                          variant="destructive"
+                          onClick={() => {
+                            if (window.confirm(`¿Eliminar definitivamente "${f.label}" del preset? Dejará de aparecer y no se validará más.`)) {
+                              void deleteField(f);
+                            }
+                          }}
+                          title="Eliminar campo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
                         <Button
                           size="sm"
                           variant={f.isActive ? "destructive" : "secondary"}
@@ -629,6 +670,7 @@ export function OrderPresetsSettings() {
                   <SelectItem value="TEXT">Texto Corto</SelectItem>
                   <SelectItem value="TEXT_LONG">Texto Largo</SelectItem>
                   <SelectItem value="NUMBER">Número</SelectItem>
+                  <SelectItem value="MONEY">Dinero / Moneda</SelectItem>
                   <SelectItem value="FILE">Archivo Adjunto</SelectItem>
                   <SelectItem value="CHECKBOX">Casilla (Checkbox)</SelectItem>
                   <SelectItem value="SELECT">Desplegable (Select)</SelectItem>
@@ -640,8 +682,9 @@ export function OrderPresetsSettings() {
             </div>
             <div className="flex flex-col gap-3 py-2 border rounded-md p-3">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                <Switch checked={createForm.required} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, required: checked }))} /> Requerido
+                <Switch checked={createForm.fieldType === "FILE" ? false : createForm.required} disabled={createForm.fieldType === "FILE"} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, required: checked }))} /> Requerido
               </label>
+              {createForm.fieldType === "FILE" ? <p className="text-xs text-muted-foreground">Los adjuntos se cargan después de crear el pedido, por eso no pueden ser requeridos en el alta.</p> : null}
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                 <Switch checked={createForm.visibleInTracking} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {createForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
@@ -669,6 +712,25 @@ export function OrderPresetsSettings() {
                     </label>
                   ))}
                 </div>
+              </div>
+            ) : null}
+
+            {(createForm.fieldType === "TEXT" || createForm.fieldType === "TEXT_LONG" || createForm.fieldType === "NUMBER" || createForm.fieldType === "MONEY") ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Placeholder</Label>
+                  <Input value={createForm.placeholder} onChange={(e) => setCreateForm((s) => ({ ...s, placeholder: e.target.value }))} placeholder="Opcional" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Valor por defecto</Label>
+                  <Input type={createForm.fieldType === "NUMBER" || createForm.fieldType === "MONEY" ? "number" : "text"} value={createForm.defaultValue} onChange={(e) => setCreateForm((s) => ({ ...s, defaultValue: e.target.value }))} placeholder="Opcional" />
+                </div>
+                {createForm.fieldType === "MONEY" ? (
+                  <div className="space-y-2 col-span-2">
+                    <Label>Moneda</Label>
+                    <Input value={createForm.currencyCode} maxLength={3} onChange={(e) => setCreateForm((s) => ({ ...s, currencyCode: e.target.value.toUpperCase() }))} placeholder="ARS" />
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
@@ -720,8 +782,9 @@ export function OrderPresetsSettings() {
 
             <div className="flex flex-col gap-3 py-2 border rounded-md p-3">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                <Switch checked={editForm.required} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, required: checked }))} /> Requerido
+                <Switch checked={editTarget?.fieldType === "FILE" ? false : editForm.required} disabled={editTarget?.fieldType === "FILE"} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, required: checked }))} /> Requerido
               </label>
+              {editTarget?.fieldType === "FILE" ? <p className="text-xs text-muted-foreground">Los adjuntos no se validan como requeridos en la creación inicial.</p> : null}
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                 <Switch checked={editForm.visibleInTracking} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {editForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
@@ -752,6 +815,25 @@ export function OrderPresetsSettings() {
               </div>
             ) : null}
 
+            {(editTarget?.fieldType === "TEXT" || editTarget?.fieldType === "TEXT_LONG" || editTarget?.fieldType === "NUMBER" || editTarget?.fieldType === "MONEY") ? (
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Placeholder</Label>
+                  <Input value={editForm.placeholder} onChange={(e) => setEditForm((s) => ({ ...s, placeholder: e.target.value }))} placeholder="Opcional" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Valor por defecto</Label>
+                  <Input type={editTarget?.fieldType === "NUMBER" || editTarget?.fieldType === "MONEY" ? "number" : "text"} value={editForm.defaultValue} onChange={(e) => setEditForm((s) => ({ ...s, defaultValue: e.target.value }))} placeholder="Opcional" />
+                </div>
+                {editTarget?.fieldType === "MONEY" ? (
+                  <div className="space-y-2 col-span-2">
+                    <Label>Moneda</Label>
+                    <Input value={editForm.currencyCode} maxLength={3} onChange={(e) => setEditForm((s) => ({ ...s, currencyCode: e.target.value.toUpperCase() }))} placeholder="ARS" />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
             {editTarget?.fieldType === "SELECT" || editTarget?.fieldType === "CHECKBOX" ? (
               <div className="space-y-3 p-3 bg-muted/50 rounded-md">
                 <Label>Opciones</Label>
@@ -778,16 +860,23 @@ export function OrderPresetsSettings() {
                 try {
                   const patch: any = {
                     label: editForm.label.trim(),
-                    required: editForm.required,
+                    required: editTarget.fieldType === "FILE" ? false : editForm.required,
                     isActive: editForm.isActive,
                     visibleInTracking: editForm.visibleInTracking,
+                    config: {
+                      ...(editTarget.config || {}),
+                      placeholder: editForm.placeholder || undefined,
+                      defaultValue: editForm.defaultValue === "" ? undefined : ((editTarget.fieldType === "NUMBER" || editTarget.fieldType === "MONEY") ? Number(editForm.defaultValue) : editForm.defaultValue),
+                      currencyCode: editTarget.fieldType === "MONEY" ? editForm.currencyCode : undefined,
+                      visibleInForm: true,
+                    },
                   };
                   if (editTarget.fieldType === "DATE" || editTarget.fieldType === "DATETIME") {
                     patch.useInAgenda = editForm.useInAgenda;
                   }
-                  if (editTarget.fieldType === "FILE") patch.config = { allowedExtensions: editForm.allowedExtensions };
+                  if (editTarget.fieldType === "FILE") patch.config = { ...patch.config, allowedExtensions: editForm.allowedExtensions };
                   if (editTarget.fieldType === "SELECT" || editTarget.fieldType === "CHECKBOX") {
-                    patch.config = { ...(editTarget.config || {}), options: normalizeOptions(editForm.selectOptions || []) };
+                    patch.config = { ...patch.config, options: normalizeOptions(editForm.selectOptions || []) };
                   }
                   await patchField(editTarget.id, patch, "Campo actualizado");
                   setOpenEditField(false);

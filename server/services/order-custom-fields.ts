@@ -1,7 +1,13 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions } from "@shared/schema";
+import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions, orders } from "@shared/schema";
 import { badRequest, notFound } from "../lib/http-errors";
+import {
+  isNativeOrderField,
+  normalizeSemanticKey,
+  resolveOrderFieldDefinition,
+  resolveRenderableOrderFields,
+} from "@shared/order-fields";
 
 export type CustomFieldPayload = {
   fieldId?: number;
@@ -14,29 +20,6 @@ export type CustomFieldPayload = {
 };
 
 const FILE_ALLOWED = new Set(["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]);
-
-function normalizeSemanticKey(value: string | null | undefined): string {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-const NATIVE_ORDER_FIELD_KEYS = new Set([
-  "cliente", "customer", "customer_name", "nombre_cliente",
-  "telefono", "telefono_cliente", "customer_phone", "phone",
-  "descripcion", "description", "detalle",
-  "sena", "senia", "pago", "paid_amount", "pagado",
-  "valor_total", "total", "total_amount", "monto_total",
-]);
-
-function isNativeOrderField(def: { fieldKey?: string | null; label?: string | null }) {
-  const fieldKey = normalizeSemanticKey(def.fieldKey);
-  const labelKey = normalizeSemanticKey(def.label);
-  return (fieldKey && NATIVE_ORDER_FIELD_KEYS.has(fieldKey)) || (labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
-}
 
 function getExt(name: string) {
   const clean = String(name || "").trim().toLowerCase();
@@ -68,6 +51,7 @@ export async function validateAndNormalizeCustomFields(
     eq(orderFieldDefinitions.tenantId, tenantId),
     eq(orderFieldDefinitions.orderTypeId, typeRow.id),
     eq(orderFieldDefinitions.isActive, true),
+    sql`${orderFieldDefinitions.deletedAt} IS NULL`,
   ];
 
   // Si nos pasan un preset explicitamente, o estamos en el flujo legacy sin presets,
@@ -84,9 +68,10 @@ export async function validateAndNormalizeCustomFields(
     .select()
     .from(orderFieldDefinitions)
     .where(and(...conditions));
+  const renderableDefs = resolveRenderableOrderFields(defs);
 
-  const byId = new Map(defs.map((d) => [d.id, d]));
-  const byKey = new Map(defs.map((d) => [normalizeSemanticKey(d.fieldKey), d]));
+  const byId = new Map(renderableDefs.map((d) => [d.id, d]));
+  const byKey = new Map(renderableDefs.map((d) => [d.semanticKey, d]));
 
   const normalized = customFields.map((row) => {
     const def = row.fieldId
@@ -100,13 +85,13 @@ export async function validateAndNormalizeCustomFields(
     let valueNumber: string | null = row.valueNumber != null && row.valueNumber !== "" ? String(row.valueNumber) : null;
     let fileStorageKey: string | null = row.fileStorageKey != null && row.fileStorageKey !== "" ? String(row.fileStorageKey) : (row.fileId != null && row.fileId !== "" ? String(row.fileId) : null);
 
-    if (def.fieldType === "TEXT") {
+    if (def.normalizedType === "TEXT") {
       valueNumber = null;
       fileStorageKey = null;
       if (def.required && !String(valueText || "").trim()) {
         throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_TEXT" });
       }
-    } else if (def.fieldType === "NUMBER") {
+    } else if (def.normalizedType === "NUMBER" || def.normalizedType === "MONEY") {
       valueText = null;
       fileStorageKey = null;
       if (valueNumber != null && Number.isNaN(Number(valueNumber))) {
@@ -115,7 +100,7 @@ export async function validateAndNormalizeCustomFields(
       if (def.required && (valueNumber == null || valueNumber === "")) {
         throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_NUMBER" });
       }
-    } else if (def.fieldType === "CHECKBOX") {
+    } else if (def.normalizedType === "CHECKBOX") {
       valueNumber = null;
       fileStorageKey = null;
       const options = Array.isArray((def.config as any)?.options) ? (def.config as any).options.map((x: unknown) => String(x)) : [];
@@ -135,7 +120,7 @@ export async function validateAndNormalizeCustomFields(
         }
       }
       if (def.required && valueText == null) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
-    } else if (def.fieldType === "SELECT") {
+    } else if (def.normalizedType === "SELECT") {
       valueNumber = null;
       fileStorageKey = null;
       const options = Array.isArray((def.config as any)?.options) ? (def.config as any).options.map((x: unknown) => String(x)) : [];
@@ -148,18 +133,15 @@ export async function validateAndNormalizeCustomFields(
         }
       }
       if (def.required && !String(valueText || "").trim()) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
-    } else if (def.fieldType === "DATE" || def.fieldType === "TIME" || def.fieldType === "DATETIME" || def.fieldType === "TEXT_LONG") {
+    } else if (def.normalizedType === "DATE" || def.normalizedType === "TIME" || def.normalizedType === "DATETIME" || def.normalizedType === "TEXT_LONG") {
       valueNumber = null;
       fileStorageKey = null;
       if (def.required && !String(valueText || "").trim()) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`);
-    } else if (def.fieldType === "FILE") {
+    } else if (def.normalizedType === "FILE") {
       valueText = null;
       valueNumber = null;
       const cfg = (def.config || {}) as { allowedExtensions?: string[] };
       const allowed = (cfg.allowedExtensions && cfg.allowedExtensions.length ? cfg.allowedExtensions : Array.from(FILE_ALLOWED)).map((x) => String(x).toLowerCase());
-      if (def.required && !fileStorageKey) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_FILE" });
-      }
       if (fileStorageKey) {
         const ext = getExt(fileStorageKey);
         if (ext && !allowed.includes(ext) && !FILE_ALLOWED.has(ext)) {
@@ -177,15 +159,30 @@ export async function validateAndNormalizeCustomFields(
     };
   });
 
-  const requiredMissing = defs.filter((d) => d.required && !isNativeOrderField(d) && !normalized.some((n) => n.fieldDefinitionId === d.id));
+  const requiredRenderable = renderableDefs.filter((d) => d.required && d.normalizedType !== "FILE" && !isNativeOrderField(d));
+  const requiredMissing = requiredRenderable.filter((d) => !normalized.some((n) => n.fieldDefinitionId === d.id));
   if (requiredMissing.length > 0) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Faltan campos requeridos: ${requiredMissing.map((r) => r.label).join(", ")}`, { missing: requiredMissing.map((r) => ({ fieldId: r.id, fieldKey: r.fieldKey })) });
   }
 
-  return { typeRow, normalized, defs };
+  return { typeRow, normalized, defs: renderableDefs };
 }
 
-export async function saveCustomFieldValues(orderId: number, tenantId: number, normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; fileStorageKey: string | null; visibleOverride: boolean | null; }>) {
+export async function saveCustomFieldValues(
+  orderId: number,
+  tenantId: number,
+  normalized: Array<{ fieldDefinitionId: number; valueText: string | null; valueNumber: string | null; fileStorageKey: string | null; visibleOverride: boolean | null; }>,
+  options?: { replaceDefinitionIds?: number[] }
+) {
+  if (options?.replaceDefinitionIds) {
+    const keepIds = normalized.map((row) => row.fieldDefinitionId);
+    await db.delete(orderFieldValues).where(and(
+      eq(orderFieldValues.orderId, orderId),
+      eq(orderFieldValues.tenantId, tenantId),
+      inArray(orderFieldValues.fieldDefinitionId, options.replaceDefinitionIds),
+      keepIds.length > 0 ? notInArray(orderFieldValues.fieldDefinitionId, keepIds) : undefined,
+    ));
+  }
   for (const row of normalized) {
     const existing = await db
       .select({ id: orderFieldValues.id })
@@ -216,6 +213,11 @@ export async function saveCustomFieldValues(orderId: number, tenantId: number, n
 }
 
 export async function getOrderCustomFields(orderId: number, tenantId: number) {
+  const [order] = await db
+    .select({ id: orders.id, orderPresetId: orders.orderPresetId })
+    .from(orders)
+    .where(and(eq(orders.id, orderId), eq(orders.tenantId, tenantId)));
+
   const values = await db
     .select()
     .from(orderFieldValues)
@@ -225,23 +227,36 @@ export async function getOrderCustomFields(orderId: number, tenantId: number) {
   const defs = await db
     .select()
     .from(orderFieldDefinitions)
-    .where(and(eq(orderFieldDefinitions.tenantId, tenantId), inArray(orderFieldDefinitions.id, defIds)));
+    .where(and(
+      eq(orderFieldDefinitions.tenantId, tenantId),
+      inArray(orderFieldDefinitions.id, defIds),
+      sql`${orderFieldDefinitions.deletedAt} IS NULL`,
+      order?.orderPresetId ? eq(orderFieldDefinitions.presetId, order.orderPresetId) : undefined,
+    ));
   const map = new Map(defs.map((d) => [d.id, d]));
   return values
-    .map((v) => ({
-      fieldId: v.fieldDefinitionId,
-      fieldKey: map.get(v.fieldDefinitionId)?.fieldKey || null,
-      label: map.get(v.fieldDefinitionId)?.label || null,
-      fieldType: map.get(v.fieldDefinitionId)?.fieldType || null,
-      required: map.get(v.fieldDefinitionId)?.required ?? false,
-      visibleInTracking: map.get(v.fieldDefinitionId)?.visibleInTracking ?? false,
-      valueText: v.valueText,
-      valueNumber: v.valueNumber,
-      fileStorageKey: v.fileStorageKey,
-      visibleOverride: v.visibleOverride,
-      createdAt: v.createdAt,
-      config: map.get(v.fieldDefinitionId)?.config || null,
-      sortOrder: map.get(v.fieldDefinitionId)?.sortOrder ?? 9999,
-    }))
+    .map((v) => {
+      const definition = map.get(v.fieldDefinitionId);
+      if (!definition) return null;
+      const resolved = resolveOrderFieldDefinition(definition);
+      return {
+        fieldId: v.fieldDefinitionId,
+        fieldKey: definition.fieldKey || null,
+        label: definition.label || null,
+        fieldType: definition.fieldType || null,
+        required: definition.required ?? false,
+        visibleInTracking: definition.visibleInTracking ?? false,
+        valueText: v.valueText,
+        valueNumber: v.valueNumber,
+        fileStorageKey: v.fileStorageKey,
+        visibleOverride: v.visibleOverride,
+        createdAt: v.createdAt,
+        config: definition.config || null,
+        sortOrder: definition.sortOrder ?? 9999,
+        isActive: resolved.active,
+        deletedAt: definition.deletedAt,
+      };
+    })
+    .filter((value): value is NonNullable<typeof value> => Boolean(value))
     .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0) || +new Date(String(a.createdAt || 0)) - +new Date(String(b.createdAt || 0)));
 }

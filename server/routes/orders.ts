@@ -177,7 +177,7 @@ export function registerOrderRoutes(app: Express) {
       const resolvedCreateStatusId = await resolveOrderStatusIdByCode(tenantId, resolvedCreateStatusCode);
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
       const customPayload = payload.customFields || [];
-      const validatedCustom = customPayload.length > 0
+      const validatedCustom = customPayload.length > 0 || payload.orderPresetId
         ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, payload.orderPresetId)
         : null;
 
@@ -382,9 +382,11 @@ export function registerOrderRoutes(app: Express) {
       });
 
       const targetPresetId = payload.orderPresetId !== undefined ? payload.orderPresetId : current.orderPresetId;
-      if (payload.customFields) {
-        const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields, targetPresetId);
-        await saveCustomFieldValues(id, tenantId, normalized.normalized);
+      if (payload.customFields || targetPresetId) {
+        const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields || [], targetPresetId);
+        await saveCustomFieldValues(id, tenantId, normalized.normalized, {
+          replaceDefinitionIds: normalized.defs.map((field) => field.id),
+        });
       }
 
       await syncOrderAgendaEvents(tenantId, id, req.auth!.userId);

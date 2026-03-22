@@ -276,11 +276,11 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   };
 
   return (
-    <div className="min-h-screen p-4" style={{ backgroundColor: bgColor, color: textColor }}>
-      <div className={layout === "stepper" ? "max-w-4xl mx-auto space-y-5" : "max-w-xl mx-auto space-y-5"}>
+    <div className="min-h-screen p-4 sm:p-6 flex justify-center" style={{ backgroundColor: bgColor, color: textColor }}>
+      <div className={layout === "stepper" ? "w-full max-w-4xl space-y-5" : "w-full max-w-3xl space-y-5"}>
         {blockOrder.map((id) => {
           const alignment = normalizeAlignment(blockAlignments[id]);
-          return <div key={id} style={{ textAlign: alignment }}>{blocks[id]}</div>;
+          return <div key={id} className="w-full" style={{ textAlign: alignment }}>{blocks[id]}</div>;
         })}
       </div>
     </div>

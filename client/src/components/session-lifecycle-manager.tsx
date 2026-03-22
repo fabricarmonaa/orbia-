@@ -7,15 +7,16 @@ export function SessionLifecycleManager() {
   const { toast } = useToast();
 
   useEffect(() => {
+    const isPublicTracking = window.location.pathname.startsWith("/tracking/");
     const storedMessage = sessionStorage.getItem("orbia_logout_message");
-    if (storedMessage) {
+    if (storedMessage && !isPublicTracking) {
       toast({ title: storedMessage });
-      sessionStorage.removeItem("orbia_logout_message");
     }
+    if (storedMessage) sessionStorage.removeItem("orbia_logout_message");
 
     const onLogout = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
-      if (detail?.message) {
+      if (detail?.message && !window.location.pathname.startsWith("/tracking/")) {
         toast({ title: detail.message });
       }
     };

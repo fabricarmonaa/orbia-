@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   orderFieldDefinitions,
   orderTypeDefinitions,
@@ -8,11 +8,12 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { badRequest, notFound, HttpError } from "../lib/http-errors";
+import { ORDER_FIELD_TYPES, resolveOrderFieldDefinition } from "@shared/order-fields";
 
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-const ALLOWED_FIELD_TYPES = new Set(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"] as const);
+const ALLOWED_FIELD_TYPES = new Set(ORDER_FIELD_TYPES);
 const ALLOWED_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
 const MAX_PRESETS_PER_TYPE = 3;
 
@@ -47,7 +48,7 @@ export function slugifyPresetCode(label: string): string {
     .slice(0, 80) || "preset";
 }
 
-function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME" {
+function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME" {
   const normalized = String(value || "").trim().toUpperCase();
   if (!ALLOWED_FIELD_TYPES.has(normalized as any)) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "fieldType inválido");
@@ -55,11 +56,24 @@ function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "F
   return normalized as any;
 }
 
-function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME", config: unknown): Record<string, unknown> {
+function normalizeGenericConfig(base: Record<string, unknown>) {
+  if (base.placeholder !== undefined && typeof base.placeholder !== "string") {
+    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "placeholder debe ser texto");
+  }
+  if (base.defaultValue !== undefined && typeof base.defaultValue !== "string" && typeof base.defaultValue !== "number" && base.defaultValue !== null) {
+    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue inválido");
+  }
+  if (base.visibleInForm !== undefined) base.visibleInForm = base.visibleInForm !== false;
+  if (base.showWhenEmpty !== undefined) base.showWhenEmpty = base.showWhenEmpty === true;
+  return base;
+}
+
+function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME", config: unknown): Record<string, unknown> {
   const base =
     config && typeof config === "object" && !Array.isArray(config)
       ? { ...(config as Record<string, unknown>) }
       : {};
+  normalizeGenericConfig(base);
 
   if (fieldType === "SELECT" || fieldType === "CHECKBOX") {
     const source = (base as any).options;
@@ -70,6 +84,32 @@ function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "
     if (fieldType === "SELECT" && options.length === 0) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El campo desplegable requiere opciones");
     if (options.length > 0) base.options = options;
     else delete (base as any).options;
+    return base;
+  }
+
+  if (fieldType === "MONEY") {
+    const currencyCode = typeof base.currencyCode === "string" && base.currencyCode.trim()
+      ? base.currencyCode.trim().toUpperCase()
+      : "ARS";
+    base.currencyCode = currencyCode;
+    if (base.defaultValue !== undefined && base.defaultValue !== null && base.defaultValue !== "") {
+      const parsed = Number(base.defaultValue);
+      if (Number.isNaN(parsed)) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue debe ser numérico para dinero");
+      }
+      base.defaultValue = parsed;
+    }
+    return base;
+  }
+
+  if (fieldType === "NUMBER") {
+    if (base.defaultValue !== undefined && base.defaultValue !== null && base.defaultValue !== "") {
+      const parsed = Number(base.defaultValue);
+      if (Number.isNaN(parsed)) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue debe ser numérico");
+      }
+      base.defaultValue = parsed;
+    }
     return base;
   }
 
@@ -97,6 +137,7 @@ function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "
   }
 
   base.allowedExtensions = normalized;
+  base.requiredOnCreate = false;
   return base;
 }
 
@@ -236,6 +277,7 @@ async function getSystemDefaultTemplates(tenantId: number, orderTypeId: number) 
         eq(orderFieldDefinitions.tenantId, tenantId),
         eq(orderFieldDefinitions.orderTypeId, orderTypeId),
         eq(orderFieldDefinitions.isSystemDefault, true),
+        sql`${orderFieldDefinitions.deletedAt} IS NULL`,
         defaultPreset
           ? eq(orderFieldDefinitions.presetId, defaultPreset.id)
           : isNull(orderFieldDefinitions.presetId)
@@ -253,11 +295,12 @@ async function cloneMissingSystemDefaultsForPreset(tenantId: number, orderTypeId
   const existingTarget = await db
     .select({ id: orderFieldDefinitions.id, fieldKey: orderFieldDefinitions.fieldKey })
     .from(orderFieldDefinitions)
-    .where(
+     .where(
       and(
         eq(orderFieldDefinitions.tenantId, tenantId),
         eq(orderFieldDefinitions.orderTypeId, orderTypeId),
-        eq(orderFieldDefinitions.presetId, presetId)
+        eq(orderFieldDefinitions.presetId, presetId),
+        sql`${orderFieldDefinitions.deletedAt} IS NULL`
       )
     );
 
@@ -279,6 +322,7 @@ async function cloneMissingSystemDefaultsForPreset(tenantId: number, orderTypeId
       isSystemDefault: true,
       visibleInTracking: source.visibleInTracking,
       useInAgenda: source.useInAgenda,
+      deletedAt: null,
     });
   }
 }
@@ -475,6 +519,7 @@ export const orderPresetsStorage = {
     const conditions = [
       eq(orderFieldDefinitions.tenantId, tenantId),
       eq(orderFieldDefinitions.presetId, presetId),
+      sql`${orderFieldDefinitions.deletedAt} IS NULL`,
     ];
     if (!includeInactive) conditions.push(eq(orderFieldDefinitions.isActive, true));
 
@@ -509,6 +554,7 @@ export const orderPresetsStorage = {
         and(
           eq(orderFieldDefinitions.tenantId, tenantId),
           eq(orderFieldDefinitions.orderTypeId, typeRow.id),
+          sql`${orderFieldDefinitions.deletedAt} IS NULL`,
           defaultPreset
             ? eq(orderFieldDefinitions.presetId, defaultPreset.id)
             : isNull(orderFieldDefinitions.presetId),
@@ -539,6 +585,9 @@ export const orderPresetsStorage = {
 
     const fieldType = normalizeFieldType(payload.fieldType);
     const config = normalizeConfig(fieldType, payload.config);
+    if (fieldType === "FILE" && payload.required) {
+      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Los archivos adjuntos no pueden marcarse como requeridos en el alta inicial");
+    }
 
     const rawKey = payload.fieldKey ? slugifyFieldKey(payload.fieldKey) : slugifyFieldKey(label);
     const fieldKey = await resolveUniqueFieldKey(tenantId, presetId, rawKey);
@@ -549,7 +598,8 @@ export const orderPresetsStorage = {
       .where(
         and(
           eq(orderFieldDefinitions.tenantId, tenantId),
-          eq(orderFieldDefinitions.presetId, presetId)
+          eq(orderFieldDefinitions.presetId, presetId),
+          sql`${orderFieldDefinitions.deletedAt} IS NULL`
         )
       )
       .orderBy(desc(orderFieldDefinitions.sortOrder), desc(orderFieldDefinitions.id))
@@ -568,6 +618,7 @@ export const orderPresetsStorage = {
       isActive: true,
       visibleInTracking: Boolean(payload.visibleInTracking),
       useInAgenda: Boolean(payload.useInAgenda),
+      deletedAt: null,
     };
 
     const [created] = await db.insert(orderFieldDefinitions).values(values).returning();
@@ -618,7 +669,7 @@ export const orderPresetsStorage = {
     const [current] = await db
       .select()
       .from(orderFieldDefinitions)
-      .where(and(eq(orderFieldDefinitions.id, fieldId), eq(orderFieldDefinitions.tenantId, tenantId)));
+      .where(and(eq(orderFieldDefinitions.id, fieldId), eq(orderFieldDefinitions.tenantId, tenantId), sql`${orderFieldDefinitions.deletedAt} IS NULL`));
     if (!current) throw notFound("ORDER_FIELD_NOT_FOUND", "Campo no encontrado");
 
     const update: Partial<InsertOrderFieldDefinition> = {};
@@ -627,7 +678,12 @@ export const orderPresetsStorage = {
       if (!label) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "label no puede ser vacío");
       update.label = label;
     }
-    if (patch.required !== undefined) update.required = Boolean(patch.required);
+    if (patch.required !== undefined) {
+      if (resolveOrderFieldDefinition(current).normalizedType === "FILE" && patch.required) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Los archivos adjuntos no pueden marcarse como requeridos en el alta inicial");
+      }
+      update.required = Boolean(patch.required);
+    }
     if (patch.isActive !== undefined) update.isActive = Boolean(patch.isActive);
     if (patch.visibleInTracking !== undefined) update.visibleInTracking = Boolean(patch.visibleInTracking);
     if (patch.useInAgenda !== undefined) update.useInAgenda = Boolean(patch.useInAgenda);
@@ -661,6 +717,7 @@ export const orderPresetsStorage = {
         and(
           eq(orderFieldDefinitions.tenantId, tenantId),
           eq(orderFieldDefinitions.presetId, presetId),
+          sql`${orderFieldDefinitions.deletedAt} IS NULL`,
           inArray(orderFieldDefinitions.id, orderedFieldIds)
         )
       );
@@ -701,7 +758,23 @@ export const orderPresetsStorage = {
     const [saved] = await db
       .update(orderFieldDefinitions)
       .set({ isActive: false })
-      .where(and(eq(orderFieldDefinitions.id, fieldId), eq(orderFieldDefinitions.tenantId, tenantId)))
+      .where(and(eq(orderFieldDefinitions.id, fieldId), eq(orderFieldDefinitions.tenantId, tenantId), sql`${orderFieldDefinitions.deletedAt} IS NULL`))
+      .returning();
+
+    if (!saved) throw notFound("ORDER_FIELD_NOT_FOUND", "Campo no encontrado");
+    return saved;
+  },
+
+  async deleteField(tenantId: number, fieldId: number) {
+    const [saved] = await db
+      .update(orderFieldDefinitions)
+      .set({
+        deletedAt: new Date(),
+        isActive: false,
+        required: false,
+        visibleInTracking: false,
+      })
+      .where(and(eq(orderFieldDefinitions.id, fieldId), eq(orderFieldDefinitions.tenantId, tenantId), sql`${orderFieldDefinitions.deletedAt} IS NULL`))
       .returning();
 
     if (!saved) throw notFound("ORDER_FIELD_NOT_FOUND", "Campo no encontrado");

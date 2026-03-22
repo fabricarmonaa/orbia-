@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -57,6 +57,13 @@ import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePr
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
 import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
+import {
+  formatMoneyValue,
+  isNativeOrderField,
+  resolveNativeOrderFieldKind,
+  resolveOrderFieldDefinition,
+  resolveRenderableOrderFields,
+} from "@shared/order-fields";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -64,12 +71,14 @@ type OrderPresetField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
+  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
   required: boolean;
   sortOrder: number;
   isSystemDefault: boolean;
   visibleInTracking: boolean;
-  config?: { allowedExtensions?: string[] };
+  isActive?: boolean;
+  deletedAt?: string | null;
+  config?: { allowedExtensions?: string[]; options?: string[]; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean };
 };
 
 type OrderCustomFieldValue = {
@@ -90,58 +99,30 @@ type MessageTemplate = {
   isActive: boolean;
 };
 
-const ORDER_DRAFT_KEY = "orbia_order_draft_v1";
-
-function normalizeSemanticKey(value: string | null | undefined): string {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-const NATIVE_ORDER_FIELD_KEYS = new Set([
-  "cliente",
-  "customer",
-  "customer_name",
-  "nombre_cliente",
-  "telefono",
-  "telefono_cliente",
-  "customer_phone",
-  "phone",
-  "descripcion",
-  "description",
-  "detalle",
-  "sena",
-  "seña",
-  "pago",
-  "senia",
-  "paid_amount",
-  "pagado",
-  "valor_total",
-  "total",
-  "total_amount",
-  "monto_total",
-]);
-
-function isNativeOrderField(field: OrderPresetField): boolean {
-  const key = normalizeSemanticKey(field.fieldKey);
-  if (key && NATIVE_ORDER_FIELD_KEYS.has(key)) return true;
-  const labelKey = normalizeSemanticKey(field.label);
-  return Boolean(labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
-}
+const ORDER_DRAFT_STORAGE_KEY = "orbia_order_draft_v2";
 
 type NativeOrderFieldKind = "customer" | "phone" | "description" | "paid" | "total";
 
-function resolveNativeOrderFieldKind(field: OrderPresetField): NativeOrderFieldKind | null {
-  const values = [normalizeSemanticKey(field.fieldKey), normalizeSemanticKey(field.label)].filter(Boolean);
-  if (values.some((v) => ["cliente", "customer", "customer_name", "nombre_cliente"].includes(v))) return "customer";
-  if (values.some((v) => ["telefono", "telefono_cliente", "customer_phone", "phone"].includes(v))) return "phone";
-  if (values.some((v) => ["descripcion", "description", "detalle"].includes(v))) return "description";
-  if (values.some((v) => ["sena", "seña", "senia", "pago", "paid_amount", "pagado"].includes(v))) return "paid";
-  if (values.some((v) => ["valor_total", "total", "total_amount", "monto_total"].includes(v))) return "total";
-  return null;
+function emptyOrderDraft(type = "PEDIDO") {
+  return {
+    type,
+    orderPresetId: undefined as number | undefined,
+    customerName: "",
+    customerPhone: "",
+    customerEmail: "",
+    description: "",
+    totalAmount: "",
+    paidAmount: "",
+    statusCode: "",
+    requiresDelivery: false,
+    deliveryAddress: "",
+    deliveryCity: "",
+    deliveryAddressNotes: "",
+  };
+}
+
+function getDraftKey(type: string, presetId?: number) {
+  return `${ORDER_DRAFT_STORAGE_KEY}:${String(type || "PEDIDO").toUpperCase()}:${presetId || "default"}`;
 }
 
 export default function OrdersPage() {
@@ -173,30 +154,22 @@ export default function OrdersPage() {
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
   const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
+  const presetLoadSeqRef = useRef(0);
 
-  const [newOrder, setNewOrder] = useState({
-    type: "PEDIDO",
-    orderPresetId: undefined as number | undefined,
-    customerName: "",
-    customerPhone: "",
-    customerEmail: "",
-    description: "",
-    totalAmount: "",
-    paidAmount: "",
-    statusCode: "",
-    requiresDelivery: false,
-    deliveryAddress: "",
-    deliveryCity: "",
-    deliveryAddressNotes: "",
-  });
+  const [newOrder, setNewOrder] = useState(emptyOrderDraft());
   const [hasCashOpen, setHasCashOpen] = useState<boolean | null>(null);
   const [quickAddCustomerOpen, setQuickAddCustomerOpen] = useState(false);
   const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const customPresetFields = useMemo(
-    () => presetFields.filter((field) => !isNativeOrderField(field)),
+  const resolvedPresetFields = useMemo(
+    () => resolveRenderableOrderFields(presetFields),
     [presetFields]
+  );
+
+  const customPresetFields = useMemo(
+    () => resolvedPresetFields.filter((field) => !isNativeOrderField(field)),
+    [resolvedPresetFields]
   );
 
   const nativeVisibility = useMemo(() => {
@@ -204,7 +177,7 @@ export default function OrdersPage() {
       return { customer: true, phone: true, description: true, paid: true, total: true };
     }
     const activeKinds = new Set<NativeOrderFieldKind>();
-    for (const field of presetFields) {
+    for (const field of resolvedPresetFields) {
       const kind = resolveNativeOrderFieldKind(field);
       if (kind) activeKinds.add(kind);
     }
@@ -215,7 +188,7 @@ export default function OrdersPage() {
       paid: activeKinds.has("paid"),
       total: activeKinds.has("total"),
     };
-  }, [presetFields, newOrder.orderPresetId]);
+  }, [resolvedPresetFields, newOrder.orderPresetId]);
 
   useEffect(() => {
     fetchData();
@@ -252,7 +225,7 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!dialogOpen || draftRestored) return;
     try {
-      const raw = sessionStorage.getItem(ORDER_DRAFT_KEY);
+      const raw = sessionStorage.getItem(getDraftKey(newOrder.type, newOrder.orderPresetId));
       if (!raw) return;
       const parsed = JSON.parse(raw) as { newOrder?: typeof newOrder; customFieldInputs?: typeof customFieldInputs };
       if (parsed.newOrder) setNewOrder((prev) => ({ ...prev, ...parsed.newOrder }));
@@ -262,29 +235,34 @@ export default function OrdersPage() {
     } finally {
       setDraftRestored(true);
     }
-  }, [dialogOpen, draftRestored]);
+  }, [dialogOpen, draftRestored, newOrder.type, newOrder.orderPresetId]);
 
   useEffect(() => {
     if (!dialogOpen) return;
     try {
-      sessionStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify({ newOrder, customFieldInputs }));
+      sessionStorage.setItem(
+        getDraftKey(newOrder.type, newOrder.orderPresetId),
+        JSON.stringify({ newOrder, customFieldInputs })
+      );
     } catch {
       // ignore storage failures
     }
   }, [dialogOpen, newOrder, customFieldInputs]);
 
   async function loadPresetsForType(typeCode: string) {
+    const requestId = ++presetLoadSeqRef.current;
     try {
       const res = await apiRequest("GET", `/api/order-presets/types/${encodeURIComponent(typeCode)}/presets`);
       const json = await res.json();
+      if (requestId !== presetLoadSeqRef.current) return;
       const list = json?.data || [];
       setPresets(list);
       if (list.length > 0) {
         const toSelect = list.find((p: any) => p.isActive) || list[0];
-        setNewOrder((prev) => ({ ...prev, orderPresetId: toSelect.id }));
+        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode, orderPresetId: toSelect.id }));
         await loadFieldsForPreset(toSelect.id);
       } else {
-        setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
+        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode }));
         setPresetFields([]);
         setCustomFieldInputs({});
       }
@@ -308,9 +286,14 @@ export default function OrdersPage() {
       setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
         const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
-        for (const f of allFields) {
+        for (const f of resolveRenderableOrderFields(allFields)) {
           if (isNativeOrderField(f)) continue;
-          next[f.id] = prev[f.id] || { visibleOverride: null };
+          const resolved = resolveOrderFieldDefinition(f);
+          next[f.id] = prev[f.id] || {
+            visibleOverride: null,
+            valueText: typeof resolved.defaultValue === "string" ? resolved.defaultValue : undefined,
+            valueNumber: typeof resolved.defaultValue === "number" ? String(resolved.defaultValue) : undefined,
+          };
         }
         return next;
       });
@@ -362,7 +345,7 @@ export default function OrdersPage() {
         return {
           fieldId: field.id,
           valueText: ["TEXT", "TEXT_LONG", "DATE", "TIME", "DATETIME", "CHECKBOX", "SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
-          valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
+          valueNumber: ["NUMBER", "MONEY"].includes(field.fieldType) ? (raw.valueNumber || null) : undefined,
           fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
         };
@@ -385,9 +368,9 @@ export default function OrdersPage() {
       await apiRequest("POST", "/api/orders", payload);
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
-      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusCode: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setNewOrder(emptyOrderDraft("PEDIDO"));
       setCustomFieldInputs({});
-      sessionStorage.removeItem(ORDER_DRAFT_KEY);
+      sessionStorage.removeItem(getDraftKey(newOrder.type, newOrder.orderPresetId));
       setDraftRestored(false);
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -599,15 +582,6 @@ export default function OrdersPage() {
             </DialogTrigger>
             <DialogContent
               className="max-w-lg max-h-[90vh] overflow-y-auto"
-              onPointerDownOutside={(e) => e.preventDefault()}
-              onInteractOutside={(e) => {
-                // Allow interactions with shadcn portal elements (Select, Popover, etc.)
-                const target = e.target as HTMLElement;
-                if (target && document.querySelector('[data-radix-popper-content-wrapper]')?.contains(target)) {
-                  return;
-                }
-                e.preventDefault();
-              }}
             >
               <DialogHeader>
                 <DialogTitle>Crear Pedido</DialogTitle>
@@ -617,7 +591,7 @@ export default function OrdersPage() {
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Tipo</Label>
-                    <Select value={newOrder.type} onValueChange={(v) => { setNewOrder({ ...newOrder, type: v }); void loadPresetsForType(v); }}>
+                    <Select value={newOrder.type} onValueChange={(v) => { setDraftRestored(false); setNewOrder((prev) => ({ ...emptyOrderDraft(v), statusCode: prev.statusCode })); setPresetFields([]); setCustomFieldInputs({}); void loadPresetsForType(v); }}>
                       <SelectTrigger data-testid="select-order-type">
                         <SelectValue />
                       </SelectTrigger>
@@ -637,12 +611,14 @@ export default function OrdersPage() {
                         onValueChange={(v) => {
                           const pid = Number(v);
                           if (!Number.isFinite(pid) || pid <= 0) {
-                            setNewOrder({ ...newOrder, orderPresetId: undefined });
+                            setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
                             setPresetFields([]);
                             setCustomFieldInputs({});
                             return;
                           }
-                          setNewOrder({ ...newOrder, orderPresetId: pid });
+                          setDraftRestored(false);
+                          setNewOrder((prev) => ({ ...emptyOrderDraft(prev.type), statusCode: prev.statusCode, orderPresetId: pid }));
+                          setCustomFieldInputs({});
                           void loadFieldsForPreset(pid);
                         }}
                       >
@@ -771,7 +747,7 @@ export default function OrdersPage() {
                 )}
                 {customPresetFields.length > 0 && (
                   <div className="space-y-3 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos del pedido</p>
+                    <p className="text-sm font-medium">Campos adicionales</p>
                     {customPresetFields.map((field) => (
                       <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
                         <div className="flex items-center justify-between">
@@ -834,9 +810,11 @@ export default function OrdersPage() {
                               );
                             })}
                           </div>
-                        ) : field.fieldType === "NUMBER" ? (
+                        ) : field.fieldType === "NUMBER" || field.fieldType === "MONEY" ? (
                           <Input
                             type="number"
+                            step="0.01"
+                            placeholder={resolveOrderFieldDefinition(field).placeholder || (field.fieldType === "MONEY" ? "0,00" : "")}
                             value={customFieldInputs[field.id]?.valueNumber || ""}
                             onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
                           />
@@ -1282,7 +1260,7 @@ export default function OrdersPage() {
 
                 {detailCustomFields.length > 0 && (
                   <div className="space-y-4 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos del pedido</p>
+                    <p className="text-sm font-medium">Campos adicionales</p>
                     <div className="space-y-3">
                       {detailCustomFields.map((f) => (
                         <div key={`${f.fieldId}-${f.fieldKey || "x"}`} className="text-sm flex flex-col justify-between gap-1 border-b border-muted pb-3 last:border-0 last:pb-0">
@@ -1308,7 +1286,11 @@ export default function OrdersPage() {
                               }}
                             />
                           ) : (
-                            <span className="break-all">{f.valueText || f.valueNumber || "-"}</span>
+                            <span className="break-all">
+                              {f.fieldType === "MONEY"
+                                ? (f.valueNumber ? formatMoneyValue(f.valueNumber) : "-")
+                                : (f.valueText || f.valueNumber || "-")}
+                            </span>
                           )}
                         </div>
                       ))}

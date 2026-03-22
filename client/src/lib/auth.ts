@@ -65,6 +65,14 @@ function reasonMessage(reason: LogoutReason) {
   return "Sesión finalizada.";
 }
 
+function isPublicRoute(pathname: string) {
+  return pathname.startsWith("/tracking/")
+    || pathname.startsWith("/t/")
+    || pathname.startsWith("/legal/")
+    || pathname === "/legal/terms"
+    || pathname === "/legal/privacy";
+}
+
 loadFromStorage();
 
 export function login(token: string, user: AuthUser) {
@@ -169,7 +177,7 @@ export async function gracefulLogout(reason: LogoutReason = "manual") {
       // noop
     }
 
-    if (typeof window !== "undefined" && !window.location.pathname.includes("/login")) {
+    if (typeof window !== "undefined" && !window.location.pathname.includes("/login") && !isPublicRoute(window.location.pathname)) {
       // Redirect to the correct login panel based on current path
       const path = window.location.pathname;
       if (path.startsWith("/owner") || path.startsWith("/super")) {

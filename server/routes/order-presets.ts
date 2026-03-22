@@ -31,7 +31,7 @@ const patchPresetSchema = z
 
 const createFieldSchema = z.object({
   label: z.string().trim().min(1).max(160),
-  fieldType: z.enum(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"]),
+  fieldType: z.enum(["TEXT", "TEXT_LONG", "NUMBER", "MONEY", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"]),
   required: z.boolean().optional(),
   fieldKey: z.string().trim().min(1).max(80).optional(),
   config: z.record(z.any()).optional(),
@@ -321,6 +321,24 @@ export function registerOrderPresetRoutes(app: Express) {
           req.body.orderedFieldIds
         );
         return res.json({ data: result.fields });
+      } catch (err) {
+        return sendApiError(res, err);
+      }
+    }
+  );
+
+  app.delete(
+    "/api/order-presets/fields/:id",
+    tenantAuth,
+    requireTenantAdmin,
+    validateParams(fieldIdParamSchema),
+    async (req, res) => {
+      try {
+        const saved = await orderPresetsStorage.deleteField(
+          req.auth!.tenantId!,
+          Number(req.params.id)
+        );
+        return res.json({ data: saved });
       } catch (err) {
         return sendApiError(res, err);
       }
