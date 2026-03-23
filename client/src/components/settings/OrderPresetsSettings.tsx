@@ -99,7 +99,6 @@ function normalizeCreateFormForFieldType(
   const next = { ...current, fieldType: nextType };
 
   if (nextType === "FILE") {
-    next.required = false;
     next.placeholder = "";
     next.defaultValue = "";
     next.useInAgenda = false;
@@ -331,7 +330,7 @@ export function OrderPresetsSettings() {
       const payload: any = {
         label: createForm.label.trim(),
         fieldType: createForm.fieldType,
-        required: createForm.fieldType === "FILE" ? false : createForm.required,
+        required: createForm.required,
         visibleInTracking: createForm.visibleInTracking,
         useInAgenda: (createForm as any).useInAgenda,
         config: {
@@ -377,13 +376,7 @@ export function OrderPresetsSettings() {
 
   async function setFieldActive(field: OrderField, nextActive: boolean) {
     try {
-      await patchField(
-        field.id,
-        nextActive
-          ? { isActive: true }
-          : { isActive: false, required: false, visibleInTracking: false, useInAgenda: false },
-        nextActive ? "Campo activado" : "Campo desactivado"
-      );
+      await patchField(field.id, { isActive: nextActive }, nextActive ? "Campo activado" : "Campo desactivado");
     } catch {
       // toast already handled in patchField
     }
@@ -529,28 +522,30 @@ export function OrderPresetsSettings() {
                       </div>
 
                       <div className="flex items-center gap-6 text-sm">
-                        <label className="flex items-center gap-2 cursor-pointer">
+                        <label className={`flex items-center gap-2 ${f.isActive ? "cursor-pointer" : "opacity-60 cursor-not-allowed"}`}>
                           <Switch
-                            checked={f.fieldType === "FILE" ? false : f.required}
-                            disabled={f.fieldType === "FILE"}
+                            checked={f.required}
+                            disabled={!f.isActive}
                             onCheckedChange={(checked) => patchField(f.id, { required: checked })}
                           />
                           Requerido
                         </label>
 
-                        <label className="flex items-center gap-2 cursor-pointer text-muted-foreground hover:text-foreground">
+                        <label className={`flex items-center gap-2 ${f.isActive ? "cursor-pointer text-muted-foreground hover:text-foreground" : "opacity-60 cursor-not-allowed text-muted-foreground"}`}>
                           {f.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4" />}
                           <Switch
                             checked={f.visibleInTracking}
+                            disabled={!f.isActive}
                             onCheckedChange={(checked) => patchField(f.id, { visibleInTracking: checked })}
                           />
                           Tracking
                         </label>
 
                         {(f.fieldType === "DATE" || f.fieldType === "DATETIME") && (
-                          <label className="flex items-center gap-2 cursor-pointer text-muted-foreground hover:text-foreground">
+                          <label className={`flex items-center gap-2 ${f.isActive ? "cursor-pointer text-muted-foreground hover:text-foreground" : "opacity-60 cursor-not-allowed text-muted-foreground"}`}>
                             <Switch
                               checked={Boolean(f.useInAgenda)}
+                              disabled={!f.isActive}
                               onCheckedChange={(checked) => patchField(f.id, { useInAgenda: checked })}
                             />
                             Usar en Agenda
@@ -601,19 +596,6 @@ export function OrderPresetsSettings() {
                           title="Eliminar campo"
                         >
                           <Trash2 className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant={f.isActive ? "destructive" : "secondary"}
-                          onClick={() => {
-                            if (f.isActive && isCriticalField(f)) {
-                              setCriticalDeactivateTarget(f);
-                              return;
-                            }
-                            void setFieldActive(f, !f.isActive);
-                          }}
-                        >
-                          {f.isActive ? "Desactivar" : "Activar"}
                         </Button>
                       </div>
                     </div>
@@ -731,9 +713,8 @@ export function OrderPresetsSettings() {
             </div>
             <div className="flex flex-col gap-3 py-2 border rounded-md p-3">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                <Switch checked={createForm.fieldType === "FILE" ? false : createForm.required} disabled={createForm.fieldType === "FILE"} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, required: checked }))} /> Requerido
+                <Switch checked={createForm.required} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, required: checked }))} /> Requerido
               </label>
-              {createForm.fieldType === "FILE" ? <p className="text-xs text-muted-foreground">Los adjuntos se cargan después de crear el pedido, por eso no pueden ser requeridos en el alta.</p> : null}
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                 <Switch checked={createForm.visibleInTracking} onCheckedChange={(checked) => setCreateForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {createForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
@@ -831,9 +812,8 @@ export function OrderPresetsSettings() {
 
             <div className="flex flex-col gap-3 py-2 border rounded-md p-3">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
-                <Switch checked={editTarget?.fieldType === "FILE" ? false : editForm.required} disabled={editTarget?.fieldType === "FILE"} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, required: checked }))} /> Requerido
+                <Switch checked={editForm.required} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, required: checked }))} /> Requerido
               </label>
-              {editTarget?.fieldType === "FILE" ? <p className="text-xs text-muted-foreground">Los adjuntos no se validan como requeridos en la creación inicial.</p> : null}
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                 <Switch checked={editForm.visibleInTracking} onCheckedChange={(checked) => setEditForm((s) => ({ ...s, visibleInTracking: checked }))} />
                 <span className="flex items-center gap-1">Visible en tracking público {editForm.visibleInTracking ? <Eye className="w-4 h-4 text-blue-500" /> : <EyeOff className="w-4 h-4 text-muted-foreground" />}</span>
@@ -909,7 +889,7 @@ export function OrderPresetsSettings() {
                 try {
                   const patch: any = {
                     label: editForm.label.trim(),
-                    required: editTarget.fieldType === "FILE" ? false : editForm.required,
+                    required: editForm.required,
                     isActive: editForm.isActive,
                     visibleInTracking: editForm.visibleInTracking,
                     config: {

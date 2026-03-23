@@ -64,7 +64,7 @@ import {
   resolveOrderFieldDefinition,
   resolveRenderableOrderFields,
 } from "@shared/order-fields";
-import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from "./order-draft";
+import { clearOrderDraft, getOrderDraftKey, loadOrderDraft, saveOrderDraft } from "./order-draft";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -91,6 +91,16 @@ type OrderCustomFieldValue = {
   valueNumber?: string | null;
   fileStorageKey?: string | null;
   visibleOverride?: boolean | null;
+};
+
+type CustomFieldInputState = {
+  valueText?: string;
+  valueNumber?: string;
+  fileStorageKey?: string | null;
+  visibleOverride?: boolean | null;
+  attachmentName?: string | null;
+  attachmentSizeBytes?: number | null;
+  attachmentMimeType?: string | null;
 };
 
 type MessageTemplate = {
@@ -145,7 +155,7 @@ export default function OrdersPage() {
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [presets, setPresets] = useState<OrderPreset[]>([]);
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
-  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string | null; visibleOverride?: boolean | null }>>({});
+  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, CustomFieldInputState>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
   const presetLoadSeqRef = useRef(0);
 
@@ -163,6 +173,10 @@ export default function OrdersPage() {
   const customPresetFields = useMemo(
     () => resolvedPresetFields.filter((field) => !isNativeOrderField(field)),
     [resolvedPresetFields]
+  );
+  const currentDraftKey = useMemo(
+    () => getOrderDraftKey({ user, type: newOrder.type, presetId: newOrder.orderPresetId }),
+    [newOrder.orderPresetId, newOrder.type, user]
   );
 
   useEffect(() => {
@@ -263,7 +277,7 @@ export default function OrdersPage() {
       const allFields: OrderPresetField[] = json?.data || [];
       setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
-        const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string | null; visibleOverride?: boolean | null }> = {};
+        const next: Record<number, CustomFieldInputState> = {};
         for (const f of resolveRenderableOrderFields(allFields)) {
           if (isNativeOrderField(f)) continue;
           const resolved = resolveOrderFieldDefinition(f);
@@ -340,6 +354,7 @@ export default function OrdersPage() {
         deliveryCity: newOrder.requiresDelivery ? newOrder.deliveryCity : null,
         deliveryAddressNotes: newOrder.requiresDelivery ? newOrder.deliveryAddressNotes : null,
         customFields,
+        draftKey: currentDraftKey,
       };
       if (newOrder.orderPresetId) payload.orderPresetId = newOrder.orderPresetId;
 
@@ -715,11 +730,31 @@ export default function OrdersPage() {
         {field.fieldType === "FILE" && (
           <FileFieldInput
             orderId="new"
+            draftKey={currentDraftKey}
             fieldDefinitionId={field.id}
             allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
             currentAttachmentId={fieldState.fileStorageKey || null}
-            onUploadSuccess={(attachmentId) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), fileStorageKey: `att:${attachmentId}` } }))}
-            onRemove={() => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), fileStorageKey: null } }))}
+            currentAttachmentName={fieldState.attachmentName || null}
+            onUploadSuccess={(result) => setCustomFieldInputs(prev => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileStorageKey: result.storageKey,
+                attachmentName: result.originalName || null,
+                attachmentMimeType: result.mimeType || null,
+                attachmentSizeBytes: result.sizeBytes || null,
+              },
+            }))}
+            onRemoveSuccess={() => setCustomFieldInputs(prev => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileStorageKey: null,
+                attachmentName: null,
+                attachmentMimeType: null,
+                attachmentSizeBytes: null,
+              },
+            }))}
           />
         )}
       </div>
@@ -1264,18 +1299,16 @@ export default function OrdersPage() {
                               orderId={selectedOrder?.id || "new"}
                               fieldDefinitionId={f.fieldId}
                               currentAttachmentId={f.fileStorageKey}
+                              currentAttachmentName={String((f as any).valueText || f.label || "Archivo adjunto")}
                               allowedExtensions={(f as any).config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                              onUploadSuccess={(attId) => {
+                              onUploadSuccess={() => {
                                 if (selectedOrder) openDetail(selectedOrder);
                               }}
-                              onRemove={async () => {
+                              onRemoveSuccess={async () => {
                                 try {
-                                  if (!f.fileStorageKey || !selectedOrder) return;
-                                  const rawAttId = f.fileStorageKey.replace("att:", "");
-                                  await apiRequest("DELETE", `/api/orders/${selectedOrder.id}/attachments/${rawAttId}`);
-                                  openDetail(selectedOrder);
+                                  if (selectedOrder) await openDetail(selectedOrder);
                                 } catch (e: any) {
-                                  // Handled by toast if needed, but the apiRequest throws if not OK
+                                  // refresh best-effort
                                 }
                               }}
                             />

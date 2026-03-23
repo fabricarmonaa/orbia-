@@ -100,6 +100,23 @@ export function normalizeOrderPresetFieldConfig(fieldType: "TEXT" | "TEXT_LONG" 
   }
 
   base.allowedExtensions = normalized;
-  base.requiredOnCreate = false;
   return base;
+}
+
+export function buildCanonicalNativeFieldUpdate(
+  current: { isActive?: boolean | null; deletedAt?: Date | string | null },
+  template: { fieldKey: string; label: string; fieldType: string; sortOrder: number; visibleInTracking: boolean },
+  mergedConfig: Record<string, unknown>,
+) {
+  return {
+    fieldKey: template.fieldKey,
+    label: template.label,
+    fieldType: template.fieldType,
+    sortOrder: template.sortOrder,
+    config: mergedConfig,
+    isSystemDefault: true,
+    isActive: current.isActive ?? true,
+    deletedAt: current.deletedAt ?? null,
+    visibleInTracking: template.visibleInTracking,
+  };
 }

@@ -9,6 +9,7 @@ import {
   resolveRenderableOrderFields,
   resolveRenderableOrderFieldsForPreset,
   shouldDisplayOrderFieldInTracking,
+  isOrderFieldValueFilled,
 } from "./order-fields";
 
 test("permite campos MONEY manuales con configuración consistente", () => {
@@ -84,6 +85,12 @@ test("tracking público oculta vacíos por defecto y puede mostrarlos con showWh
 
   assert.equal(hidden, false);
   assert.equal(visible, true);
+});
+
+test("considera adjuntos temporales o definitivos como válidos para campos FILE", () => {
+  assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "draftatt:12" }), true);
+  assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "att:34" }), true);
+  assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "" }), false);
 });
 
 test("resuelve correctamente el binding semántico de cliente", () => {

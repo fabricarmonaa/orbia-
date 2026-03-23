@@ -17,6 +17,7 @@ import { changeOrderStatusWithHistory, validateOrderScope } from "../services/or
 import { generatePublicToken } from "../utils/public-token";
 import { syncOrderAgendaEvents } from "../services/agenda";
 import { cashStorage } from "../storage/cash";
+import { clearRemainingDraftAttachments, promoteDraftAttachmentsForOrder } from "../services/order-draft-attachments";
 
 /** Decimal-safe payment status calculation (tolerates floating-point rounding) */
 function calcPaymentStatus(paid: number, total: number): "UNPAID" | "PARTIAL" | "PAID" {
@@ -75,6 +76,7 @@ const createOrderSchema = z.object({
   deliveryAddressNotes: sanitizeOptionalLong(200).nullable(),
   customFields: z.array(customFieldSchema).optional(),
   orderPresetId: z.coerce.number().int().positive().optional().nullable(),
+  draftKey: z.string().trim().min(1).max(255).optional().nullable(),
 });
 
 const orderStatusSchema = z.object({
@@ -177,6 +179,7 @@ export function registerOrderRoutes(app: Express) {
       const resolvedCreateStatusId = await resolveOrderStatusIdByCode(tenantId, resolvedCreateStatusCode);
       const orderTypeCode = (payload.orderTypeCode || payload.type || "PEDIDO").toUpperCase();
       const customPayload = payload.customFields || [];
+      const draftKey = payload.draftKey ? String(payload.draftKey).trim() : "";
       const validatedCustom = customPayload.length > 0 || payload.orderPresetId
         ? await validateAndNormalizeCustomFields(tenantId, orderTypeCode, customPayload, payload.orderPresetId)
         : null;
@@ -227,8 +230,19 @@ export function registerOrderRoutes(app: Express) {
           });
         }
 
-        if (validatedCustom && validatedCustom.normalized.length > 0) {
-          for (const row of validatedCustom.normalized) {
+        const normalizedCustomValues = validatedCustom
+          ? await promoteDraftAttachmentsForOrder({
+            tx,
+            tenantId,
+            userId,
+            orderId: created.id,
+            draftKey,
+            normalized: validatedCustom.normalized,
+          })
+          : [];
+
+        if (normalizedCustomValues.length > 0) {
+          for (const row of normalizedCustomValues) {
             await tx.insert(orderFieldValues).values({
               tenantId,
               orderId: created.id,
@@ -266,6 +280,9 @@ export function registerOrderRoutes(app: Express) {
 
         return { order: created, hasCashMovement };
       });
+      if (draftKey) {
+        await clearRemainingDraftAttachments({ tenantId, userId, draftKey }).catch(() => {});
+      }
       await syncOrderAgendaEvents(tenantId, data.order.id, req.auth!.userId);
       await refreshMetricsForDate(tenantId, new Date());
       const responseBody: Record<string, unknown> = { data: data.order };

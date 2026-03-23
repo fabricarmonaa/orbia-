@@ -12,9 +12,9 @@ import { badRequest, notFound, HttpError } from "../lib/http-errors";
 import {
   buildNativeOrderFieldTemplate,
   resolveNativeOrderFieldKind,
-  resolveOrderFieldDefinition,
 } from "@shared/order-fields";
 import {
+  buildCanonicalNativeFieldUpdate,
   normalizeFieldTypeInput,
   normalizeOrderPresetFieldConfig,
   ORDER_PRESET_ALLOWED_FILE_EXTENSIONS,
@@ -314,22 +314,11 @@ async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeI
       || current.fieldKey !== template.fieldKey
       || current.label !== template.label
       || current.sortOrder !== template.sortOrder
-      || current.isActive !== true
       || Boolean(current.deletedAt);
 
     if (needsUpdate) {
       await db.update(orderFieldDefinitions)
-        .set({
-          fieldKey: template.fieldKey,
-          label: template.label,
-          fieldType: expectedType,
-          sortOrder: template.sortOrder,
-          config: mergedConfig,
-          isSystemDefault: true,
-          isActive: true,
-          deletedAt: null,
-          visibleInTracking: template.visibleInTracking,
-        })
+        .set(buildCanonicalNativeFieldUpdate(current, template, mergedConfig))
         .where(eq(orderFieldDefinitions.id, current.id));
     }
   }
@@ -610,10 +599,6 @@ export const orderPresetsStorage = {
 
     const fieldType = normalizeFieldTypeInput(payload.fieldType);
     const config = normalizeOrderPresetFieldConfig(fieldType, payload.config);
-    if (fieldType === "FILE" && payload.required) {
-      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Los archivos adjuntos no pueden marcarse como requeridos en el alta inicial");
-    }
-
     const rawKey = payload.fieldKey ? slugifyFieldKey(payload.fieldKey) : slugifyFieldKey(label);
     const nativeKind = resolveNativeOrderFieldKind({ fieldKey: rawKey, label });
     if (nativeKind) {
@@ -725,12 +710,7 @@ export const orderPresetsStorage = {
       }
       update.label = label;
     }
-    if (patch.required !== undefined) {
-      if (resolveOrderFieldDefinition(current).normalizedType === "FILE" && patch.required) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Los archivos adjuntos no pueden marcarse como requeridos en el alta inicial");
-      }
-      update.required = Boolean(patch.required);
-    }
+    if (patch.required !== undefined) update.required = Boolean(patch.required);
     if (patch.isActive !== undefined) {
       update.isActive = Boolean(patch.isActive);
       if (!patch.isActive) {

@@ -15,6 +15,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tenants } from "./tenants";
 import { orders } from "./orders";
+import { users } from "./users";
 
 // ─────────────────────────────────────────────
 // Order type definitions
@@ -185,3 +186,31 @@ export const insertOrderAttachmentSchema = createInsertSchema(orderAttachments).
 });
 export type InsertOrderAttachment = z.infer<typeof insertOrderAttachmentSchema>;
 export type OrderAttachment = typeof orderAttachments.$inferSelect;
+
+export const orderDraftAttachments = pgTable(
+  "order_draft_attachments",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    fieldDefinitionId: integer("field_definition_id").references(() => orderFieldDefinitions.id, { onDelete: "cascade" }).notNull(),
+    draftKey: varchar("draft_key", { length: 255 }).notNull(),
+    originalName: varchar("original_name", { length: 260 }).notNull(),
+    storedName: varchar("stored_name", { length: 400 }).notNull(),
+    mimeType: varchar("mime_type", { length: 127 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storagePath: text("storage_path").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_order_draft_attachments_tenant_user").on(table.tenantId, table.userId),
+    index("idx_order_draft_attachments_draft_key").on(table.tenantId, table.userId, table.draftKey),
+  ]
+);
+
+export const insertOrderDraftAttachmentSchema = createInsertSchema(orderDraftAttachments).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertOrderDraftAttachment = z.infer<typeof insertOrderDraftAttachmentSchema>;
+export type OrderDraftAttachment = typeof orderDraftAttachments.$inferSelect;

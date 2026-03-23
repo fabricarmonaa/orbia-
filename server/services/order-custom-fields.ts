@@ -164,6 +164,9 @@ export async function validateAndNormalizeCustomFields(
           throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Extensión no permitida en ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "INVALID_FILE_EXTENSION", fileStorageKey });
         }
       }
+      if (def.required && !String(fileStorageKey || "").trim()) {
+        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Campo requerido: ${def.label}`, { fieldId: def.id, fieldKey: def.fieldKey, reason: "REQUIRED_FILE" });
+      }
     }
 
     return {
@@ -175,7 +178,7 @@ export async function validateAndNormalizeCustomFields(
     };
   });
 
-  const requiredRenderable = renderableDefs.filter((d) => d.required && d.normalizedType !== "FILE" && !isNativeOrderField(d));
+  const requiredRenderable = renderableDefs.filter((d) => d.required && !isNativeOrderField(d));
   const requiredMissing = requiredRenderable.filter((d) => !normalized.some((n) => n.fieldDefinitionId === d.id));
   if (requiredMissing.length > 0) {
     throw badRequest("ORDER_PRESET_VALIDATION_ERROR", `Faltan campos requeridos: ${requiredMissing.map((r) => r.label).join(", ")}`, { missing: requiredMissing.map((r) => ({ fieldId: r.id, fieldKey: r.fieldKey })) });
