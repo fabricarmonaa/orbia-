@@ -9,7 +9,7 @@ import { login, getToken, getUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useBranding } from "@/context/BrandingContext";
 import { BrandLogo } from "@/components/branding/BrandLogo";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
 
 const GOOGLE_AUTH_EVENT_TYPE = "orbia-google-auth";
@@ -280,6 +280,7 @@ export default function TenantLogin() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Recuperar contraseña</DialogTitle>
+              <DialogDescription>Ingresá tu correo para recibir un enlace de recuperación.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleForgotPassword} className="space-y-4">
               <p className="text-sm text-muted-foreground">

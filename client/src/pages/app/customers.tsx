@@ -13,6 +13,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { isValidEmail, isValidPhone } from "@shared/validation/contact";
+import { getDniValidationError, sanitizeDniInput } from "@shared/validation/dni";
 
 type Customer = {
   id: number;
@@ -115,21 +116,16 @@ export default function CustomersPage() {
     loadHistory(row.id).catch(() => undefined);
   }
 
-  function validateDoc(doc: string) {
-    const trimmed = doc.trim();
-    if (!trimmed) return true;
-    return /^\d{6,15}$/.test(trimmed);
-  }
-
-  const formHasErrors = !form.name.trim() || !validateDoc(form.doc) || !isValidPhone(form.phone) || !isValidEmail(form.email);
+  const docError = getDniValidationError(form.doc);
+  const formHasErrors = !form.name.trim() || !!docError || !isValidPhone(form.phone) || !isValidEmail(form.email);
 
   async function saveCustomer() {
     if (!form.name.trim()) {
       toast({ title: "Nombre requerido", variant: "destructive" });
       return;
     }
-    if (!validateDoc(form.doc)) {
-      toast({ title: "DNI inválido", description: "Usá solo números (6 a 15 dígitos)", variant: "destructive" });
+    if (docError) {
+      toast({ title: "DNI inválido", description: docError, variant: "destructive" });
       return;
     }
     if (!isValidPhone(form.phone)) {
@@ -349,7 +345,16 @@ export default function CustomersPage() {
             </div>
             <div>
               <Label>DNI</Label>
-              <Input value={form.doc} onChange={(e) => setForm((prev) => ({ ...prev, doc: e.target.value }))} placeholder="Solo números" />
+              <Input
+                value={form.doc}
+                onChange={(e) => setForm((prev) => ({ ...prev, doc: sanitizeDniInput(e.target.value) }))}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength={15}
+                placeholder="Solo números"
+                aria-invalid={docError ? true : undefined}
+              />
+              {docError ? <p className="text-xs text-destructive mt-1">{docError}</p> : <p className="text-xs text-muted-foreground mt-1">Solo números, entre 6 y 15 dígitos.</p>}
             </div>
             <div>
               <Label>Teléfono</Label>

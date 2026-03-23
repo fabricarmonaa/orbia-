@@ -88,6 +88,8 @@ test("tracking público oculta vacíos por defecto y puede mostrarlos con showWh
 
 test("resuelve correctamente el binding semántico de cliente", () => {
   assert.equal(resolveNativeOrderFieldKind({ fieldKey: "customer_name", label: "Cliente" }), "customer");
+  assert.equal(resolveNativeOrderFieldKind({ fieldKey: "paid_amount", label: "Seña o Pago" }), "paid");
+  assert.equal(resolveNativeOrderFieldKind({ fieldKey: "total_amount", label: "Valor Total" }), "total");
 });
 
 test("normaliza aliases de dinero y expone templates nativos monetarios", () => {

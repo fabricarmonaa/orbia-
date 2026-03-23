@@ -145,7 +145,7 @@ export default function OrdersPage() {
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [presets, setPresets] = useState<OrderPreset[]>([]);
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
-  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
+  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string | null; visibleOverride?: boolean | null }>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
   const presetLoadSeqRef = useRef(0);
 
@@ -263,7 +263,7 @@ export default function OrdersPage() {
       const allFields: OrderPresetField[] = json?.data || [];
       setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
-        const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
+        const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string | null; visibleOverride?: boolean | null }> = {};
         for (const f of resolveRenderableOrderFields(allFields)) {
           if (isNativeOrderField(f)) continue;
           const resolved = resolveOrderFieldDefinition(f);

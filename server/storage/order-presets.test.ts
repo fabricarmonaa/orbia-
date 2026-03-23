@@ -1,7 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { HttpError } from "../lib/http-errors";
+import { STANDARD_ORDER_TYPES } from "@shared/order-types";
 import { normalizeFieldTypeInput, normalizeOrderPresetFieldConfig } from "./order-presets.shared";
+
+test("lista estándar contempla PEDIDO, ENCARGO, TURNO y SERVICIO", () => {
+  assert.deepEqual(STANDARD_ORDER_TYPES.map((type) => type.code), ["PEDIDO", "ENCARGO", "TURNO", "SERVICIO"]);
+});
 
 test("normaliza aliases de MONEY y persiste currency/defaultValue numérico", () => {
   assert.equal(normalizeFieldTypeInput("currency"), "MONEY");

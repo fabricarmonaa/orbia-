@@ -1,4 +1,5 @@
 import type { Express } from "express";
+import { z } from "zod";
 import { storage } from "../storage";
 import {
   tenantAuth,
@@ -8,17 +9,27 @@ import {
   requireTenantAdmin,
   requirePlanCodes,
 } from "../auth";
+import { badRequest, HttpError } from "../lib/http-errors";
+import { countUserManagedBranches, findBranchNameConflict, isSystemManagedBranch } from "../lib/branches";
+
+const branchSchema = z.object({
+  name: z.string().trim().min(2).max(200),
+  address: z.string().trim().max(1000).optional().or(z.literal("")),
+  phone: z.string().trim().max(50).optional().or(z.literal("")),
+});
+
+function sendBranchError(res: any, err: unknown) {
+  if (err instanceof HttpError) {
+    return res.status(err.status).json({ error: err.message, code: err.code, ...(err.extra || {}) });
+  }
+  if (err instanceof z.ZodError) {
+    return res.status(400).json({ error: "Datos inválidos para la sucursal", code: "BRANCH_VALIDATION_ERROR", details: err.errors });
+  }
+  console.error("[branches] unexpected", err);
+  return res.status(500).json({ error: "No se pudo procesar la sucursal", code: "BRANCH_INTERNAL_ERROR" });
+}
 
 export function registerBranchRoutes(app: Express) {
-  const isHiddenCentralBranch = (name: string | null | undefined) => {
-    const normalized = String(name || "")
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .trim()
-      .toLowerCase();
-    return normalized === "casa central" || normalized === "sucursal central";
-  };
-
   app.get(
     "/api/branches",
     tenantAuth,
@@ -35,12 +46,12 @@ export function registerBranchRoutes(app: Express) {
         }
         if (req.auth!.scope === "BRANCH" && req.auth!.branchId) {
           const branch = await storage.getBranchById(req.auth!.branchId, tenantId);
-          return res.json({ data: branch ? [branch] : [] });
+          return res.json({ data: branch && !isSystemManagedBranch(branch) ? [branch] : [] });
         }
         const data = await storage.getBranches(tenantId);
-        res.json({ data: data.filter((branch) => !isHiddenCentralBranch((branch as any).name)) });
+        res.json({ data: data.filter((branch) => !isSystemManagedBranch(branch)) });
       } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        return sendBranchError(res, err);
       }
     });
 
@@ -53,27 +64,45 @@ export function registerBranchRoutes(app: Express) {
     async (req, res) => {
       try {
         const tenantId = req.auth!.tenantId!;
+        const body = branchSchema.parse(req.body || {});
         const plan = req.plan!;
-        const maxBranches = plan.limits.max_branches;
-        if (maxBranches >= 0) {
-          const existing = await storage.getBranches(tenantId);
-          if (existing.length >= maxBranches) {
-            return res.status(409).json({
-              error: "Límite del plan alcanzado",
-              code: "PLAN_LIMIT_EXCEEDED",
-              limit: "max_branches",
-              max: maxBranches,
-              currentPlan: plan.planCode,
-            });
-          }
+        const existing = await storage.getBranches(tenantId);
+        const userBranchCount = countUserManagedBranches(existing);
+        const maxBranches = Number(plan.limits.max_branches ?? -1);
+        if (maxBranches >= 0 && userBranchCount >= maxBranches) {
+          return res.status(409).json({
+            error: "Límite del plan alcanzado para sucursales creadas por usuario",
+            code: "PLAN_LIMIT_EXCEEDED",
+            limit: "max_branches",
+            max: maxBranches,
+            currentCount: userBranchCount,
+            currentPlan: plan.planCode,
+          });
         }
+
+        const conflict = findBranchNameConflict(existing, body.name);
+        if (conflict) {
+          return res.status(409).json({
+            error: isSystemManagedBranch(conflict)
+              ? "Ya existe la sucursal principal del sistema con ese nombre"
+              : "Ya existe una sucursal con ese nombre",
+            code: "BRANCH_NAME_CONFLICT",
+            branchId: conflict.id ?? null,
+            systemBranch: isSystemManagedBranch(conflict),
+          });
+        }
+
         const data = await storage.createBranch({
           tenantId,
-          ...req.body,
+          name: body.name,
+          address: body.address?.trim() || null,
+          phone: body.phone?.trim() || null,
+          isActive: true,
+          isSystem: false,
         });
         res.status(201).json({ data });
       } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        return sendBranchError(res, err);
       }
     });
 
@@ -96,7 +125,7 @@ export function registerBranchRoutes(app: Express) {
         const data = (await storage.getOrdersByBranch(tenantId, branchId, { limit: 200 })).data;
         res.json({ data });
       } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        return sendBranchError(res, err);
       }
     });
 
@@ -119,7 +148,7 @@ export function registerBranchRoutes(app: Express) {
         const data = await storage.getCashMovementsByBranch(tenantId, branchId);
         res.json({ data });
       } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        return sendBranchError(res, err);
       }
     });
 
@@ -136,6 +165,9 @@ export function registerBranchRoutes(app: Express) {
         const branchId = parseInt(req.params.branchId as string);
         const branch = await storage.getBranchById(branchId, tenantId);
         if (!branch) return res.status(404).json({ error: "Sucursal no encontrada" });
+        if (isSystemManagedBranch(branch)) {
+          throw badRequest("BRANCH_DELETE_FORBIDDEN", "La sucursal principal del sistema no se puede eliminar");
+        }
 
         const stockCount = await storage.getBranchStockCount(tenantId, branchId);
         if (stockCount > 0) {
@@ -166,9 +198,8 @@ export function registerBranchRoutes(app: Express) {
         });
         res.json({ data: deleted });
       } catch (err: any) {
-        res.status(500).json({ error: err.message });
+        return sendBranchError(res, err);
       }
     }
   );
-
 }

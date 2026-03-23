@@ -7,6 +7,7 @@ import {
   type InsertOrderTypePreset,
 } from "@shared/schema";
 import { db } from "../db";
+import { STANDARD_ORDER_TYPES } from "@shared/order-types";
 import { badRequest, notFound, HttpError } from "../lib/http-errors";
 import {
   buildNativeOrderFieldTemplate,
@@ -62,7 +63,7 @@ async function getTypeOrThrow(tenantId: number, code: string) {
 
   if (!typeRow) {
     // Auto-create order type and default preset for existing tenants
-    const labels: Record<string, string> = { PEDIDO: "Pedido", ENCARGO: "Encargo", TURNO: "Turno", SERVICIO: "Servicio" };
+    const labels = Object.fromEntries(STANDARD_ORDER_TYPES.map((type) => [type.code, type.label]));
     [typeRow] = await db.insert(orderTypeDefinitions).values({
       tenantId,
       code: normalizedCode,
@@ -103,7 +104,8 @@ async function resolveUniqueFieldKey(
       and(
         eq(orderFieldDefinitions.tenantId, tenantId),
         eq(orderFieldDefinitions.presetId, presetId),
-        eq(orderFieldDefinitions.fieldKey, desired)
+        eq(orderFieldDefinitions.fieldKey, desired),
+        sql`${orderFieldDefinitions.deletedAt} IS NULL`
       )
     );
   if (!existing) return desired;
@@ -117,7 +119,8 @@ async function resolveUniqueFieldKey(
         and(
           eq(orderFieldDefinitions.tenantId, tenantId),
           eq(orderFieldDefinitions.presetId, presetId),
-          eq(orderFieldDefinitions.fieldKey, candidate)
+          eq(orderFieldDefinitions.fieldKey, candidate),
+          sql`${orderFieldDefinitions.deletedAt} IS NULL`
         )
       );
     if (!row) return candidate;
@@ -234,6 +237,15 @@ async function cloneMissingSystemDefaultsForPreset(tenantId: number, orderTypeId
   }
 }
 
+function pickCanonicalNativeField<T extends { id: number; fieldKey: string; isSystemDefault?: boolean | null }>(fields: T[], expectedFieldKey: string) {
+  return [...fields].sort((a, b) => {
+    const scoreA = (a.fieldKey === expectedFieldKey ? 4 : 0) + (a.isSystemDefault === true ? 2 : 0);
+    const scoreB = (b.fieldKey === expectedFieldKey ? 4 : 0) + (b.isSystemDefault === true ? 2 : 0);
+    if (scoreA !== scoreB) return scoreB - scoreA;
+    return a.id - b.id;
+  })[0] || null;
+}
+
 async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeId: number, presetId: number) {
   const existing = await db
     .select()
@@ -248,16 +260,29 @@ async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeI
     )
     .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
 
-  const existingByKind = new Map<string, typeof existing[number]>();
+  const existingByKind = new Map<string, typeof existing>();
   for (const field of existing) {
     const kind = resolveNativeOrderFieldKind(field);
-    if (!kind || existingByKind.has(kind)) continue;
-    existingByKind.set(kind, field);
+    if (!kind) continue;
+    const current = existingByKind.get(kind) || [];
+    current.push(field);
+    existingByKind.set(kind, current);
   }
 
   for (const kind of ["customer", "phone", "description", "paid", "total"] as const) {
     const template = buildNativeOrderFieldTemplate(kind);
-    const current = existingByKind.get(kind);
+    const candidates = existingByKind.get(kind) || [];
+    const current = pickCanonicalNativeField(candidates, template.fieldKey);
+
+    if (candidates.length > 1) {
+      const duplicateIds = candidates.filter((field) => field.id !== current?.id).map((field) => field.id);
+      if (duplicateIds.length > 0) {
+        await db.update(orderFieldDefinitions)
+          .set({ deletedAt: new Date(), isActive: false, required: false, visibleInTracking: false })
+          .where(inArray(orderFieldDefinitions.id, duplicateIds));
+      }
+    }
+
     if (!current) {
       await db.insert(orderFieldDefinitions).values({
         tenantId,
@@ -288,7 +313,9 @@ async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeI
       || normalizedCurrentType !== expectedType
       || current.fieldKey !== template.fieldKey
       || current.label !== template.label
-      || current.sortOrder !== template.sortOrder;
+      || current.sortOrder !== template.sortOrder
+      || current.isActive !== true
+      || Boolean(current.deletedAt);
 
     if (needsUpdate) {
       await db.update(orderFieldDefinitions)
@@ -299,10 +326,27 @@ async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeI
           sortOrder: template.sortOrder,
           config: mergedConfig,
           isSystemDefault: true,
+          isActive: true,
+          deletedAt: null,
+          visibleInTracking: template.visibleInTracking,
         })
         .where(eq(orderFieldDefinitions.id, current.id));
     }
   }
+}
+
+async function findExistingNativeFieldForPreset(tenantId: number, presetId: number, kind: string, ignoreFieldId?: number) {
+  const rows = await db
+    .select()
+    .from(orderFieldDefinitions)
+    .where(
+      and(
+        eq(orderFieldDefinitions.tenantId, tenantId),
+        eq(orderFieldDefinitions.presetId, presetId),
+        sql`${orderFieldDefinitions.deletedAt} IS NULL`
+      )
+    );
+  return rows.find((field) => resolveNativeOrderFieldKind(field) === kind && field.id !== ignoreFieldId) || null;
 }
 
 // ─────────────────────────────────────────────
@@ -318,14 +362,8 @@ export const orderPresetsStorage = {
       .orderBy(asc(orderTypeDefinitions.id));
 
     // Auto-create standard types if missing
-    const STANDARD_TYPES = [
-      { code: "PEDIDO", label: "Pedido" },
-      { code: "ENCARGO", label: "Encargo" },
-      { code: "TURNO", label: "Turno" },
-      { code: "SERVICIO", label: "Servicio" },
-    ];
     const existingCodes = new Set(existing.map((t) => t.code));
-    const missing = STANDARD_TYPES.filter((t) => !existingCodes.has(t.code));
+    const missing = STANDARD_ORDER_TYPES.filter((t) => !existingCodes.has(t.code));
     if (missing.length > 0) {
       for (const ot of missing) {
         const [typeRow] = await db.insert(orderTypeDefinitions).values({
@@ -575,6 +613,17 @@ export const orderPresetsStorage = {
     }
 
     const rawKey = payload.fieldKey ? slugifyFieldKey(payload.fieldKey) : slugifyFieldKey(label);
+    const nativeKind = resolveNativeOrderFieldKind({ fieldKey: rawKey, label });
+    if (nativeKind) {
+      const existingNative = await findExistingNativeFieldForPreset(tenantId, presetId, nativeKind);
+      if (existingNative) {
+        throw new HttpError(409, "ORDER_PRESET_NATIVE_FIELD_EXISTS", `El campo base "${buildNativeOrderFieldTemplate(nativeKind).label}" ya existe en este preset`, {
+          fieldId: existingNative.id,
+          fieldKey: existingNative.fieldKey,
+          nativeKind,
+        });
+      }
+    }
     const fieldKey = await resolveUniqueFieldKey(tenantId, presetId, rawKey);
 
     const [maxSort] = await db
@@ -661,6 +710,17 @@ export const orderPresetsStorage = {
     if (patch.label !== undefined) {
       const label = String(patch.label || "").trim();
       if (!label) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "label no puede ser vacío");
+      const nextNativeKind = resolveNativeOrderFieldKind({ fieldKey: current.fieldKey, label });
+      if (nextNativeKind) {
+        const existingNative = await findExistingNativeFieldForPreset(tenantId, current.presetId!, nextNativeKind, current.id);
+        if (existingNative) {
+          throw new HttpError(409, "ORDER_PRESET_NATIVE_FIELD_EXISTS", `El campo base "${buildNativeOrderFieldTemplate(nextNativeKind).label}" ya existe en este preset`, {
+            fieldId: existingNative.id,
+            fieldKey: existingNative.fieldKey,
+            nativeKind: nextNativeKind,
+          });
+        }
+      }
       update.label = label;
     }
     if (patch.required !== undefined) {

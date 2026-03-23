@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLocation } from "wouter";
 import { apiRequest, authFetch, useAuth } from "@/lib/auth";
+import { getDniValidationError, sanitizeDniInput } from "@shared/validation/dni";
 import { fetchAddons } from "@/lib/addons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -210,8 +211,8 @@ export default function PosPage() {
     if (dniLookupInFlight.current) return;
 
     const rawDni = pendingCustomerDni.trim();
-    // Normalize to digits only
-    const dni = rawDni.replace(/\D/g, "");
+    const dni = sanitizeDniInput(rawDni);
+    const dniError = getDniValidationError(dni);
 
     if (!dni) {
       toast({ title: "Cliente sin DNI", description: "Podés continuar la venta sin cliente asociado." });
@@ -220,13 +221,8 @@ export default function PosPage() {
       return;
     }
 
-    // Guard: backend requires 6–12 digits — avoid sending a request we know will fail
-    if (dni.length < 6) {
-      toast({ title: "DNI muy corto", description: "Ingresá al menos 6 dígitos" });
-      return;
-    }
-    if (dni.length > 12) {
-      toast({ title: "DNI muy largo", description: "El DNI no puede superar 12 dígitos" });
+    if (dniError) {
+      toast({ title: "DNI inválido", description: dniError });
       return;
     }
 
@@ -267,12 +263,17 @@ export default function PosPage() {
   async function quickCreateCustomer() {
     const name = pendingCustomerName.trim();
     const dni = pendingCustomerDni.trim();
+    const dniError = getDniValidationError(dni);
     if (!name) {
       toast({ title: "Nombre requerido", variant: "destructive" });
       return;
     }
     if (!dni) {
       toast({ title: "DNI requerido", variant: "destructive" });
+      return;
+    }
+    if (dniError) {
+      toast({ title: "DNI inválido", description: dniError, variant: "destructive" });
       return;
     }
 
@@ -457,7 +458,7 @@ export default function PosPage() {
                 <CardContent className="space-y-2">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                     <div><Label>Cliente</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
-                    <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
+                    <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(sanitizeDniInput(e.target.value))} inputMode="numeric" pattern="[0-9]*" maxLength={15} /></div>
                     <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -660,7 +661,7 @@ export default function PosPage() {
           </DialogHeader>
           <div className="space-y-2">
             <div><Label>Nombre</Label><Input value={pendingCustomerName} onChange={(e) => setPendingCustomerName(e.target.value)} /></div>
-            <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(e.target.value)} /></div>
+            <div><Label>DNI</Label><Input value={pendingCustomerDni} onChange={(e) => setPendingCustomerDni(sanitizeDniInput(e.target.value))} inputMode="numeric" pattern="[0-9]*" maxLength={15} /></div>
             <div><Label>Teléfono</Label><Input value={pendingCustomerPhone} onChange={(e) => setPendingCustomerPhone(e.target.value)} /></div>
           </div>
           <DialogFooter>

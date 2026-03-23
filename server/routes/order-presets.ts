@@ -69,6 +69,15 @@ function sendApiError(res: Response, err: unknown) {
       error: { code: err.code, message: err.message, ...(err.extra || {}) },
     });
   }
+  if (err && typeof err === "object" && (err as any).code === "23514" && String((err as any).constraint || "") === "ck_order_field_definitions_field_type") {
+    return res.status(400).json({
+      error: {
+        code: "ORDER_PRESET_VALIDATION_ERROR",
+        message: "fieldType inválido para order_field_definitions",
+        constraint: (err as any).constraint,
+      },
+    });
+  }
   console.error("[order-presets] unexpected", err);
   return res
     .status(500)
@@ -344,21 +353,4 @@ export function registerOrderPresetRoutes(app: Express) {
     }
   );
 
-  app.delete(
-    "/api/order-presets/fields/:id",
-    tenantAuth,
-    requireTenantAdmin,
-    validateParams(fieldIdParamSchema),
-    async (req, res) => {
-      try {
-        const saved = await orderPresetsStorage.deleteField(
-          req.auth!.tenantId!,
-          Number(req.params.id)
-        );
-        return res.json({ data: saved });
-      } catch (err) {
-        return sendApiError(res, err);
-      }
-    }
-  );
 }
