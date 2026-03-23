@@ -8,6 +8,7 @@ import {
 } from "../services/attachment-storage";
 import {
     deleteDraftAttachment,
+    getDraftAttachmentPath,
     storeDraftAttachment,
 } from "../services/order-draft-attachments";
 import { HttpError } from "../lib/http-errors";
@@ -115,6 +116,36 @@ export function registerAttachmentRoutes(app: Express) {
                 }
                 console.error("Draft attachment delete error:", err);
                 return res.status(500).json({ error: { code: "DRAFT_ATTACHMENT_DELETE_ERROR", message: "Error al borrar el archivo temporal" } });
+            }
+        }
+    );
+
+    app.get(
+        "/api/orders/draft-attachments/:attachmentId",
+        tenantAuth,
+        enforceBranchScope,
+        validateParams(draftAttachmentParamSchema),
+        validateQuery(draftAttachmentQuerySchema),
+        async (req, res) => {
+            try {
+                const { attachment, absolutePath } = await getDraftAttachmentPath({
+                    tenantId: req.auth!.tenantId!,
+                    userId: req.auth!.userId,
+                    draftAttachmentId: Number(req.params.attachmentId),
+                    draftKey: typeof req.query.draftKey === "string" ? req.query.draftKey : undefined,
+                });
+                return res.sendFile(absolutePath, {
+                    headers: {
+                        "Content-Type": attachment.mimeType,
+                        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(attachment.originalName)}`,
+                    },
+                });
+            } catch (err: any) {
+                if (err instanceof HttpError) {
+                    return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+                }
+                console.error("Draft attachment read error:", err);
+                return res.status(500).json({ error: { code: "DRAFT_ATTACHMENT_READ_ERROR", message: "Error al leer el archivo temporal" } });
             }
         }
     );

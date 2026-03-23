@@ -61,6 +61,19 @@ export type ResolvedOrderFieldLayoutSection<T extends OrderFieldDefinitionLike =
   fields: ResolvedOrderFieldDefinition<T>[];
 };
 
+export type FileFieldConfigBehavior = {
+  mediaMode: "single" | "gallery" | "attachments";
+  acceptMode: "images" | "mixed";
+  maxFiles: number;
+  expectedFiles: number | null;
+  trackingRender: "grid" | "carousel" | "list";
+};
+
+export type FileStorageToken = {
+  kind: "att" | "draftatt";
+  id: number;
+};
+
 export function normalizeSemanticKey(value: string | null | undefined): string {
   return String(value || "")
     .normalize("NFD")
@@ -230,9 +243,11 @@ export function resolveOrderFieldSectionMeta<T extends OrderFieldDefinitionLike>
       ?? config.groupName
   );
   const key = normalizeSemanticKey(
-    config.sectionKey
+    String(
+      config.sectionKey
       ?? config.groupKey
       ?? label
+    )
   ) || "general";
   const sortOrder = Number(
     config.sectionOrder
@@ -282,12 +297,74 @@ export function resolveCreateOrderFieldLayout<T extends OrderFieldDefinitionLike
   };
 }
 
+export function resolveFileFieldBehavior(config: unknown): FileFieldConfigBehavior {
+  const source = config && typeof config === "object" && !Array.isArray(config)
+    ? config as Record<string, unknown>
+    : {};
+  const mediaModeRaw = String(source.mediaMode || "single").trim().toLowerCase();
+  const acceptModeRaw = String(source.acceptMode || "mixed").trim().toLowerCase();
+  const trackingRenderRaw = String(source.trackingRender || (mediaModeRaw === "gallery" ? "grid" : "list")).trim().toLowerCase();
+  const maxFilesRaw = Number(source.maxFiles ?? (mediaModeRaw === "single" ? 1 : 6));
+  const expectedFilesRaw = source.expectedFiles == null || source.expectedFiles === ""
+    ? null
+    : Number(source.expectedFiles);
+
+  const mediaMode = mediaModeRaw === "gallery" || mediaModeRaw === "attachments"
+    ? mediaModeRaw
+    : "single";
+  const acceptMode = acceptModeRaw === "images" ? "images" : "mixed";
+  const trackingRender = trackingRenderRaw === "carousel" || trackingRenderRaw === "grid" || trackingRenderRaw === "list"
+    ? trackingRenderRaw
+    : (mediaMode === "gallery" ? "grid" : "list");
+  const maxFiles = Math.max(1, Math.min(20, Number.isFinite(maxFilesRaw) ? Math.trunc(maxFilesRaw) : (mediaMode === "single" ? 1 : 6)));
+  const expectedFiles = expectedFilesRaw == null || !Number.isFinite(expectedFilesRaw)
+    ? null
+    : Math.max(1, Math.min(maxFiles, Math.trunc(expectedFilesRaw)));
+
+  return {
+    mediaMode,
+    acceptMode,
+    maxFiles,
+    expectedFiles,
+    trackingRender,
+  };
+}
+
+export function parseFileStorageTokens(value: string | null | undefined): FileStorageToken[] {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  const singleMatch = raw.match(/^(att|draftatt):(\d+)$/);
+  if (singleMatch) {
+    return [{ kind: singleMatch[1] as "att" | "draftatt", id: Number(singleMatch[2]) }];
+  }
+
+  const groupMatch = raw.match(/^(atts|draftatts):(.+)$/);
+  if (!groupMatch) return [];
+
+  const kind = groupMatch[1] === "atts" ? "att" : "draftatt";
+  return groupMatch[2]
+    .split(",")
+    .map((part) => Number(part.trim()))
+    .filter((id) => Number.isInteger(id) && id > 0)
+    .map((id) => ({ kind, id }));
+}
+
+export function buildFileStorageKeyFromTokens(tokens: FileStorageToken[]) {
+  const valid = tokens.filter((token) => Number.isInteger(token.id) && token.id > 0);
+  if (valid.length === 0) return null;
+  if (valid.length === 1) return `${valid[0].kind}:${valid[0].id}`;
+  const kinds = new Set(valid.map((token) => token.kind));
+  if (kinds.size !== 1) return null;
+  return `${valid[0].kind === "att" ? "atts" : "draftatts"}:${valid.map((token) => token.id).join(",")}`;
+}
+
 export function isOrderFieldValueFilled(
   fieldType: string,
   value: Pick<OrderFieldValueLike, "valueText" | "valueNumber" | "fileStorageKey">,
 ) {
   const normalizedType = String(fieldType || "").trim().toUpperCase();
-  if (normalizedType === "FILE") return Boolean(String(value.fileStorageKey || "").trim());
+  if (normalizedType === "FILE") return parseFileStorageTokens(value.fileStorageKey).length > 0;
   if (normalizedType === "NUMBER" || normalizedType === "MONEY") {
     return value.valueNumber !== null && value.valueNumber !== undefined && String(value.valueNumber).trim() !== "";
   }

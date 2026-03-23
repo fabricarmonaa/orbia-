@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { ArrowDown, ArrowUp, Pencil, Plus, Eye, EyeOff, Trash2 } from "lucide-react";
+import { resolveFileFieldBehavior } from "@shared/order-fields";
 
 type OrderType = { id: number; code: string; label: string; isActive: boolean };
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
@@ -26,7 +27,26 @@ type OrderField = {
   useInAgenda?: boolean;
   sortOrder: number;
   deletedAt?: string | null;
-  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean; sectionLabel?: string; sectionOrder?: number };
+  config?: {
+    allowedExtensions?: string[];
+    options?: string[];
+    affectsCustomers?: boolean;
+    affectsCash?: boolean;
+    affectsReports?: boolean;
+    isCriticalField?: boolean;
+    placeholder?: string;
+    defaultValue?: string | number | null;
+    currencyCode?: string;
+    visibleInForm?: boolean;
+    showWhenEmpty?: boolean;
+    sectionLabel?: string;
+    sectionOrder?: number;
+    mediaMode?: "single" | "gallery" | "attachments";
+    acceptMode?: "images" | "mixed";
+    maxFiles?: number;
+    expectedFiles?: number | null;
+    trackingRender?: "grid" | "carousel" | "list";
+  };
   isSystemDefault: boolean;
   isActive: boolean;
 };
@@ -108,6 +128,7 @@ function normalizeCreateFormForFieldType(
     next.placeholder = "";
     next.defaultValue = "";
     next.useInAgenda = false;
+    next.allowedExtensions = next.allowedExtensions.length > 0 ? next.allowedExtensions : ["pdf", "jpg", "png", "jpeg"];
   }
 
   if (nextType !== "FILE" && next.allowedExtensions.length === 0) {
@@ -191,6 +212,11 @@ export function OrderPresetsSettings() {
     defaultValue: "",
     currencyCode: "ARS",
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
+    mediaMode: "single" as "single" | "gallery" | "attachments",
+    acceptMode: "mixed" as "images" | "mixed",
+    maxFiles: "1",
+    expectedFiles: "",
+    trackingRender: "list" as "grid" | "carousel" | "list",
     selectOptions: [""] as string[],
     sectionLabel: "",
     sectionOrder: "",
@@ -206,6 +232,11 @@ export function OrderPresetsSettings() {
     defaultValue: "",
     currencyCode: "ARS",
     allowedExtensions: [] as string[],
+    mediaMode: "single" as "single" | "gallery" | "attachments",
+    acceptMode: "mixed" as "images" | "mixed",
+    maxFiles: "1",
+    expectedFiles: "",
+    trackingRender: "list" as "grid" | "carousel" | "list",
     selectOptions: [] as string[],
     sectionLabel: "",
     sectionOrder: "",
@@ -374,7 +405,15 @@ export function OrderPresetsSettings() {
         },
       };
       if (createForm.fieldType === "FILE") {
-        payload.config = { ...payload.config, allowedExtensions: createForm.allowedExtensions };
+        payload.config = {
+          ...payload.config,
+          allowedExtensions: createForm.allowedExtensions,
+          mediaMode: createForm.mediaMode,
+          acceptMode: createForm.acceptMode,
+          maxFiles: Number(createForm.maxFiles || 1),
+          expectedFiles: createForm.expectedFiles === "" ? undefined : Number(createForm.expectedFiles),
+          trackingRender: createForm.trackingRender,
+        };
       }
       if (createForm.fieldType === "SELECT" || createForm.fieldType === "CHECKBOX") {
         payload.config = { ...payload.config, options: normalizeOptions((createForm as any).selectOptions || []) };
@@ -384,7 +423,25 @@ export function OrderPresetsSettings() {
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, placeholder: "", defaultValue: "", currencyCode: "ARS", allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""], sectionLabel: "", sectionOrder: "" } as any);
+      setCreateForm({
+        label: "",
+        fieldType: "TEXT",
+        required: false,
+        visibleInTracking: false,
+        useInAgenda: false,
+        placeholder: "",
+        defaultValue: "",
+        currencyCode: "ARS",
+        allowedExtensions: ["pdf", "jpg", "png", "jpeg"],
+        mediaMode: "single",
+        acceptMode: "mixed",
+        maxFiles: "1",
+        expectedFiles: "",
+        trackingRender: "list",
+        selectOptions: [""],
+        sectionLabel: "",
+        sectionOrder: "",
+      } as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -476,7 +533,7 @@ export function OrderPresetsSettings() {
       <CardHeader className="flex flex-row items-center justify-between gap-3">
         <div>
           <h3 className="font-semibold">Presets por tipo de pedido</h3>
-          <p className="text-sm text-muted-foreground">Configurá campos custom distribuidos en hasta 3 presets por tipo de pedido.</p>
+          <p className="text-sm text-muted-foreground">Configurá campos custom distribuidos en hasta 5 presets por tipo de pedido.</p>
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -616,6 +673,11 @@ export function OrderPresetsSettings() {
                             defaultValue: String((f.config as any)?.defaultValue ?? ""),
                             currencyCode: String((f.config as any)?.currencyCode || "ARS"),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
+                            mediaMode: resolveFileFieldBehavior(f.config).mediaMode,
+                            acceptMode: resolveFileFieldBehavior(f.config).acceptMode,
+                            maxFiles: String(resolveFileFieldBehavior(f.config).maxFiles),
+                            expectedFiles: resolveFileFieldBehavior(f.config).expectedFiles == null ? "" : String(resolveFileFieldBehavior(f.config).expectedFiles),
+                            trackingRender: resolveFileFieldBehavior(f.config).trackingRender,
                             selectOptions: normalizeOptions((f.config as any)?.options || [""]),
                             sectionLabel: String((f.config as any)?.sectionLabel || (f.config as any)?.sectionName || ""),
                             sectionOrder: String((f.config as any)?.sectionOrder ?? ""),
@@ -650,7 +712,7 @@ export function OrderPresetsSettings() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Nuevo Preset</DialogTitle>
-            <DialogDescription>Crear un nuevo conjunto de campos para {activeCode}. (Máximo 3)</DialogDescription>
+            <DialogDescription>Crear un nuevo conjunto de campos para {activeCode}. (Máximo 5)</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1">
@@ -796,6 +858,60 @@ export function OrderPresetsSettings() {
 
             {createForm.fieldType === "FILE" ? (
               <div className="space-y-3 p-3 bg-muted/50 rounded-md">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Modo del bloque</Label>
+                    <Select value={createForm.mediaMode} onValueChange={(value: "single" | "gallery" | "attachments") => setCreateForm((s) => {
+                      const nextAcceptMode = value === "gallery" ? "images" : s.acceptMode;
+                      const nextTrackingRender = value === "gallery"
+                        ? (s.trackingRender === "list" ? "grid" : s.trackingRender)
+                        : (s.trackingRender === "grid" || s.trackingRender === "carousel" ? s.trackingRender : "list");
+                      return {
+                        ...s,
+                        mediaMode: value,
+                        acceptMode: nextAcceptMode,
+                        maxFiles: value === "single" ? "1" : (Number(s.maxFiles || 1) > 1 ? s.maxFiles : "6"),
+                        trackingRender: nextTrackingRender,
+                      };
+                    })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="single">Archivo único</SelectItem>
+                        <SelectItem value="gallery">Galería de imágenes</SelectItem>
+                        <SelectItem value="attachments">Múltiples adjuntos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Acepta</Label>
+                    <Select value={createForm.acceptMode} onValueChange={(value: "images" | "mixed") => setCreateForm((s) => ({ ...s, acceptMode: value }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mixed">Archivos mixtos</SelectItem>
+                        <SelectItem value="images">Solo imágenes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Máximo de archivos</Label>
+                    <Input type="number" min={1} max={20} value={createForm.maxFiles} onChange={(e) => setCreateForm((s) => ({ ...s, maxFiles: e.target.value }))} disabled={createForm.mediaMode === "single"} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Esperado / sugerido</Label>
+                    <Input type="number" min={1} max={20} value={createForm.expectedFiles} onChange={(e) => setCreateForm((s) => ({ ...s, expectedFiles: e.target.value }))} placeholder="Opcional" disabled={createForm.mediaMode === "single"} />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>Render en tracking</Label>
+                    <Select value={createForm.trackingRender} onValueChange={(value: "grid" | "carousel" | "list") => setCreateForm((s) => ({ ...s, trackingRender: value }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="list">Lista</SelectItem>
+                        <SelectItem value="grid">Grilla</SelectItem>
+                        <SelectItem value="carousel">Carrusel</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <Label>Extensiones permitidas</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {FILE_EXTENSIONS.map((ext) => (
@@ -808,6 +924,9 @@ export function OrderPresetsSettings() {
                     </label>
                   ))}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Usá “Galería” para fotos múltiples y “Múltiples adjuntos” para documentos o combinaciones de archivos.
+                </p>
               </div>
             ) : null}
 
@@ -905,6 +1024,60 @@ export function OrderPresetsSettings() {
 
             {editTarget?.fieldType === "FILE" ? (
               <div className="space-y-3 p-3 bg-muted/50 rounded-md">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label>Modo del bloque</Label>
+                    <Select value={editForm.mediaMode} onValueChange={(value: "single" | "gallery" | "attachments") => setEditForm((s) => {
+                      const nextAcceptMode = value === "gallery" ? "images" : s.acceptMode;
+                      const nextTrackingRender = value === "gallery"
+                        ? (s.trackingRender === "list" ? "grid" : s.trackingRender)
+                        : (s.trackingRender === "grid" || s.trackingRender === "carousel" ? s.trackingRender : "list");
+                      return {
+                        ...s,
+                        mediaMode: value,
+                        acceptMode: nextAcceptMode,
+                        maxFiles: value === "single" ? "1" : (Number(s.maxFiles || 1) > 1 ? s.maxFiles : "6"),
+                        trackingRender: nextTrackingRender,
+                      };
+                    })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="single">Archivo único</SelectItem>
+                        <SelectItem value="gallery">Galería de imágenes</SelectItem>
+                        <SelectItem value="attachments">Múltiples adjuntos</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Acepta</Label>
+                    <Select value={editForm.acceptMode} onValueChange={(value: "images" | "mixed") => setEditForm((s) => ({ ...s, acceptMode: value }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mixed">Archivos mixtos</SelectItem>
+                        <SelectItem value="images">Solo imágenes</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Máximo de archivos</Label>
+                    <Input type="number" min={1} max={20} value={editForm.maxFiles} onChange={(e) => setEditForm((s) => ({ ...s, maxFiles: e.target.value }))} disabled={editForm.mediaMode === "single"} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Esperado / sugerido</Label>
+                    <Input type="number" min={1} max={20} value={editForm.expectedFiles} onChange={(e) => setEditForm((s) => ({ ...s, expectedFiles: e.target.value }))} placeholder="Opcional" disabled={editForm.mediaMode === "single"} />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>Render en tracking</Label>
+                    <Select value={editForm.trackingRender} onValueChange={(value: "grid" | "carousel" | "list") => setEditForm((s) => ({ ...s, trackingRender: value }))}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="list">Lista</SelectItem>
+                        <SelectItem value="grid">Grilla</SelectItem>
+                        <SelectItem value="carousel">Carrusel</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
                 <Label>Extensiones permitidas</Label>
                 <div className="grid grid-cols-2 gap-2">
                   {FILE_EXTENSIONS.map((ext) => (
@@ -917,6 +1090,9 @@ export function OrderPresetsSettings() {
                     </label>
                   ))}
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  El tracking público usará esta preferencia para mostrar imágenes y adjuntos agrupados.
+                </p>
               </div>
             ) : null}
 
@@ -981,7 +1157,17 @@ export function OrderPresetsSettings() {
                   if (editTarget.fieldType === "DATE" || editTarget.fieldType === "DATETIME") {
                     patch.useInAgenda = editForm.useInAgenda;
                   }
-                  if (editTarget.fieldType === "FILE") patch.config = { ...patch.config, allowedExtensions: editForm.allowedExtensions };
+                  if (editTarget.fieldType === "FILE") {
+                    patch.config = {
+                      ...patch.config,
+                      allowedExtensions: editForm.allowedExtensions,
+                      mediaMode: editForm.mediaMode,
+                      acceptMode: editForm.acceptMode,
+                      maxFiles: Number(editForm.maxFiles || 1),
+                      expectedFiles: editForm.expectedFiles === "" ? undefined : Number(editForm.expectedFiles),
+                      trackingRender: editForm.trackingRender,
+                    };
+                  }
                   if (editTarget.fieldType === "SELECT" || editTarget.fieldType === "CHECKBOX") {
                     patch.config = { ...patch.config, options: normalizeOptions(editForm.selectOptions || []) };
                   }

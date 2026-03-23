@@ -2,8 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildNativeOrderFieldTemplate,
+  buildFileStorageKeyFromTokens,
   formatMoneyValue,
   normalizeOrderFieldType,
+  parseFileStorageTokens,
+  resolveFileFieldBehavior,
   resolveCreateOrderFieldLayout,
   resolveNativeOrderFieldKind,
   resolveOrderFieldDefinition,
@@ -91,6 +94,7 @@ test("tracking público oculta vacíos por defecto y puede mostrarlos con showWh
 test("considera adjuntos temporales o definitivos como válidos para campos FILE", () => {
   assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "draftatt:12" }), true);
   assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "att:34" }), true);
+  assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "draftatts:12,13" }), true);
   assert.equal(isOrderFieldValueFilled("FILE", { fileStorageKey: "" }), false);
 });
 
@@ -136,4 +140,28 @@ test("el layout excluye campos inactivos, borrados o invisibles en formulario", 
 
   assert.deepEqual(layout.baseFields.map((field) => field.fieldKey), ["customer_phone"]);
   assert.equal(layout.customFields.length, 0);
+});
+
+test("resuelve comportamiento de bloques multimedia y serializa storage keys múltiples", () => {
+  const behavior = resolveFileFieldBehavior({
+    mediaMode: "gallery",
+    acceptMode: "images",
+    maxFiles: 6,
+    expectedFiles: 4,
+    trackingRender: "carousel",
+  });
+
+  assert.equal(behavior.mediaMode, "gallery");
+  assert.equal(behavior.acceptMode, "images");
+  assert.equal(behavior.maxFiles, 6);
+  assert.equal(behavior.expectedFiles, 4);
+  assert.equal(behavior.trackingRender, "carousel");
+
+  const tokens = parseFileStorageTokens("draftatts:4,8,15");
+  assert.deepEqual(tokens, [
+    { kind: "draftatt", id: 4 },
+    { kind: "draftatt", id: 8 },
+    { kind: "draftatt", id: 15 },
+  ]);
+  assert.equal(buildFileStorageKeyFromTokens(tokens), "draftatts:4,8,15");
 });

@@ -11,6 +11,7 @@ import {
   type InsertOrderAttachment,
 } from "@shared/schema/order-presets";
 import { HttpError } from "../lib/http-errors";
+import { buildFileStorageKeyFromTokens, parseFileStorageTokens, resolveFileFieldBehavior } from "@shared/order-fields";
 
 const STORAGE_ROOT = path.join(process.cwd(), "storage");
 const DEFAULT_ALLOWED = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"];
@@ -130,21 +131,40 @@ export async function storeDraftAttachment(params: {
   const relativeFilePath = path.join(relativeDir, storedName).replace(/\\/g, "/");
   const absoluteDestPath = path.join(STORAGE_ROOT, relativeFilePath);
 
-  const previous = await db
-    .select()
-    .from(orderDraftAttachments)
-    .where(
-      and(
-        eq(orderDraftAttachments.tenantId, params.tenantId),
-        eq(orderDraftAttachments.userId, params.userId),
-        eq(orderDraftAttachments.draftKey, draftKey),
-        eq(orderDraftAttachments.fieldDefinitionId, params.fieldDefinitionId),
-      )
-    );
+  const fileBehavior = resolveFileFieldBehavior(fieldDef.config);
+  if (fileBehavior.mediaMode === "single") {
+    const previous = await db
+      .select()
+      .from(orderDraftAttachments)
+      .where(
+        and(
+          eq(orderDraftAttachments.tenantId, params.tenantId),
+          eq(orderDraftAttachments.userId, params.userId),
+          eq(orderDraftAttachments.draftKey, draftKey),
+          eq(orderDraftAttachments.fieldDefinitionId, params.fieldDefinitionId),
+        )
+      );
 
-  for (const row of previous) {
-    await db.delete(orderDraftAttachments).where(eq(orderDraftAttachments.id, row.id));
-    await unlinkSafe(row.storagePath);
+    for (const row of previous) {
+      await db.delete(orderDraftAttachments).where(eq(orderDraftAttachments.id, row.id));
+      await unlinkSafe(row.storagePath);
+    }
+  } else {
+    const currentCount = await db
+      .select({ id: orderDraftAttachments.id })
+      .from(orderDraftAttachments)
+      .where(
+        and(
+          eq(orderDraftAttachments.tenantId, params.tenantId),
+          eq(orderDraftAttachments.userId, params.userId),
+          eq(orderDraftAttachments.draftKey, draftKey),
+          eq(orderDraftAttachments.fieldDefinitionId, params.fieldDefinitionId),
+        )
+      );
+    if (currentCount.length >= fileBehavior.maxFiles) {
+      await fs.unlink(params.tmpPath).catch(() => {});
+      throw new HttpError(400, "DRAFT_ATTACHMENT_LIMIT", `Este bloque permite hasta ${fileBehavior.maxFiles} archivo(s)`);
+    }
   }
 
   let draftAttachment;
@@ -216,50 +236,80 @@ export async function promoteDraftAttachmentsForOrder(params: {
   const nextValues = [];
 
   for (const row of params.normalized) {
-    const draftAttachmentId = parseDraftAttachmentKey(row.fileStorageKey);
-    if (!draftAttachmentId) {
+    const draftTokens = parseFileStorageTokens(row.fileStorageKey).filter((token) => token.kind === "draftatt");
+    if (draftTokens.length === 0) {
       nextValues.push(row);
       continue;
     }
     const draftKey = normalizeDraftKey(params.draftKey);
+    const promotedTokens = [];
 
-    const [draftAttachment] = await params.tx
-      .select()
-      .from(orderDraftAttachments)
-      .where(
-        and(
-          eq(orderDraftAttachments.id, draftAttachmentId),
-          eq(orderDraftAttachments.tenantId, params.tenantId),
-          eq(orderDraftAttachments.userId, params.userId),
-          eq(orderDraftAttachments.draftKey, draftKey),
-          eq(orderDraftAttachments.fieldDefinitionId, row.fieldDefinitionId),
-        )
-      );
+    for (const token of draftTokens) {
+      const [draftAttachment] = await params.tx
+        .select()
+        .from(orderDraftAttachments)
+        .where(
+          and(
+            eq(orderDraftAttachments.id, token.id),
+            eq(orderDraftAttachments.tenantId, params.tenantId),
+            eq(orderDraftAttachments.userId, params.userId),
+            eq(orderDraftAttachments.draftKey, draftKey),
+            eq(orderDraftAttachments.fieldDefinitionId, row.fieldDefinitionId),
+          )
+        );
 
-    if (!draftAttachment) {
-      throw new HttpError(400, "DRAFT_ATTACHMENT_NOT_FOUND", "No se encontró el adjunto temporal seleccionado");
+      if (!draftAttachment) {
+        throw new HttpError(400, "DRAFT_ATTACHMENT_NOT_FOUND", "No se encontró el adjunto temporal seleccionado");
+      }
+
+      const insertValues: InsertOrderAttachment = {
+        tenantId: params.tenantId,
+        orderId: params.orderId,
+        fieldDefinitionId: row.fieldDefinitionId,
+        originalName: draftAttachment.originalName,
+        storedName: draftAttachment.storedName,
+        mimeType: draftAttachment.mimeType,
+        sizeBytes: draftAttachment.sizeBytes,
+        storagePath: draftAttachment.storagePath,
+      };
+      const [attachment] = await params.tx.insert(orderAttachments).values(insertValues).returning();
+      await params.tx.delete(orderDraftAttachments).where(eq(orderDraftAttachments.id, draftAttachment.id));
+      promotedTokens.push({ kind: "att" as const, id: attachment.id });
     }
-
-    const insertValues: InsertOrderAttachment = {
-      tenantId: params.tenantId,
-      orderId: params.orderId,
-      fieldDefinitionId: row.fieldDefinitionId,
-      originalName: draftAttachment.originalName,
-      storedName: draftAttachment.storedName,
-      mimeType: draftAttachment.mimeType,
-      sizeBytes: draftAttachment.sizeBytes,
-      storagePath: draftAttachment.storagePath,
-    };
-    const [attachment] = await params.tx.insert(orderAttachments).values(insertValues).returning();
-    await params.tx.delete(orderDraftAttachments).where(eq(orderDraftAttachments.id, draftAttachment.id));
 
     nextValues.push({
       ...row,
-      fileStorageKey: `att:${attachment.id}`,
+      fileStorageKey: buildFileStorageKeyFromTokens(promotedTokens),
     });
   }
 
   return nextValues;
+}
+
+export async function getDraftAttachmentPath(params: {
+  tenantId: number;
+  userId: number;
+  draftAttachmentId: number;
+  draftKey?: string | null;
+}) {
+  const [attachment] = await db
+    .select()
+    .from(orderDraftAttachments)
+    .where(
+      and(
+        eq(orderDraftAttachments.id, params.draftAttachmentId),
+        eq(orderDraftAttachments.tenantId, params.tenantId),
+        eq(orderDraftAttachments.userId, params.userId),
+        params.draftKey ? eq(orderDraftAttachments.draftKey, normalizeDraftKey(params.draftKey)) : undefined,
+      )
+    );
+
+  if (!attachment) throw new HttpError(404, "DRAFT_ATTACHMENT_NOT_FOUND", "Adjunto temporal no encontrado");
+  const safeStoragePath = path.normalize(attachment.storagePath).replace(/^(\.\.(\/|\\|$))+/, "");
+  return {
+    attachment,
+    absolutePath: path.join(STORAGE_ROOT, safeStoragePath),
+  };
 }
 
 export async function clearRemainingDraftAttachments(params: {

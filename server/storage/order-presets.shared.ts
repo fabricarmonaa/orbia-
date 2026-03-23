@@ -1,4 +1,4 @@
-import { ORDER_FIELD_TYPES, normalizeOrderFieldType } from "@shared/order-fields";
+import { ORDER_FIELD_TYPES, normalizeOrderFieldType, resolveFileFieldBehavior } from "@shared/order-fields";
 import { badRequest } from "../lib/http-errors";
 
 const ALLOWED_FIELD_TYPES = new Set(ORDER_FIELD_TYPES);
@@ -99,7 +99,23 @@ export function normalizeOrderPresetFieldConfig(fieldType: "TEXT" | "TEXT_LONG" 
     );
   }
 
+  const behavior = resolveFileFieldBehavior(base);
+  if (behavior.acceptMode === "images") {
+    const nonImageExtensions = normalized.filter((ext) => !["jpg", "png", "jpeg", "jfif"].includes(ext));
+    if (nonImageExtensions.length > 0) {
+      throw badRequest(
+        "ORDER_PRESET_VALIDATION_ERROR",
+        `Solo se permiten imágenes cuando el bloque acepta imágenes: ${nonImageExtensions.join(", ")}`
+      );
+    }
+  }
+
   base.allowedExtensions = normalized;
+  base.mediaMode = behavior.mediaMode;
+  base.acceptMode = behavior.acceptMode;
+  base.maxFiles = behavior.maxFiles;
+  base.expectedFiles = behavior.expectedFiles;
+  base.trackingRender = behavior.trackingRender;
   return base;
 }
 

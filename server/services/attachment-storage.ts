@@ -6,6 +6,7 @@ import { db } from "../db";
 import { orderAttachments, orderFieldValues, orderFieldDefinitions } from "@shared/schema/order-presets";
 import { eq, and } from "drizzle-orm";
 import { HttpError } from "../lib/http-errors";
+import { buildFileStorageKeyFromTokens, parseFileStorageTokens, resolveFileFieldBehavior } from "@shared/order-fields";
 
 const STORAGE_ROOT = path.join(process.cwd(), "storage");
 
@@ -43,6 +44,7 @@ export async function validateAndStoreAttachment(
     }
 
     const allowedExtensions = (fieldDef.config as any)?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"];
+    const fileBehavior = resolveFileFieldBehavior(fieldDef.config);
     const originalExt = originalName.split(".").pop()?.toLowerCase();
 
     // 3. Validar extensión "lógica" (nombre del archivo)
@@ -119,30 +121,41 @@ export async function validateAndStoreAttachment(
             const storageKey = `att:${attachment.id}`;
 
             if (existingFieldValue) {
-                const previousStorageKey = String(existingFieldValue.fileStorageKey || "");
-                const match = previousStorageKey.match(/^att:(\d+)$/);
-                if (match) {
-                    const previousAttachmentId = Number(match[1]);
-                    const [previousAttachment] = await tx
-                        .select()
-                        .from(orderAttachments)
-                        .where(and(eq(orderAttachments.id, previousAttachmentId), eq(orderAttachments.orderId, orderId), eq(orderAttachments.tenantId, tenantId)));
-                    if (previousAttachment?.storagePath) {
-                        oldAttachmentPath = previousAttachment.storagePath;
-                    }
-                    await tx.delete(orderAttachments).where(eq(orderAttachments.id, previousAttachmentId));
-                }
+                const previousTokens = parseFileStorageTokens(String(existingFieldValue.fileStorageKey || "")).filter((token) => token.kind === "att");
 
-                await tx
-                    .update(orderFieldValues)
-                    .set({ fileStorageKey: storageKey })
-                    .where(eq(orderFieldValues.id, existingFieldValue.id));
+                if (fileBehavior.mediaMode === "single") {
+                    for (const token of previousTokens) {
+                        const [previousAttachment] = await tx
+                            .select()
+                            .from(orderAttachments)
+                            .where(and(eq(orderAttachments.id, token.id), eq(orderAttachments.orderId, orderId), eq(orderAttachments.tenantId, tenantId)));
+                        if (previousAttachment?.storagePath) {
+                            oldAttachmentPath = previousAttachment.storagePath;
+                        }
+                        await tx.delete(orderAttachments).where(eq(orderAttachments.id, token.id));
+                    }
+                    await tx
+                        .update(orderFieldValues)
+                        .set({ fileStorageKey: storageKey })
+                        .where(eq(orderFieldValues.id, existingFieldValue.id));
+                } else {
+                    if (previousTokens.length >= fileBehavior.maxFiles) {
+                        throw new HttpError(400, "ATTACHMENT_LIMIT", `Este bloque permite hasta ${fileBehavior.maxFiles} archivo(s)`);
+                    }
+                    const nextStorageKey = buildFileStorageKeyFromTokens([...previousTokens, { kind: "att", id: attachment.id }]);
+                    await tx
+                        .update(orderFieldValues)
+                        .set({ fileStorageKey: nextStorageKey })
+                        .where(eq(orderFieldValues.id, existingFieldValue.id));
+                }
             } else {
                 await tx.insert(orderFieldValues).values({
                     tenantId,
                     orderId,
                     fieldDefinitionId,
-                    fileStorageKey: storageKey,
+                    fileStorageKey: fileBehavior.mediaMode === "single"
+                        ? storageKey
+                        : buildFileStorageKeyFromTokens([{ kind: "att", id: attachment.id }]),
                 });
             }
         });

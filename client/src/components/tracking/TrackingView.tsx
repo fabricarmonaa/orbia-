@@ -33,6 +33,7 @@ export interface TrackingOrderData {
     groupId?: string | null;
     groupLabel?: string | null;
     slotIndex?: number | null;
+    trackingRender?: "grid" | "carousel" | "list" | null;
   }>;
   trackingLayout: string;
   trackingTosText?: string | null;
@@ -188,20 +189,30 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
                     .filter((f) => f.fieldType === "FILE" && !isImageAttachment(f))
                     .sort((a, b) => (a.slotIndex || 0) - (b.slotIndex || 0));
                   const firstUpdatedAt = group.items?.find((f) => f.updatedAt)?.updatedAt;
+                  const trackingRender = group.items?.find((f) => f.trackingRender)?.trackingRender || "list";
 
                   return (
                     <div key={`${group.key}-${idx}`} className="rounded-md p-3 space-y-2" style={{ backgroundColor: `${colors.accent}14`, textAlign: group.align }}>
                       <p className="text-xs" style={{ color: mutedText }}>{group.label}</p>
 
                       {images.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2" style={{ justifyItems: justifyForAlignment(group.align) }}>
+                        <div
+                          className={
+                            trackingRender === "carousel"
+                              ? "flex gap-2 overflow-x-auto pb-1"
+                              : trackingRender === "list"
+                                ? "space-y-2"
+                                : "grid grid-cols-2 sm:grid-cols-3 gap-2"
+                          }
+                          style={trackingRender === "grid" ? { justifyItems: justifyForAlignment(group.align) } : undefined}
+                        >
                           {images.map((img, imageIdx) => (
                             <a
                               key={`${group.key}-img-${imageIdx}`}
                               href={img.downloadUrl || img.previewUrl || "#"}
                               target="_blank"
                               rel="noreferrer noopener"
-                              className="block rounded-md overflow-hidden border aspect-square bg-black/5"
+                              className={`block rounded-md overflow-hidden border bg-black/5 ${trackingRender === "carousel" ? "w-48 h-48 flex-shrink-0" : trackingRender === "list" ? "w-full h-40" : "aspect-square"}`}
                               style={{ borderColor }}
                               title={img.value || group.label}
                             >

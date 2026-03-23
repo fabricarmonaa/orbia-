@@ -56,9 +56,13 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
+import { MediaGroupFieldInput, type MediaGroupItem } from "@/components/orders/MediaGroupFieldInput";
 import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
 import {
+  buildFileStorageKeyFromTokens,
   formatMoneyValue,
+  parseFileStorageTokens,
+  resolveFileFieldBehavior,
   resolveNativeOrderFieldKind,
   resolveOrderFieldDefinition,
 } from "@shared/order-fields";
@@ -96,6 +100,7 @@ type CustomFieldInputState = {
   valueText?: string;
   valueNumber?: string;
   fileStorageKey?: string | null;
+  fileItems?: MediaGroupItem[];
   visibleOverride?: boolean | null;
   attachmentName?: string | null;
   attachmentSizeBytes?: number | null;
@@ -274,10 +279,12 @@ export default function OrdersPage() {
         const next: Record<number, CustomFieldInputState> = {};
         for (const f of resolveOrderCreateLayout(allFields).customFields) {
           const resolved = resolveOrderFieldDefinition(f);
+          const fileBehavior = resolveFileFieldBehavior(f.config);
           next[f.id] = prev[f.id] || {
             visibleOverride: null,
             valueText: typeof resolved.defaultValue === "string" ? resolved.defaultValue : undefined,
             valueNumber: typeof resolved.defaultValue === "number" ? String(resolved.defaultValue) : undefined,
+            fileItems: fileBehavior.mediaMode === "single" ? undefined : [],
           };
         }
         return next;
@@ -327,11 +334,19 @@ export default function OrdersPage() {
     try {
       const customFields = customPresetFields.map((field) => {
         const raw = customFieldInputs[field.id] || {};
+        const fileBehavior = resolveFileFieldBehavior(field.config);
+        const resolvedStorageKey = field.fieldType === "FILE"
+          ? (
+            fileBehavior.mediaMode === "single"
+              ? (raw.fileStorageKey || null)
+              : buildFileStorageKeyFromTokens((raw.fileItems || []).flatMap((item) => parseFileStorageTokens(item.storageKey)))
+          )
+          : undefined;
         return {
           fieldId: field.id,
           valueText: ["TEXT", "TEXT_LONG", "DATE", "TIME", "DATETIME", "CHECKBOX", "SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
           valueNumber: ["NUMBER", "MONEY"].includes(field.fieldType) ? (raw.valueNumber || null) : undefined,
-          fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
+          fileStorageKey: resolvedStorageKey,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
         };
       });
@@ -546,9 +561,26 @@ export default function OrdersPage() {
     return "";
   }
 
+  function buildOrderAttachmentUrl(orderId: number | string, storageKey: string) {
+    const token = parseFileStorageTokens(storageKey).find((current) => current.kind === "att");
+    if (!token || orderId === "new") return null;
+    return `/api/orders/${orderId}/attachments/${token.id}`;
+  }
+
+  function getMediaItemsFromState(field: OrderPresetField, fieldState: CustomFieldInputState) {
+    if (fieldState.fileItems && fieldState.fileItems.length > 0) return fieldState.fileItems;
+    return parseFileStorageTokens(fieldState.fileStorageKey || null).map((token, index) => ({
+      storageKey: token.kind === "att" ? `att:${token.id}` : `draftatt:${token.id}`,
+      originalName: index === 0 ? fieldState.attachmentName || field.label : `${field.label} ${index + 1}`,
+      mimeType: fieldState.attachmentMimeType || null,
+      sizeBytes: fieldState.attachmentSizeBytes || null,
+    }));
+  }
+
   function renderPresetField(field: OrderPresetField) {
     const kind = resolveNativeOrderFieldKind(field);
     const resolved = resolveOrderFieldDefinition(field);
+    const fileBehavior = resolveFileFieldBehavior(field.config);
     const moneyBadge = kind === "total"
       ? (!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
         ? "Sin monto"
@@ -650,6 +682,7 @@ export default function OrdersPage() {
     }
 
     const fieldState = customFieldInputs[field.id] || {};
+    const mediaItems = getMediaItemsFromState(field, fieldState);
     return (
       <div key={field.id} className="space-y-3 border rounded-md p-3">
         <div className="flex items-center justify-between">
@@ -727,7 +760,29 @@ export default function OrdersPage() {
             Seleccionado
           </label>
         )}
-        {field.fieldType === "FILE" && (
+        {field.fieldType === "FILE" && fileBehavior.mediaMode !== "single" && (
+          <MediaGroupFieldInput
+            orderId="new"
+            draftKey={currentDraftKey}
+            fieldDefinitionId={field.id}
+            allowedExtensions={field.config?.allowedExtensions || ["jpg", "png", "jpeg", "jfif"]}
+            acceptMode={fileBehavior.acceptMode}
+            maxFiles={fileBehavior.maxFiles}
+            items={mediaItems}
+            onChange={(items) => setCustomFieldInputs((prev) => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileItems: items,
+                fileStorageKey: buildFileStorageKeyFromTokens(items.flatMap((item) => parseFileStorageTokens(item.storageKey))),
+                attachmentName: items[0]?.originalName || null,
+                attachmentMimeType: null,
+                attachmentSizeBytes: null,
+              },
+            }))}
+          />
+        )}
+        {field.fieldType === "FILE" && fileBehavior.mediaMode === "single" && (
           <FileFieldInput
             orderId="new"
             draftKey={currentDraftKey}
@@ -1370,23 +1425,43 @@ export default function OrdersPage() {
                         <div key={`${f.fieldId}-${f.fieldKey || "x"}`} className="text-sm flex flex-col justify-between gap-1 border-b border-muted pb-3 last:border-0 last:pb-0">
                           <span className="text-muted-foreground font-medium">{f.label || f.fieldKey || `Campo ${f.fieldId}`}</span>
                           {f.fieldType === "FILE" ? (
-                            <FileFieldInput
-                              orderId={selectedOrder?.id || "new"}
-                              fieldDefinitionId={f.fieldId}
-                              currentAttachmentId={f.fileStorageKey}
-                              currentAttachmentName={String((f as any).valueText || f.label || "Archivo adjunto")}
-                              allowedExtensions={(f as any).config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                              onUploadSuccess={() => {
-                                if (selectedOrder) openDetail(selectedOrder);
-                              }}
-                              onRemoveSuccess={async () => {
-                                try {
-                                  if (selectedOrder) await openDetail(selectedOrder);
-                                } catch (e: any) {
-                                  // refresh best-effort
-                                }
-                              }}
-                            />
+                            parseFileStorageTokens(f.fileStorageKey || null).length > 1 ? (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {parseFileStorageTokens(f.fileStorageKey || null).map((token, index) => {
+                                  const storageKey = `${token.kind}:${token.id}`;
+                                  const downloadUrl = buildOrderAttachmentUrl(selectedOrder?.id || "new", storageKey);
+                                  return (
+                                    <a
+                                      key={storageKey}
+                                      href={downloadUrl || "#"}
+                                      target="_blank"
+                                      rel="noreferrer noopener"
+                                      className="rounded-md border px-3 py-2 text-sm hover:bg-muted/40"
+                                    >
+                                      {`${f.label || "Archivo"} ${index + 1}`}
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <FileFieldInput
+                                orderId={selectedOrder?.id || "new"}
+                                fieldDefinitionId={f.fieldId}
+                                currentAttachmentId={f.fileStorageKey}
+                                currentAttachmentName={String((f as any).valueText || f.label || "Archivo adjunto")}
+                                allowedExtensions={(f as any).config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
+                                onUploadSuccess={() => {
+                                  if (selectedOrder) openDetail(selectedOrder);
+                                }}
+                                onRemoveSuccess={async () => {
+                                  try {
+                                    if (selectedOrder) await openDetail(selectedOrder);
+                                  } catch (e: any) {
+                                    // refresh best-effort
+                                  }
+                                }}
+                              />
+                            )
                           ) : (
                             <span className="break-all">
                               {f.fieldType === "MONEY"
