@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { HttpError } from "../lib/http-errors";
 import { STANDARD_ORDER_TYPES } from "@shared/order-types";
-import { buildCanonicalNativeFieldUpdate, normalizeFieldTypeInput, normalizeOrderPresetFieldConfig } from "./order-presets.shared";
+import { buildCanonicalNativeFieldUpdate, canDeleteOrderPreset, normalizeFieldTypeInput, normalizeOrderPresetFieldConfig, pickFallbackPresetId } from "./order-presets.shared";
 
 test("lista estándar contempla PEDIDO, ENCARGO, TURNO y SERVICIO", () => {
   assert.deepEqual(STANDARD_ORDER_TYPES.map((type) => type.code), ["PEDIDO", "ENCARGO", "TURNO", "SERVICIO"]);
@@ -40,4 +40,17 @@ test("la normalización canónica de campos nativos no reactiva campos desactiva
   assert.equal(patch.isActive, false);
   assert.equal(patch.deletedAt, null);
   assert.equal(patch.fieldKey, "customer_name");
+});
+
+test("no permite eliminar el preset default y resuelve fallback razonable", () => {
+  assert.equal(canDeleteOrderPreset({ code: "default" }), false);
+  assert.equal(canDeleteOrderPreset({ code: "garantia" }), true);
+
+  const fallback = pickFallbackPresetId([
+    { id: 1, code: "default", isActive: true },
+    { id: 2, code: "garantia", isActive: true },
+    { id: 3, code: "express", isActive: false },
+  ], 2);
+
+  assert.equal(fallback, 1);
 });

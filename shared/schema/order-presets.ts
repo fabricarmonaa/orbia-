@@ -49,6 +49,7 @@ export const orderTypePresets = pgTable(
     label: varchar("label", { length: 200 }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [

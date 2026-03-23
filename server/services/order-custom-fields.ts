@@ -48,10 +48,13 @@ export async function validateAndNormalizeCustomFields(
 
   if (orderPresetId) {
     const [preset] = await db
-      .select({ id: orderTypePresets.id, orderTypeId: orderTypePresets.orderTypeId })
+      .select({ id: orderTypePresets.id, orderTypeId: orderTypePresets.orderTypeId, deletedAt: orderTypePresets.deletedAt })
       .from(orderTypePresets)
       .where(and(eq(orderTypePresets.id, orderPresetId), eq(orderTypePresets.tenantId, tenantId)));
     if (!preset) {
+      throw notFound("PRESET_NOT_FOUND", "Preset no encontrado");
+    }
+    if (preset.deletedAt) {
       throw notFound("PRESET_NOT_FOUND", "Preset no encontrado");
     }
     if (preset.orderTypeId !== typeRow.id) {

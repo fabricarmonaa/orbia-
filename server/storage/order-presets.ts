@@ -15,9 +15,11 @@ import {
 } from "@shared/order-fields";
 import {
   buildCanonicalNativeFieldUpdate,
+  canDeleteOrderPreset,
   normalizeFieldTypeInput,
   normalizeOrderPresetFieldConfig,
   ORDER_PRESET_ALLOWED_FILE_EXTENSIONS,
+  pickFallbackPresetId,
 } from "./order-presets.shared";
 
 // ─────────────────────────────────────────────
@@ -87,7 +89,7 @@ async function getPresetOrThrow(tenantId: number, presetId: number) {
   const [preset] = await db
     .select()
     .from(orderTypePresets)
-    .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)));
+    .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId), sql`${orderTypePresets.deletedAt} IS NULL`));
   if (!preset) throw notFound("PRESET_NOT_FOUND", "Preset no encontrado");
   return preset;
 }
@@ -134,7 +136,7 @@ async function ensureDefaultPresetAndAttachLegacyFields(tenantId: number, orderT
   let [defaultPreset] = await db
     .select()
     .from(orderTypePresets)
-    .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, orderTypeId), eq(orderTypePresets.code, "default")))
+    .where(and(eq(orderTypePresets.tenantId, tenantId), eq(orderTypePresets.orderTypeId, orderTypeId), eq(orderTypePresets.code, "default"), sql`${orderTypePresets.deletedAt} IS NULL`))
     .limit(1);
 
   if (!defaultPreset) {
@@ -174,7 +176,8 @@ async function getSystemDefaultTemplates(tenantId: number, orderTypeId: number) 
       and(
         eq(orderTypePresets.tenantId, tenantId),
         eq(orderTypePresets.orderTypeId, orderTypeId),
-        eq(orderTypePresets.code, "default")
+        eq(orderTypePresets.code, "default"),
+        sql`${orderTypePresets.deletedAt} IS NULL`
       )
     )
     .limit(1);
@@ -389,7 +392,8 @@ export const orderPresetsStorage = {
       .where(
         and(
           eq(orderTypePresets.tenantId, tenantId),
-          eq(orderTypePresets.orderTypeId, typeRow.id)
+          eq(orderTypePresets.orderTypeId, typeRow.id),
+          sql`${orderTypePresets.deletedAt} IS NULL`
         )
       )
       .orderBy(asc(orderTypePresets.sortOrder), asc(orderTypePresets.id));
@@ -413,7 +417,8 @@ export const orderPresetsStorage = {
         and(
           eq(orderTypePresets.tenantId, tenantId),
           eq(orderTypePresets.orderTypeId, typeRow.id),
-          eq(orderTypePresets.isActive, true)
+          eq(orderTypePresets.isActive, true),
+          sql`${orderTypePresets.deletedAt} IS NULL`
         )
       );
     if (existingActive.length >= MAX_PRESETS_PER_TYPE) {
@@ -437,11 +442,12 @@ export const orderPresetsStorage = {
         .from(orderTypePresets)
         .where(
           and(
-            eq(orderTypePresets.tenantId, tenantId),
-            eq(orderTypePresets.orderTypeId, typeRow.id),
-            eq(orderTypePresets.code, presetCode)
-          )
-        );
+          eq(orderTypePresets.tenantId, tenantId),
+          eq(orderTypePresets.orderTypeId, typeRow.id),
+          eq(orderTypePresets.code, presetCode),
+          sql`${orderTypePresets.deletedAt} IS NULL`
+        )
+      );
       if (!existing) break;
       presetCode = `${rawCode}-${i}`;
     }
@@ -452,7 +458,8 @@ export const orderPresetsStorage = {
       .where(
         and(
           eq(orderTypePresets.tenantId, tenantId),
-          eq(orderTypePresets.orderTypeId, typeRow.id)
+          eq(orderTypePresets.orderTypeId, typeRow.id),
+          sql`${orderTypePresets.deletedAt} IS NULL`
         )
       )
       .orderBy(desc(orderTypePresets.sortOrder))
@@ -489,7 +496,8 @@ export const orderPresetsStorage = {
           and(
             eq(orderTypePresets.tenantId, tenantId),
             eq(orderTypePresets.orderTypeId, preset.orderTypeId),
-            eq(orderTypePresets.isActive, true)
+            eq(orderTypePresets.isActive, true),
+            sql`${orderTypePresets.deletedAt} IS NULL`
           )
         );
       if (existingActive.length >= MAX_PRESETS_PER_TYPE) {
@@ -518,6 +526,48 @@ export const orderPresetsStorage = {
       .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)))
       .returning();
     return saved;
+  },
+
+  async deletePreset(tenantId: number, presetId: number) {
+    const preset = await getPresetOrThrow(tenantId, presetId);
+    if (!canDeleteOrderPreset({ code: preset.code })) {
+      throw badRequest("PRESET_DELETE_FORBIDDEN", "El preset base/default no se puede eliminar");
+    }
+
+    const remaining = await db
+      .select({
+        id: orderTypePresets.id,
+        code: orderTypePresets.code,
+        isActive: orderTypePresets.isActive,
+      })
+      .from(orderTypePresets)
+      .where(
+        and(
+          eq(orderTypePresets.tenantId, tenantId),
+          eq(orderTypePresets.orderTypeId, preset.orderTypeId),
+          sql`${orderTypePresets.deletedAt} IS NULL`
+        )
+      )
+      .orderBy(asc(orderTypePresets.sortOrder), asc(orderTypePresets.id));
+
+    const fallbackPresetId = pickFallbackPresetId(remaining, presetId);
+    if (!fallbackPresetId) {
+      throw badRequest("PRESET_DELETE_FORBIDDEN", "Debe quedar al menos un preset disponible para este tipo");
+    }
+
+    const [deletedPreset] = await db
+      .update(orderTypePresets)
+      .set({
+        isActive: false,
+        deletedAt: new Date(),
+      })
+      .where(and(eq(orderTypePresets.id, presetId), eq(orderTypePresets.tenantId, tenantId)))
+      .returning();
+
+    return {
+      preset: deletedPreset,
+      fallbackPresetId,
+    };
   },
 
   // ── Fields by preset ─────────────────────────────────────────────────────
@@ -552,7 +602,8 @@ export const orderPresetsStorage = {
         and(
           eq(orderTypePresets.tenantId, tenantId),
           eq(orderTypePresets.orderTypeId, typeRow.id),
-          eq(orderTypePresets.code, "default")
+          eq(orderTypePresets.code, "default"),
+          sql`${orderTypePresets.deletedAt} IS NULL`
         )
       );
 
@@ -669,7 +720,8 @@ export const orderPresetsStorage = {
         and(
           eq(orderTypePresets.tenantId, tenantId),
           eq(orderTypePresets.orderTypeId, typeRow.id),
-          eq(orderTypePresets.code, "default")
+          eq(orderTypePresets.code, "default"),
+          sql`${orderTypePresets.deletedAt} IS NULL`
         )
       );
     if (!defaultPreset) {

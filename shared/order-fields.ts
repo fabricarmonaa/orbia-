@@ -48,6 +48,19 @@ export type ResolvedOrderFieldDefinition<T extends OrderFieldDefinitionLike = Or
   deleted: boolean;
 };
 
+export type OrderFieldSectionMeta = {
+  key: string;
+  label: string;
+  sortOrder: number;
+};
+
+export type ResolvedOrderFieldLayoutSection<T extends OrderFieldDefinitionLike = OrderFieldDefinitionLike> = {
+  key: string;
+  label: string;
+  sortOrder: number;
+  fields: ResolvedOrderFieldDefinition<T>[];
+};
+
 export function normalizeSemanticKey(value: string | null | undefined): string {
   return String(value || "")
     .normalize("NFD")
@@ -201,6 +214,72 @@ export function resolveRenderableOrderFieldsForPreset<T extends OrderFieldDefini
   return resolveRenderableOrderFields(
     fields.filter((field) => presetId == null || field.presetId == null || field.presetId === presetId)
   );
+}
+
+function normalizeSectionLabel(value: unknown) {
+  const label = String(value || "").trim();
+  return label || "General";
+}
+
+export function resolveOrderFieldSectionMeta<T extends OrderFieldDefinitionLike>(field: T): OrderFieldSectionMeta {
+  const config = (field.config || {}) as Record<string, unknown>;
+  const label = normalizeSectionLabel(
+    config.sectionLabel
+      ?? config.sectionName
+      ?? config.groupLabel
+      ?? config.groupName
+  );
+  const key = normalizeSemanticKey(
+    config.sectionKey
+      ?? config.groupKey
+      ?? label
+  ) || "general";
+  const sortOrder = Number(
+    config.sectionOrder
+      ?? config.groupOrder
+      ?? 999
+  );
+
+  return {
+    key,
+    label,
+    sortOrder: Number.isFinite(sortOrder) ? sortOrder : 999,
+  };
+}
+
+export function resolveCreateOrderFieldLayout<T extends OrderFieldDefinitionLike>(fields: T[]) {
+  const renderable = resolveRenderableOrderFields(fields);
+  const baseFields = renderable.filter((field) => isNativeOrderField(field));
+  const customFields = renderable.filter((field) => !isNativeOrderField(field));
+  const sectionsMap = new Map<string, ResolvedOrderFieldLayoutSection<T>>();
+
+  for (const field of customFields) {
+    const meta = resolveOrderFieldSectionMeta(field);
+    const current = sectionsMap.get(meta.key);
+    if (!current) {
+      sectionsMap.set(meta.key, {
+        key: meta.key,
+        label: meta.label,
+        sortOrder: meta.sortOrder,
+        fields: [field],
+      });
+      continue;
+    }
+    current.fields.push(field);
+    if (meta.sortOrder < current.sortOrder) current.sortOrder = meta.sortOrder;
+    if (current.label === "General" && meta.label !== "General") current.label = meta.label;
+  }
+
+  const customSections = Array.from(sectionsMap.values()).sort(
+    (a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label, "es-AR") || a.key.localeCompare(b.key, "es-AR")
+  );
+
+  return {
+    renderable,
+    baseFields,
+    customFields,
+    customSections,
+  };
 }
 
 export function isOrderFieldValueFilled(

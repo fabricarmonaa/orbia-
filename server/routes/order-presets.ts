@@ -166,6 +166,25 @@ export function registerOrderPresetRoutes(app: Express) {
     }
   );
 
+  app.delete(
+    "/api/order-presets/presets/:presetId",
+    tenantAuth,
+    ensurePresetIdParam,
+    requireTenantAdmin,
+    validateParams(presetIdParamSchema),
+    async (req, res) => {
+      try {
+        const result = await orderPresetsStorage.deletePreset(
+          req.auth!.tenantId!,
+          Number(req.params.presetId),
+        );
+        return res.json({ data: result });
+      } catch (err) {
+        return sendApiError(res, err);
+      }
+    }
+  );
+
   // ── Fields by preset ────────────────────────────────────────────────────
   app.get(
     "/api/order-presets/presets/:presetId/fields",

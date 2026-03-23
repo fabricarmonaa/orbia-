@@ -26,7 +26,7 @@ type OrderField = {
   useInAgenda?: boolean;
   sortOrder: number;
   deletedAt?: string | null;
-  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean };
+  config?: { allowedExtensions?: string[]; options?: string[]; affectsCustomers?: boolean; affectsCash?: boolean; affectsReports?: boolean; isCriticalField?: boolean; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean; sectionLabel?: string; sectionOrder?: number };
   isSystemDefault: boolean;
   isActive: boolean;
 };
@@ -81,6 +81,10 @@ function getCriticalWarning(field: OrderField | null) {
   return `Si quitás o desactivás este campo, algunas funciones del sistema pueden dejar de funcionar correctamente${suffix}.`;
 }
 
+function isDefaultPreset(preset: OrderPreset | null) {
+  return String(preset?.code || "").trim().toLowerCase() === "default";
+}
+
 function normalizeCreateFormForFieldType(
   current: {
     label: string;
@@ -93,6 +97,8 @@ function normalizeCreateFormForFieldType(
     currencyCode: string;
     allowedExtensions: string[];
     selectOptions: string[];
+    sectionLabel: string;
+    sectionOrder: string;
   },
   nextType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
 ) {
@@ -170,6 +176,7 @@ export function OrderPresetsSettings() {
   const [openEditPreset, setOpenEditPreset] = useState(false);
   const [editPresetTarget, setEditPresetTarget] = useState<OrderPreset | null>(null);
   const [editPresetLabel, setEditPresetLabel] = useState("");
+  const [deletePresetTarget, setDeletePresetTarget] = useState<OrderPreset | null>(null);
 
   // Field Create/Edit Modals
   const [openCreateField, setOpenCreateField] = useState(false);
@@ -185,6 +192,8 @@ export function OrderPresetsSettings() {
     currencyCode: "ARS",
     allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
     selectOptions: [""] as string[],
+    sectionLabel: "",
+    sectionOrder: "",
   });
   const [editTarget, setEditTarget] = useState<OrderField | null>(null);
   const [editForm, setEditForm] = useState({
@@ -198,6 +207,8 @@ export function OrderPresetsSettings() {
     currencyCode: "ARS",
     allowedExtensions: [] as string[],
     selectOptions: [] as string[],
+    sectionLabel: "",
+    sectionOrder: "",
   });
 
   const sortedFields = useMemo(
@@ -231,8 +242,8 @@ export function OrderPresetsSettings() {
       const nextPresets = json.data || [];
       setPresets(nextPresets);
       if (nextPresets.length > 0) {
-        // select first active or first
-        const toSelect = nextPresets.find(p => p.isActive) || nextPresets[0];
+        const stillSelected = nextPresets.find((p) => p.id === activePresetId && p.isActive);
+        const toSelect = stillSelected || nextPresets.find(p => p.code === "default" && p.isActive) || nextPresets.find(p => p.isActive) || nextPresets[0];
         setActivePresetId(toSelect.id);
       } else {
         setActivePresetId(null);
@@ -322,6 +333,26 @@ export function OrderPresetsSettings() {
     }
   }
 
+  async function deletePreset(preset: OrderPreset) {
+    setSaving(true);
+    try {
+      const json = await apiJson<{ data?: { fallbackPresetId?: number | null } }>(`/api/order-presets/presets/${preset.id}`, {
+        method: "DELETE",
+      });
+      setDeletePresetTarget(null);
+      setOpenEditPreset(false);
+      await loadPresets(activeCode);
+      if (json?.data?.fallbackPresetId) {
+        setActivePresetId(json.data.fallbackPresetId);
+      }
+      toast({ title: "Preset eliminado", description: "Se ocultó del uso activo y el formulario hará fallback al preset disponible." });
+    } catch (err: any) {
+      toast({ title: "No se pudo eliminar el preset", description: err?.message || "Error", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   // Field CRUD
   async function createField() {
     if (!createForm.label.trim() || !activePresetId) return;
@@ -337,6 +368,8 @@ export function OrderPresetsSettings() {
           placeholder: createForm.placeholder || undefined,
           defaultValue: createForm.defaultValue === "" ? undefined : (createForm.fieldType === "NUMBER" || createForm.fieldType === "MONEY" ? Number(createForm.defaultValue) : createForm.defaultValue),
           currencyCode: createForm.fieldType === "MONEY" ? createForm.currencyCode : undefined,
+          sectionLabel: createForm.sectionLabel.trim() || undefined,
+          sectionOrder: createForm.sectionOrder === "" ? undefined : Number(createForm.sectionOrder),
           visibleInForm: true,
         },
       };
@@ -351,7 +384,7 @@ export function OrderPresetsSettings() {
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, placeholder: "", defaultValue: "", currencyCode: "ARS", allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""] } as any);
+      setCreateForm({ label: "", fieldType: "TEXT", required: false, visibleInTracking: false, useInAgenda: false, placeholder: "", defaultValue: "", currencyCode: "ARS", allowedExtensions: ["pdf", "jpg", "png", "jpeg"], selectOptions: [""], sectionLabel: "", sectionOrder: "" } as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -474,6 +507,7 @@ export function OrderPresetsSettings() {
                       className="gap-2"
                     >
                       {p.label}
+                      {isDefaultPreset(p) ? <Badge variant="secondary" className="ml-1">Base</Badge> : null}
                       <Pencil
                         className="w-3 h-3 ml-2 opacity-50 hover:opacity-100"
                         onClick={(e) => {
@@ -519,6 +553,7 @@ export function OrderPresetsSettings() {
                         <Badge variant="secondary">{f.fieldType}</Badge>
                         <Badge variant={f.isSystemDefault ? "outline" : "default"}>{f.isSystemDefault ? "Default" : "Custom"}</Badge>
                         <Badge variant={f.isActive ? "default" : "secondary"}>{f.isActive ? "Activo" : "Inactivo"}</Badge>
+                        {String((f.config as any)?.sectionLabel || "").trim() ? <Badge variant="outline">Sección: {String((f.config as any)?.sectionLabel)}</Badge> : null}
                       </div>
 
                       <div className="flex items-center gap-6 text-sm">
@@ -582,6 +617,8 @@ export function OrderPresetsSettings() {
                             currencyCode: String((f.config as any)?.currencyCode || "ARS"),
                             allowedExtensions: f.fieldType === "FILE" ? (f.config?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"]) : [],
                             selectOptions: normalizeOptions((f.config as any)?.options || [""]),
+                            sectionLabel: String((f.config as any)?.sectionLabel || (f.config as any)?.sectionName || ""),
+                            sectionOrder: String((f.config as any)?.sectionOrder ?? ""),
                           });
                           setOpenEditField(true);
                         }}><Pencil className="w-4 h-4" /></Button>
@@ -638,7 +675,7 @@ export function OrderPresetsSettings() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar Preset</DialogTitle>
-            <DialogDescription>Ajustá el nombre o desactivá este preset.</DialogDescription>
+            <DialogDescription>Ajustá el nombre, archivá o eliminá este preset custom.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="space-y-2">
@@ -648,31 +685,50 @@ export function OrderPresetsSettings() {
                 onChange={(e) => setEditPresetLabel(e.target.value)}
               />
             </div>
+            {isDefaultPreset(editPresetTarget) ? (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+                Este es el preset base del sistema. Se puede editar o archivar, pero no eliminar para preservar la lógica y el fallback seguro.
+              </div>
+            ) : (
+              <div className="rounded-md border border-red-200 bg-red-50/60 p-3 text-sm">
+                <p className="font-medium text-red-700">Eliminar preset custom</p>
+                <p className="text-muted-foreground">
+                  Se oculta totalmente del uso activo, deja de aparecer en el alta y el sistema hace fallback al preset válido disponible.
+                </p>
+              </div>
+            )}
           </div>
           <DialogFooter className="flex items-center sm:justify-between w-full">
-            <Button
-              variant="destructive"
-              onClick={async () => {
-                if (!editPresetTarget) return;
-                setSaving(true);
-                try {
-                  await apiJson(`/api/order-presets/presets/${editPresetTarget.id}`, {
-                    method: "PATCH",
-                    body: JSON.stringify({ isActive: false }),
-                  });
-                  setOpenEditPreset(false);
-                  await loadPresets(activeCode);
-                  toast({ title: "Preset archivado" });
-                } catch (err: any) {
-                  toast({ title: "Error", description: err.message, variant: "destructive" });
-                } finally {
-                  setSaving(false);
-                }
-              }}
-              disabled={saving}
-            >
-              Archivar Preset
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  if (!editPresetTarget) return;
+                  setSaving(true);
+                  try {
+                    await apiJson(`/api/order-presets/presets/${editPresetTarget.id}`, {
+                      method: "PATCH",
+                      body: JSON.stringify({ isActive: false }),
+                    });
+                    setOpenEditPreset(false);
+                    await loadPresets(activeCode);
+                    toast({ title: "Preset archivado" });
+                  } catch (err: any) {
+                    toast({ title: "Error", description: err.message, variant: "destructive" });
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+                disabled={saving}
+              >
+                Archivar Preset
+              </Button>
+              {!isDefaultPreset(editPresetTarget) ? (
+                <Button variant="outline" onClick={() => editPresetTarget && setDeletePresetTarget(editPresetTarget)} disabled={saving}>
+                  Eliminar Preset
+                </Button>
+              ) : null}
+            </div>
             <div className="flex gap-2">
               <Button variant="outline" onClick={() => setOpenEditPreset(false)}>Cancelar</Button>
               <Button disabled={saving || !editPresetLabel.trim()} onClick={updatePreset}>{saving ? "Guardando..." : "Guardar"}</Button>
@@ -692,6 +748,16 @@ export function OrderPresetsSettings() {
             <div className="space-y-2">
               <Label>Label</Label>
               <Input value={createForm.label} onChange={(e) => setCreateForm((s) => ({ ...s, label: e.target.value }))} autoFocus />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Sección</Label>
+                <Input value={createForm.sectionLabel} onChange={(e) => setCreateForm((s) => ({ ...s, sectionLabel: e.target.value }))} placeholder="General, Equipo, Datos técnicos..." />
+              </div>
+              <div className="space-y-2">
+                <Label>Orden de sección</Label>
+                <Input type="number" min={0} value={createForm.sectionOrder} onChange={(e) => setCreateForm((s) => ({ ...s, sectionOrder: e.target.value }))} placeholder="0" />
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Tipo</Label>
@@ -809,6 +875,16 @@ export function OrderPresetsSettings() {
               <Label>Label</Label>
               <Input value={editForm.label} onChange={(e) => setEditForm((s) => ({ ...s, label: e.target.value }))} autoFocus />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Sección</Label>
+                <Input value={editForm.sectionLabel} onChange={(e) => setEditForm((s) => ({ ...s, sectionLabel: e.target.value }))} placeholder="General, Equipo, Datos técnicos..." />
+              </div>
+              <div className="space-y-2">
+                <Label>Orden de sección</Label>
+                <Input type="number" min={0} value={editForm.sectionOrder} onChange={(e) => setEditForm((s) => ({ ...s, sectionOrder: e.target.value }))} placeholder="0" />
+              </div>
+            </div>
 
             <div className="flex flex-col gap-3 py-2 border rounded-md p-3">
               <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
@@ -897,6 +973,8 @@ export function OrderPresetsSettings() {
                       placeholder: editForm.placeholder || undefined,
                       defaultValue: editForm.defaultValue === "" ? undefined : ((editTarget.fieldType === "NUMBER" || editTarget.fieldType === "MONEY") ? Number(editForm.defaultValue) : editForm.defaultValue),
                       currencyCode: editTarget.fieldType === "MONEY" ? editForm.currencyCode : undefined,
+                      sectionLabel: editForm.sectionLabel.trim() || undefined,
+                      sectionOrder: editForm.sectionOrder === "" ? undefined : Number(editForm.sectionOrder),
                       visibleInForm: true,
                     },
                   };
@@ -929,6 +1007,25 @@ export function OrderPresetsSettings() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={async () => { if (!criticalDeactivateTarget) return; setCriticalDeactivateTarget(null); await setFieldActive(criticalDeactivateTarget, false); }}>Continuar y desactivar</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={Boolean(deletePresetTarget)} onOpenChange={(open: boolean) => { if (!open) setDeletePresetTarget(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar preset</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deletePresetTarget
+                ? `Se eliminará "${deletePresetTarget.label}" del uso activo. Los pedidos históricos se preservan y el sistema hará fallback al preset válido disponible.`
+                : "Confirmá la eliminación del preset."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={() => deletePresetTarget && void deletePreset(deletePresetTarget)}>
+              Sí, eliminar preset
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

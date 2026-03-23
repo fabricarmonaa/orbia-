@@ -59,11 +59,10 @@ import { FileFieldInput } from "@/components/orders/FileFieldInput";
 import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
 import {
   formatMoneyValue,
-  isNativeOrderField,
   resolveNativeOrderFieldKind,
   resolveOrderFieldDefinition,
-  resolveRenderableOrderFields,
 } from "@shared/order-fields";
+import { pickNextPresetForSelection, resolveOrderCreateLayout } from "./order-create-layout";
 import { clearOrderDraft, getOrderDraftKey, loadOrderDraft, saveOrderDraft } from "./order-draft";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
@@ -165,15 +164,10 @@ export default function OrdersPage() {
   const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const resolvedPresetFields = useMemo(
-    () => resolveRenderableOrderFields(presetFields),
-    [presetFields]
-  );
-
-  const customPresetFields = useMemo(
-    () => resolvedPresetFields.filter((field) => !isNativeOrderField(field)),
-    [resolvedPresetFields]
-  );
+  const fieldLayout = useMemo(() => resolveOrderCreateLayout(presetFields), [presetFields]);
+  const basePresetFields = fieldLayout.baseFields;
+  const customPresetFields = fieldLayout.customFields;
+  const customPresetSections = fieldLayout.customSections;
   const currentDraftKey = useMemo(
     () => getOrderDraftKey({ user, type: newOrder.type, presetId: newOrder.orderPresetId }),
     [newOrder.orderPresetId, newOrder.type, user]
@@ -247,12 +241,12 @@ export default function OrdersPage() {
       const res = await apiRequest("GET", `/api/order-presets/types/${encodeURIComponent(typeCode)}/presets`);
       const json = await res.json();
       if (requestId !== presetLoadSeqRef.current) return;
-      const list = json?.data || [];
+      const list = (json?.data || []).filter((preset: OrderPreset) => preset.isActive);
       setPresets(list);
-      if (list.length > 0) {
-        const toSelect = list.find((p: any) => p.isActive) || list[0];
-        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode, orderPresetId: toSelect.id }));
-        await loadFieldsForPreset(toSelect.id);
+      const nextPreset = pickNextPresetForSelection(list, newOrder.orderPresetId);
+      if (nextPreset) {
+        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode, orderPresetId: nextPreset.id }));
+        await loadFieldsForPreset(nextPreset.id);
       } else {
         setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode }));
         setPresetFields([]);
@@ -278,8 +272,7 @@ export default function OrdersPage() {
       setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
         const next: Record<number, CustomFieldInputState> = {};
-        for (const f of resolveRenderableOrderFields(allFields)) {
-          if (isNativeOrderField(f)) continue;
+        for (const f of resolveOrderCreateLayout(allFields).customFields) {
           const resolved = resolveOrderFieldDefinition(f);
           next[f.id] = prev[f.id] || {
             visibleOverride: null,
@@ -546,6 +539,13 @@ export default function OrdersPage() {
     }
   }
 
+  function getCreateFieldSpanClass(field: OrderPresetField) {
+    const kind = resolveNativeOrderFieldKind(field);
+    if (kind === "customer" || kind === "description") return "md:col-span-2";
+    if (field.fieldType === "TEXT_LONG" || field.fieldType === "FILE" || field.fieldType === "DATETIME") return "md:col-span-2";
+    return "";
+  }
+
   function renderPresetField(field: OrderPresetField) {
     const kind = resolveNativeOrderFieldKind(field);
     const resolved = resolveOrderFieldDefinition(field);
@@ -789,126 +789,201 @@ export default function OrdersPage() {
               </Button>
             </DialogTrigger>
             <DialogContent
-              className="max-w-lg max-h-[90vh] overflow-y-auto"
+              className="w-[96vw] max-w-6xl max-h-[92vh] overflow-hidden p-0"
             >
-              <DialogHeader>
+              <DialogHeader className="border-b px-6 py-5">
                 <DialogTitle>Crear Pedido</DialogTitle>
-                <DialogDescription>Completá los datos del pedido y seleccioná el estado inicial.</DialogDescription>
+                <DialogDescription>Organizá los datos del sistema a la izquierda y la personalización del preset a la derecha.</DialogDescription>
               </DialogHeader>
-              <form onSubmit={createOrder} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Tipo</Label>
-                    <Select value={newOrder.type} onValueChange={(v) => { setDraftRestored(false); setNewOrder((prev) => ({ ...emptyOrderDraft(v), statusCode: prev.statusCode })); setPresetFields([]); setCustomFieldInputs({}); void loadPresetsForType(v); }}>
-                      <SelectTrigger data-testid="select-order-type">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PEDIDO">Pedido</SelectItem>
-                        <SelectItem value="ENCARGO">Encargo</SelectItem>
-                        <SelectItem value="TURNO">Turno</SelectItem>
-                        <SelectItem value="SERVICIO">Servicio</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {presets.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Preset</Label>
-                      <Select
-                        value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
-                        onValueChange={(v) => {
-                          const pid = Number(v);
-                          if (!Number.isFinite(pid) || pid <= 0) {
-                            setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
-                            setPresetFields([]);
-                            setCustomFieldInputs({});
-                            return;
-                          }
-                          setDraftRestored(false);
-                          setNewOrder((prev) => ({ ...emptyOrderDraft(prev.type), statusCode: prev.statusCode, orderPresetId: pid }));
-                          setCustomFieldInputs({});
-                          void loadFieldsForPreset(pid);
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar preset..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {presets.filter(p => p.isActive).map(p => (
-                            <SelectItem key={p.id} value={String(p.id)}>{p.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label>Estado</Label>
-                    <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
-                      <SelectTrigger data-testid="select-order-status">
-                        <SelectValue placeholder="Estado inicial" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
-                          <SelectItem key={s.id} value={String(s.code || "")}>
-                            {(s as any).label || s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  {resolvedPresetFields.map((field) => renderPresetField(field))}
-                </div>
-                {addonStatus.delivery && (
-                  <div className="space-y-3 p-3 rounded-md bg-muted/50">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <Truck className="w-4 h-4 text-muted-foreground" />
-                        <Label className="text-sm">Requiere delivery</Label>
+              <form onSubmit={createOrder} className="flex h-full max-h-[calc(92vh-84px)] flex-col">
+                <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+                    <div className="space-y-4" data-testid="order-create-system-column">
+                      <div className="rounded-xl border bg-card p-4 shadow-sm">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold">Sistema</h3>
+                            <p className="text-xs text-muted-foreground">Tipo, preset, estado y campos base activos del tipo seleccionado.</p>
+                          </div>
+                          <Badge variant="secondary">Base</Badge>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          <div className="space-y-2">
+                            <Label>Tipo</Label>
+                            <Select value={newOrder.type} onValueChange={(v) => { setDraftRestored(false); setNewOrder((prev) => ({ ...emptyOrderDraft(v), statusCode: prev.statusCode })); setPresetFields([]); setCustomFieldInputs({}); void loadPresetsForType(v); }}>
+                              <SelectTrigger data-testid="select-order-type">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="PEDIDO">Pedido</SelectItem>
+                                <SelectItem value="ENCARGO">Encargo</SelectItem>
+                                <SelectItem value="TURNO">Turno</SelectItem>
+                                <SelectItem value="SERVICIO">Servicio</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {presets.length > 0 && (
+                            <div className="space-y-2">
+                              <Label>Preset</Label>
+                              <Select
+                                value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
+                                onValueChange={(v) => {
+                                  const pid = Number(v);
+                                  if (!Number.isFinite(pid) || pid <= 0) {
+                                    setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
+                                    setPresetFields([]);
+                                    setCustomFieldInputs({});
+                                    return;
+                                  }
+                                  setDraftRestored(false);
+                                  setNewOrder((prev) => ({ ...emptyOrderDraft(prev.type), statusCode: prev.statusCode, orderPresetId: pid }));
+                                  setCustomFieldInputs({});
+                                  void loadFieldsForPreset(pid);
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Seleccionar preset..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {presets.map((p) => (
+                                    <SelectItem key={p.id} value={String(p.id)}>{p.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            <Label>Estado</Label>
+                            <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
+                              <SelectTrigger data-testid="select-order-status">
+                                <SelectValue placeholder="Estado inicial" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
+                                  <SelectItem key={s.id} value={String(s.code || "")}>
+                                    {(s as any).label || s.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
                       </div>
-                      <Switch
-                        checked={newOrder.requiresDelivery}
-                        onCheckedChange={(v) => setNewOrder({ ...newOrder, requiresDelivery: v })}
-                        data-testid="switch-requires-delivery"
-                      />
+
+                      {basePresetFields.length > 0 ? (
+                        <div className="rounded-xl border bg-card p-4 shadow-sm">
+                          <div className="mb-4">
+                            <h3 className="text-sm font-semibold">Campos base</h3>
+                            <p className="text-xs text-muted-foreground">Solo se muestran campos nativos activos, no borrados y visibles en formulario.</p>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {basePresetFields.map((field) => (
+                              <div key={field.id} className={getCreateFieldSpanClass(field)}>
+                                {renderPresetField(field)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {addonStatus.delivery && (
+                        <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
+                          <div className="mb-4 flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="w-4 h-4 text-muted-foreground" />
+                              <div>
+                                <Label className="text-sm">Delivery</Label>
+                                <p className="text-xs text-muted-foreground">Activá la entrega solo si corresponde a este pedido.</p>
+                              </div>
+                            </div>
+                            <Switch
+                              checked={newOrder.requiresDelivery}
+                              onCheckedChange={(v) => setNewOrder({ ...newOrder, requiresDelivery: v })}
+                              data-testid="switch-requires-delivery"
+                            />
+                          </div>
+                          {newOrder.requiresDelivery && (
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Calle y número</Label>
+                                <Input
+                                  placeholder="Ingrese calle"
+                                  value={newOrder.deliveryAddress}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryAddress: e.target.value })}
+                                  data-testid="input-delivery-address"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Ciudad</Label>
+                                <Input
+                                  placeholder="Ciudad"
+                                  value={newOrder.deliveryCity}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryCity: e.target.value })}
+                                  data-testid="input-delivery-city"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Notas para el delivery</Label>
+                                <Input
+                                  placeholder="Piso, Depto, Descripción"
+                                  value={newOrder.deliveryAddressNotes}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
+                                  data-testid="input-delivery-notes"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    {newOrder.requiresDelivery && (
-                      <>
-                        <div className="space-y-2">
-                          <Label>Calle y número</Label>
-                          <Input
-                            placeholder="Ingrese calle"
-                            value={newOrder.deliveryAddress}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryAddress: e.target.value })}
-                            data-testid="input-delivery-address"
-                          />
+
+                    <div className="space-y-4" data-testid="order-create-custom-column">
+                      <div className="rounded-xl border bg-card p-4 shadow-sm">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold">Personalización del preset</h3>
+                            <p className="text-xs text-muted-foreground">Campos custom activos del preset actual, agrupados por sección cuando exista configuración.</p>
+                          </div>
+                          <Badge variant="outline">{customPresetFields.length} campo{customPresetFields.length === 1 ? "" : "s"}</Badge>
                         </div>
-                        <div className="space-y-2">
-                          <Label>Ciudad</Label>
-                          <Input
-                            placeholder="Ciudad"
-                            value={newOrder.deliveryCity}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryCity: e.target.value })}
-                            data-testid="input-delivery-city"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Notas para el delivery</Label>
-                          <Input
-                            placeholder="Piso, Depto, Descripción"
-                            value={newOrder.deliveryAddressNotes}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
-                            data-testid="input-delivery-notes"
-                          />
-                        </div>
-                      </>
-                    )}
+
+                        {customPresetSections.length === 0 ? (
+                          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                            Este preset no agrega campos personalizados visibles en formulario.
+                          </div>
+                        ) : (
+                          <div className="space-y-4">
+                            {customPresetSections.map((section) => (
+                              <section key={section.key} className="rounded-lg border bg-muted/20 p-4">
+                                <div className="mb-3">
+                                  <h4 className="text-sm font-semibold">{section.label}</h4>
+                                  <p className="text-xs text-muted-foreground">Campos configurados específicamente para este preset.</p>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  {section.fields.map((field) => (
+                                    <div key={field.id} className={getCreateFieldSpanClass(field)}>
+                                      {renderPresetField(field)}
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                )}
-                <Button type="submit" className="w-full" data-testid="button-submit-order">
-                  Crear Pedido
-                </Button>
+                </div>
+                <div className="border-t px-4 py-4 sm:px-6">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p className="text-xs text-muted-foreground">
+                      El formulario respeta tipo, preset, orden, active/inactive, deletedAt y visibleInForm.
+                    </p>
+                    <Button type="submit" className="w-full sm:w-auto min-w-[220px]" data-testid="button-submit-order">
+                      Crear Pedido
+                    </Button>
+                  </div>
+                </div>
               </form>
             </DialogContent>
           </Dialog>

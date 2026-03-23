@@ -399,7 +399,8 @@ export function registerOrderRoutes(app: Express) {
       });
 
       const targetPresetId = payload.orderPresetId !== undefined ? payload.orderPresetId : current.orderPresetId;
-      if (payload.customFields || targetPresetId) {
+      const shouldValidateCustomFields = payload.customFields !== undefined || payload.orderPresetId !== undefined;
+      if (shouldValidateCustomFields) {
         const normalized = await validateAndNormalizeCustomFields(tenantId, nextType, payload.customFields || [], targetPresetId);
         await saveCustomFieldValues(id, tenantId, normalized.normalized, {
           replaceDefinitionIds: normalized.defs.map((field) => field.id),

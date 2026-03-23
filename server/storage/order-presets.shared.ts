@@ -120,3 +120,19 @@ export function buildCanonicalNativeFieldUpdate(
     visibleInTracking: template.visibleInTracking,
   };
 }
+
+export function canDeleteOrderPreset(preset: { code?: string | null; isSystemDefault?: boolean | null }) {
+  const code = String(preset.code || "").trim().toLowerCase();
+  return code !== "default" && preset.isSystemDefault !== true;
+}
+
+export function pickFallbackPresetId(
+  presets: Array<{ id: number; isActive?: boolean | null; code?: string | null }>,
+  removedPresetId?: number | null,
+) {
+  const candidates = presets.filter((preset) => preset.id !== removedPresetId);
+  const defaultPreset = candidates.find((preset) => String(preset.code || "").trim().toLowerCase() === "default");
+  if (defaultPreset) return defaultPreset.id;
+  const activePreset = candidates.find((preset) => preset.isActive !== false);
+  return activePreset?.id ?? candidates[0]?.id ?? null;
+}

@@ -4,6 +4,7 @@ import {
   buildNativeOrderFieldTemplate,
   formatMoneyValue,
   normalizeOrderFieldType,
+  resolveCreateOrderFieldLayout,
   resolveNativeOrderFieldKind,
   resolveOrderFieldDefinition,
   resolveRenderableOrderFields,
@@ -109,4 +110,30 @@ test("normaliza aliases de dinero y expone templates nativos monetarios", () => 
   assert.equal(paid.fieldType, "MONEY");
   assert.equal(total.fieldKey, "total_amount");
   assert.equal(total.visibleInTracking, true);
+});
+
+test("separa campos base y custom en secciones ordenadas para el modal de alta", () => {
+  const layout = resolveCreateOrderFieldLayout([
+    { id: 1, fieldKey: "customer_name", label: "Cliente", fieldType: "TEXT", isActive: true, sortOrder: 0, config: { visibleInForm: true } },
+    { id: 2, fieldKey: "paid_amount", label: "Seña o Pago", fieldType: "MONEY", isActive: true, sortOrder: 1, config: { visibleInForm: true } },
+    { id: 3, presetId: 10, fieldKey: "modelo", label: "Modelo", fieldType: "TEXT", isActive: true, sortOrder: 2, config: { visibleInForm: true, sectionLabel: "Equipo", sectionOrder: 2 } },
+    { id: 4, presetId: 10, fieldKey: "serie", label: "Serie", fieldType: "TEXT", isActive: true, sortOrder: 3, config: { visibleInForm: true, sectionLabel: "Equipo", sectionOrder: 2 } },
+    { id: 5, presetId: 10, fieldKey: "tecnico", label: "Técnico", fieldType: "TEXT", isActive: true, sortOrder: 4, config: { visibleInForm: true, sectionLabel: "Operación", sectionOrder: 1 } },
+  ]);
+
+  assert.deepEqual(layout.baseFields.map((field) => field.fieldKey), ["customer_name", "paid_amount"]);
+  assert.deepEqual(layout.customSections.map((section) => section.label), ["Operación", "Equipo"]);
+  assert.deepEqual(layout.customSections[1]?.fields.map((field) => field.fieldKey), ["modelo", "serie"]);
+});
+
+test("el layout excluye campos inactivos, borrados o invisibles en formulario", () => {
+  const layout = resolveCreateOrderFieldLayout([
+    { id: 1, fieldKey: "customer_name", label: "Cliente", fieldType: "TEXT", isActive: false, sortOrder: 0, config: { visibleInForm: true } },
+    { id: 2, fieldKey: "legajo", label: "Legajo", fieldType: "TEXT", isActive: true, deletedAt: new Date().toISOString(), sortOrder: 1, config: { visibleInForm: true } },
+    { id: 3, fieldKey: "interno", label: "Interno", fieldType: "TEXT", isActive: true, sortOrder: 2, config: { visibleInForm: false } },
+    { id: 4, fieldKey: "customer_phone", label: "Teléfono", fieldType: "TEXT", isActive: true, sortOrder: 3, config: { visibleInForm: true } },
+  ]);
+
+  assert.deepEqual(layout.baseFields.map((field) => field.fieldKey), ["customer_phone"]);
+  assert.equal(layout.customFields.length, 0);
 });
