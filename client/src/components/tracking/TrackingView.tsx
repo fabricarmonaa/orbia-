@@ -90,6 +90,10 @@ function justifyForAlignment(value: "left" | "center" | "right") {
   return "flex-start";
 }
 
+function resolveHistoryColor(color: string | null | undefined, fallback: string) {
+  return color && String(color).trim() ? color : fallback;
+}
+
 export function TrackingView({ branding, order, appName, mode = "public", error, loading }: TrackingViewProps) {
   if (loading) return <div className="min-h-screen flex items-center justify-center p-4">Cargando...</div>;
   if (error) return <div className="min-h-screen flex items-center justify-center p-4"><div className="text-center"><AlertCircle className="w-16 h-16 mx-auto mb-4 text-red-500" /><p>{error}</p></div></div>;
@@ -104,6 +108,8 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   const borderColor = colors.border || "#e5e7eb";
   const mutedText = colors.textSecondary || (getContrastText(bgColor) === "#ffffff" ? "rgba(255,255,255,0.70)" : "#4b5563");
   const timelineColor = colors.timeline || colors.accent || colors.primary;
+  const statusBadgeColor = order.statusColor || colors.trackingBadge || timelineColor;
+  const statusBadgeTextColor = getContrastText(statusBadgeColor);
   const blockOrder = Array.isArray(v.blockOrder) && v.blockOrder.length ? v.blockOrder : [...DEFAULT_TRACKING_BLOCK_ORDER];
   const blockAlignments = (v.blockAlignments || {}) as Record<string, "left" | "center" | "right">;
   const headerAlignment = normalizeAlignment(blockAlignments.header);
@@ -142,7 +148,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
         {(v.showOrderNumber || v.showCurrentStatus) && (
           <div className="flex items-center gap-4 flex-wrap" style={{ justifyContent: summaryAlignment === "center" ? "center" : "space-between", textAlign: summaryAlignment }}>
             {v.showOrderNumber ? <div><p className="text-sm" style={{ color: mutedText }}>Pedido</p><p className="text-2xl font-bold" data-testid="text-tracking-order-number">#{order.orderNumber}</p></div> : <span />}
-            {v.showCurrentStatus ? <Badge style={{ backgroundColor: order.statusColor || colors.trackingBadge, color: "#fff" }} className="text-sm" data-testid="badge-tracking-status">{renderedStatus}</Badge> : null}
+            {v.showCurrentStatus ? <Badge style={{ backgroundColor: statusBadgeColor, color: statusBadgeTextColor }} className="text-sm" data-testid="badge-tracking-status">{renderedStatus}</Badge> : null}
           </div>
         )}
         {infoItems.length > 0 && (
@@ -241,19 +247,19 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
   );
 
   const classicHistory = v.showStatusHistory && order.history.length > 0 && (
-    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2" style={{ justifyContent: justifyForAlignment(historyAlignment), textAlign: historyAlignment }}><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="space-y-1">{order.history.map((h, i) => <div key={i} className="flex gap-3" style={{ textAlign: historyAlignment, justifyContent: justifyForAlignment(historyAlignment) }}><div className="flex flex-col items-center"><div className="w-3 h-3 rounded-full mt-1" style={{ backgroundColor: h.color || timelineColor }} />{i < order.history.length - 1 && <div className="w-px flex-1 mt-1" style={{ backgroundColor: timelineColor }} />}</div><div className="pb-4"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-sm mt-1" style={{ color: mutedText }}>{h.note}</p>}</div></div>)}</div></CardContent></Card>
+    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2" style={{ justifyContent: justifyForAlignment(historyAlignment), textAlign: historyAlignment }}><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="space-y-1">{order.history.map((h, i) => { const historyColor = resolveHistoryColor(h.color, timelineColor); const connectorColor = resolveHistoryColor(order.history[i + 1]?.color, timelineColor); return <div key={i} className="flex gap-3" style={{ textAlign: historyAlignment, justifyContent: justifyForAlignment(historyAlignment) }}><div className="flex flex-col items-center"><div className="w-3 h-3 rounded-full mt-1" style={{ backgroundColor: historyColor }} />{i < order.history.length - 1 && <div className="w-px flex-1 mt-1" style={{ backgroundColor: connectorColor }} />}</div><div className="pb-4"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-sm mt-1" style={{ color: mutedText }}>{h.note}</p>}</div></div>; })}</div></CardContent></Card>
   );
 
   const cardsHistory = v.showStatusHistory && order.history.length > 0 && (
-    <div><h3 className="font-semibold flex items-center gap-2 mb-3" style={{ justifyContent: justifyForAlignment(historyAlignment), textAlign: historyAlignment }}><Clock className="w-4 h-4" />Historial</h3><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{order.history.map((h, i) => <Card key={i} style={{ ...cardBase, borderLeftColor: h.color || timelineColor, borderLeftWidth: "4px", textAlign: historyAlignment }}><CardContent className="p-3"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-xs mt-1" style={{ color: mutedText }}>{h.note}</p>}</CardContent></Card>)}</div></div>
+    <div><h3 className="font-semibold flex items-center gap-2 mb-3" style={{ justifyContent: justifyForAlignment(historyAlignment), textAlign: historyAlignment }}><Clock className="w-4 h-4" />Historial</h3><div className="grid grid-cols-1 sm:grid-cols-2 gap-3">{order.history.map((h, i) => <Card key={i} style={{ ...cardBase, borderLeftColor: resolveHistoryColor(h.color, timelineColor), borderLeftWidth: "4px", textAlign: historyAlignment }}><CardContent className="p-3"><p className="text-sm font-medium">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</p>{h.note && <p className="text-xs mt-1" style={{ color: mutedText }}>{h.note}</p>}</CardContent></Card>)}</div></div>
   );
 
   const stepperHistory = v.showStatusHistory && order.history.length > 0 && (
-    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="flex items-center gap-1 overflow-x-auto pb-2">{order.history.map((h, i) => <div key={i} className="flex items-center flex-shrink-0"><div className="flex flex-col items-center"><div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: h.color || timelineColor }}><CheckCircle2 className="w-4 h-4 text-white" /></div><p className="text-xs font-medium mt-1 text-center max-w-[90px] truncate">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date).split(",")[0]}</p></div>{i < order.history.length - 1 && <ArrowRight className="w-4 h-4 mx-1 flex-shrink-0" style={{ color: timelineColor }} />}</div>)}</div></CardContent></Card>
+    <Card style={cardBase}><CardHeader className="pb-3"><h3 className="font-semibold flex items-center gap-2"><Clock className="w-4 h-4" />Historial</h3></CardHeader><CardContent><div className="flex items-center gap-1 overflow-x-auto pb-2">{order.history.map((h, i) => { const historyColor = resolveHistoryColor(h.color, timelineColor); const nextColor = resolveHistoryColor(order.history[i + 1]?.color, timelineColor); return <div key={i} className="flex items-center flex-shrink-0"><div className="flex flex-col items-center"><div className="w-9 h-9 rounded-full flex items-center justify-center" style={{ backgroundColor: historyColor }}><CheckCircle2 className="w-4 h-4" style={{ color: getContrastText(historyColor) }} /></div><p className="text-xs font-medium mt-1 text-center max-w-[90px] truncate">{h.status}</p><p className="text-xs" style={{ color: mutedText }}>{formatDate(h.date).split(",")[0]}</p></div>{i < order.history.length - 1 && <ArrowRight className="w-4 h-4 mx-1 flex-shrink-0" style={{ color: nextColor }} />}</div>; })}</div></CardContent></Card>
   );
 
   const minimalHistory = v.showStatusHistory && order.history.length > 0 && (
-    <div className="space-y-2 rounded-xl p-4" style={{ backgroundColor: surfaceColor, border: `1px solid ${borderColor}` }}>{order.history.map((h, i) => <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: i === order.history.length - 1 ? "none" : `1px solid ${borderColor}` }}><div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: h.color || timelineColor }} /><span className="text-sm font-medium flex-1">{h.status}</span><span className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</span></div>)}</div>
+    <div className="space-y-2 rounded-xl p-4" style={{ backgroundColor: surfaceColor, border: `1px solid ${borderColor}` }}>{order.history.map((h, i) => <div key={i} className="flex items-center gap-3 py-1.5" style={{ borderBottom: i === order.history.length - 1 ? "none" : `1px solid ${borderColor}` }}><div className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: resolveHistoryColor(h.color, timelineColor) }} /><span className="text-sm font-medium flex-1">{h.status}</span><span className="text-xs" style={{ color: mutedText }}>{formatDate(h.date)}</span></div>)}</div>
   );
 
   const historySection = layout === "cards" ? cardsHistory : layout === "stepper" ? stepperHistory : layout === "minimal" ? minimalHistory : classicHistory;

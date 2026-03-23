@@ -81,6 +81,49 @@ function getCriticalWarning(field: OrderField | null) {
   return `Si quitás o desactivás este campo, algunas funciones del sistema pueden dejar de funcionar correctamente${suffix}.`;
 }
 
+function normalizeCreateFormForFieldType(
+  current: {
+    label: string;
+    fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
+    required: boolean;
+    visibleInTracking: boolean;
+    useInAgenda: boolean;
+    placeholder: string;
+    defaultValue: string;
+    currencyCode: string;
+    allowedExtensions: string[];
+    selectOptions: string[];
+  },
+  nextType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
+) {
+  const next = { ...current, fieldType: nextType };
+
+  if (nextType === "FILE") {
+    next.required = false;
+    next.placeholder = "";
+    next.defaultValue = "";
+    next.useInAgenda = false;
+  }
+
+  if (nextType !== "FILE" && next.allowedExtensions.length === 0) {
+    next.allowedExtensions = ["pdf", "jpg", "png", "jpeg"];
+  }
+
+  if (nextType !== "SELECT" && nextType !== "CHECKBOX") {
+    next.selectOptions = [""];
+  }
+
+  if (nextType !== "MONEY") {
+    next.currencyCode = current.currencyCode || "ARS";
+  }
+
+  if (nextType !== "DATE" && nextType !== "DATETIME") {
+    next.useInAgenda = false;
+  }
+
+  return next;
+}
+
 
 async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await authFetch(path, {
@@ -334,7 +377,13 @@ export function OrderPresetsSettings() {
 
   async function setFieldActive(field: OrderField, nextActive: boolean) {
     try {
-      await patchField(field.id, { isActive: nextActive }, nextActive ? "Campo activado" : "Campo desactivado");
+      await patchField(
+        field.id,
+        nextActive
+          ? { isActive: true }
+          : { isActive: false, required: false, visibleInTracking: false, useInAgenda: false },
+        nextActive ? "Campo activado" : "Campo desactivado"
+      );
     } catch {
       // toast already handled in patchField
     }
@@ -664,7 +713,7 @@ export function OrderPresetsSettings() {
             </div>
             <div className="space-y-2">
               <Label>Tipo</Label>
-              <Select value={createForm.fieldType} onValueChange={(v) => setCreateForm((s) => ({ ...s, fieldType: v as any }))}>
+              <Select value={createForm.fieldType} onValueChange={(v) => setCreateForm((s) => normalizeCreateFormForFieldType(s, v as any))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="TEXT">Texto Corto</SelectItem>

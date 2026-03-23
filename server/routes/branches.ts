@@ -33,7 +33,6 @@ export function registerBranchRoutes(app: Express) {
   app.get(
     "/api/branches",
     tenantAuth,
-    requireTenantAdmin,
     async (req, res) => {
       try {
         const tenantId = req.auth!.tenantId!;
@@ -109,7 +108,6 @@ export function registerBranchRoutes(app: Express) {
   app.get(
     "/api/branches/:branchId/orders",
     tenantAuth,
-    requireTenantAdmin,
     requireFeature("branches"),
     requirePlanCodes(["ESCALA"]),
     enforceBranchScope,
@@ -132,7 +130,6 @@ export function registerBranchRoutes(app: Express) {
   app.get(
     "/api/branches/:branchId/cash/movements",
     tenantAuth,
-    requireTenantAdmin,
     requireFeature("branches"),
     requirePlanCodes(["ESCALA"]),
     enforceBranchScope,

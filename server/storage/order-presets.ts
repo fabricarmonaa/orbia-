@@ -518,7 +518,9 @@ export const orderPresetsStorage = {
       if (!label) throw badRequest("PRESET_VALIDATION_ERROR", "label no puede ser vacío");
       update.label = label;
     }
-    if (patch.isActive !== undefined) update.isActive = Boolean(patch.isActive);
+    if (patch.isActive !== undefined) {
+      update.isActive = Boolean(patch.isActive);
+    }
     if (patch.sortOrder !== undefined) update.sortOrder = Number(patch.sortOrder);
 
     const [saved] = await db
@@ -729,7 +731,14 @@ export const orderPresetsStorage = {
       }
       update.required = Boolean(patch.required);
     }
-    if (patch.isActive !== undefined) update.isActive = Boolean(patch.isActive);
+    if (patch.isActive !== undefined) {
+      update.isActive = Boolean(patch.isActive);
+      if (!patch.isActive) {
+        update.required = false;
+        update.visibleInTracking = false;
+        update.useInAgenda = false;
+      }
+    }
     if (patch.visibleInTracking !== undefined) update.visibleInTracking = Boolean(patch.visibleInTracking);
     if (patch.useInAgenda !== undefined) update.useInAgenda = Boolean(patch.useInAgenda);
     if (patch.config !== undefined)
@@ -883,4 +892,3 @@ export const orderPresetsStorage = {
     }
   },
 };
-

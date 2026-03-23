@@ -105,7 +105,18 @@ export function AppSidebar() {
     logout("manual");
   }
 
-  const visibleItems = menuItems
+  const scopedMenuItems = [...menuItems];
+  if (user?.scope === "BRANCH" && user?.branchId) {
+    scopedMenuItems.push({
+      title: "Mi sucursal",
+      url: `/app/branches/${user.branchId}`,
+      icon: Building2,
+      feature: "branches",
+      section: "operacion",
+    });
+  }
+
+  const visibleItems = scopedMenuItems
     .filter((item) => !item.addon || addonStatus[item.addon])
     .filter((item) => !item.adminOnly || isTenantAdmin)
     .filter((item) => user?.role !== "CASHIER" || ["/app/pos", "/app/sales"].includes(item.url));
