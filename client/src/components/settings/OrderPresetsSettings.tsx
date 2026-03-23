@@ -14,6 +14,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { ArrowDown, ArrowUp, Pencil, Plus, Eye, EyeOff, Trash2 } from "lucide-react";
 import { resolveFileFieldBehavior } from "@shared/order-fields";
+import {
+  canCreateMoreOrderPresets,
+  getActiveOrderPresets,
+  getEmptyOrderPresetFieldForm,
+  pickVisibleTrackingDefault,
+} from "./order-presets-ui";
 
 type OrderType = { id: number; code: string; label: string; isActive: boolean };
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
@@ -116,6 +122,11 @@ function normalizeCreateFormForFieldType(
     defaultValue: string;
     currencyCode: string;
     allowedExtensions: string[];
+    mediaMode: "single" | "gallery" | "attachments";
+    acceptMode: "images" | "mixed";
+    maxFiles: string;
+    expectedFiles: string;
+    trackingRender: "grid" | "carousel" | "list";
     selectOptions: string[];
     sectionLabel: string;
     sectionOrder: string;
@@ -202,31 +213,13 @@ export function OrderPresetsSettings() {
   // Field Create/Edit Modals
   const [openCreateField, setOpenCreateField] = useState(false);
   const [openEditField, setOpenEditField] = useState(false);
-  const [createForm, setCreateForm] = useState({
-    label: "",
-    fieldType: "TEXT" as "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME",
-    required: false,
-    visibleInTracking: false,
-    useInAgenda: false,
-    placeholder: "",
-    defaultValue: "",
-    currencyCode: "ARS",
-    allowedExtensions: ["pdf", "jpg", "png", "jpeg"] as string[],
-    mediaMode: "single" as "single" | "gallery" | "attachments",
-    acceptMode: "mixed" as "images" | "mixed",
-    maxFiles: "1",
-    expectedFiles: "",
-    trackingRender: "list" as "grid" | "carousel" | "list",
-    selectOptions: [""] as string[],
-    sectionLabel: "",
-    sectionOrder: "",
-  });
+  const [createForm, setCreateForm] = useState(getEmptyOrderPresetFieldForm);
   const [editTarget, setEditTarget] = useState<OrderField | null>(null);
   const [editForm, setEditForm] = useState({
     label: "",
     required: false,
     isActive: true,
-    visibleInTracking: false,
+    visibleInTracking: true,
     useInAgenda: false,
     placeholder: "",
     defaultValue: "",
@@ -247,12 +240,12 @@ export function OrderPresetsSettings() {
     [fields]
   );
 
-  const activePresets = useMemo(() => presets.filter(p => p.isActive), [presets]);
+  const activePresets = useMemo(() => getActiveOrderPresets(presets), [presets]);
 
   async function loadTypes() {
     setLoadingTypes(true);
     try {
-      const json = await apiJson<{ data: OrderType[] }>("/api/order-presets/types");
+      const json = await apiJson<{ data: OrderType[] }>("/api/order-presets/types", { cache: "no-store" });
       const nextTypes = json.data || [];
       setTypes(nextTypes);
       if (nextTypes.length > 0 && !nextTypes.some((t) => t.code === activeCode)) {
@@ -269,7 +262,7 @@ export function OrderPresetsSettings() {
     if (!code) return;
     setLoadingPresets(true);
     try {
-      const json = await apiJson<{ data: OrderPreset[] }>(`/api/order-presets/types/${encodeURIComponent(code)}/presets`);
+      const json = await apiJson<{ data: OrderPreset[] }>(`/api/order-presets/types/${encodeURIComponent(code)}/presets`, { cache: "no-store" });
       const nextPresets = json.data || [];
       setPresets(nextPresets);
       if (nextPresets.length > 0) {
@@ -296,7 +289,7 @@ export function OrderPresetsSettings() {
     }
     setLoadingFields(true);
     try {
-      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields?includeInactive=1`);
+      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields?includeInactive=1`, { cache: "no-store" });
       setFields(json.data || []);
     } catch (err: any) {
       toast({ title: "Error al cargar campos", description: err?.message || "No se pudo cargar", variant: "destructive" });
@@ -370,12 +363,15 @@ export function OrderPresetsSettings() {
       const json = await apiJson<{ data?: { fallbackPresetId?: number | null } }>(`/api/order-presets/presets/${preset.id}`, {
         method: "DELETE",
       });
+      setPresets((prev) => prev.filter((current) => current.id !== preset.id));
+      if (json?.data?.fallbackPresetId) {
+        setActivePresetId(json.data.fallbackPresetId);
+      } else if (activePresetId === preset.id) {
+        setActivePresetId(null);
+      }
       setDeletePresetTarget(null);
       setOpenEditPreset(false);
       await loadPresets(activeCode);
-      if (json?.data?.fallbackPresetId) {
-        setActivePresetId(json.data.fallbackPresetId);
-      }
       toast({ title: "Preset eliminado", description: "Se ocultó del uso activo y el formulario hará fallback al preset disponible." });
     } catch (err: any) {
       toast({ title: "No se pudo eliminar el preset", description: err?.message || "Error", variant: "destructive" });
@@ -423,25 +419,7 @@ export function OrderPresetsSettings() {
         body: JSON.stringify(payload),
       });
       setOpenCreateField(false);
-      setCreateForm({
-        label: "",
-        fieldType: "TEXT",
-        required: false,
-        visibleInTracking: false,
-        useInAgenda: false,
-        placeholder: "",
-        defaultValue: "",
-        currencyCode: "ARS",
-        allowedExtensions: ["pdf", "jpg", "png", "jpeg"],
-        mediaMode: "single",
-        acceptMode: "mixed",
-        maxFiles: "1",
-        expectedFiles: "",
-        trackingRender: "list",
-        selectOptions: [""],
-        sectionLabel: "",
-        sectionOrder: "",
-      } as any);
+      setCreateForm(getEmptyOrderPresetFieldForm() as any);
       await loadFields(activePresetId);
       toast({ title: "Campo agregado" });
     } catch (err: any) {
@@ -581,7 +559,7 @@ export function OrderPresetsSettings() {
               <Button
                 variant="secondary"
                 onClick={() => setOpenCreatePreset(true)}
-                disabled={activePresets.length >= 3}
+                disabled={!canCreateMoreOrderPresets(presets)}
               >
                 <Plus className="w-4 h-4 mr-2" /> Nuevo Preset
               </Button>
@@ -667,7 +645,7 @@ export function OrderPresetsSettings() {
                             label: f.label,
                             required: f.required,
                             isActive: f.isActive,
-                            visibleInTracking: f.visibleInTracking,
+                            visibleInTracking: pickVisibleTrackingDefault(f.visibleInTracking),
                             useInAgenda: Boolean((f as any).useInAgenda),
                             placeholder: String((f.config as any)?.placeholder || ""),
                             defaultValue: String((f.config as any)?.defaultValue ?? ""),

@@ -1030,10 +1030,7 @@ export default function OrdersPage() {
                   </div>
                 </div>
                 <div className="border-t px-4 py-4 sm:px-6">
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <p className="text-xs text-muted-foreground">
-                      El formulario respeta tipo, preset, orden, active/inactive, deletedAt y visibleInForm.
-                    </p>
+                  <div className="flex justify-end">
                     <Button type="submit" className="w-full sm:w-auto min-w-[220px]" data-testid="button-submit-order">
                       Crear Pedido
                     </Button>

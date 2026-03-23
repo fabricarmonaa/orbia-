@@ -16,6 +16,7 @@ import {
   resolveNativeOrderFieldKind,
   shouldDisplayOrderFieldInTracking,
 } from "@shared/order-fields";
+import { buildPublicTrackingAttachmentUrl, isTrackingAttachmentVisible } from "./tracking.helpers";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -104,7 +105,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
       fileStorageKey: f.fileStorageKey,
       visibleOverride: f.visibleOverride,
     }))
-    .flatMap((f) => {
+    .flatMap<any>((f) => {
       const baseField = {
         label: f.label || "Campo",
         fieldType: f.fieldType,
@@ -120,14 +121,15 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
 
         return tokens.map((token, index) => {
           const attachment = attachmentById.get(token.id);
-          const downloadUrl = `/api/public/tracking/${trackingId}/attachments/${token.id}`;
+          const previewUrl = buildPublicTrackingAttachmentUrl(trackingId, token.id);
+          const downloadUrl = buildPublicTrackingAttachmentUrl(trackingId, token.id, { download: true });
           const mimeType = attachment?.mimeType || null;
           const isImage = isImageMimeType(mimeType);
           return {
             ...baseField,
             value: attachment?.originalName || (isImage ? "Imagen adjunta" : "Archivo adjunto"),
             downloadUrl,
-            previewUrl: isImage ? downloadUrl : null,
+            previewUrl: isImage ? previewUrl : null,
             mimeType,
             groupId,
             groupLabel,
@@ -157,6 +159,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         groupId: null,
         groupLabel: null,
         slotIndex: null,
+        trackingRender: null,
       }];
     }) : [];
 
@@ -255,10 +258,7 @@ export function registerTrackingRoutes(app: Express) {
       if (!attachment) return res.status(404).json({ error: "Archivo no encontrado" });
 
       const fields = await getOrderCustomFields(order.id, order.tenantId);
-      const isVisibleAttachment = fields.some((f) => {
-        const visible = f.visibleOverride === true || (f.visibleOverride === null && f.visibleInTracking === true);
-        return visible && parseFileStorageTokens(f.fileStorageKey).some((token) => token.kind === "att" && token.id === attachment.id);
-      });
+      const isVisibleAttachment = isTrackingAttachmentVisible(fields, attachment.id);
       if (!isVisibleAttachment) return res.status(403).json({ error: "Archivo no disponible para tracking público" });
 
       const normalized = path.normalize(attachment.storagePath).replace(/^(\.\.(\/|\\|$))+/, "");

@@ -99,3 +99,60 @@ test("respeta los colores por estado en badge e historial", () => {
   assert.match(html, /background-color:#3b82f6/);
   assert.match(html, /Sale del local/);
 });
+
+test("las imágenes públicas del tracking abren la preview pública y no una ruta privada del panel", () => {
+  const html = renderToStaticMarkup(
+    <TrackingView
+      branding={{
+        displayName: "Orbia Test",
+        logoUrl: null,
+        colors: {
+          background: "#fff",
+          text: "#111827",
+          surface: "#fff",
+          border: "#e5e7eb",
+          primary: "#111827",
+          accent: "#6366f1",
+          timeline: "#6366f1",
+          trackingHeader: "#111827",
+          trackingButton: "#6366f1",
+          trackingBadge: "#6366f1",
+        },
+        texts: { trackingHeader: "Seguimiento", trackingThanks: "Gracias" },
+        links: {},
+        trackingConfig: { showDynamicFields: true },
+      } as any}
+      order={{
+        orderNumber: 101,
+        type: "PEDIDO",
+        status: "Recibido",
+        statusColor: "#6366f1",
+        customerName: "Ana",
+        createdAt: new Date().toISOString(),
+        scheduledAt: null,
+        closedAt: null,
+        history: [],
+        publicComments: [],
+        customFields: [{
+          label: "Fotos",
+          value: "equipo.jpg",
+          fieldType: "FILE",
+          previewUrl: "/api/public/tracking/track-123/attachments/7",
+          downloadUrl: "/api/public/tracking/track-123/attachments/7?download=1",
+          mimeType: "image/jpeg",
+          groupId: "file-1",
+          groupLabel: "Fotos",
+          slotIndex: 0,
+          trackingRender: "grid",
+        }],
+        trackingLayout: "classic",
+        trackingVisibility: { showDynamicFields: true },
+      } as any}
+      mode="public"
+    />
+  );
+
+  assert.match(html, /href="\/api\/public\/tracking\/track-123\/attachments\/7"/);
+  assert.doesNotMatch(html, /href="\/api\/orders\//);
+  assert.match(html, /src="\/api\/public\/tracking\/track-123\/attachments\/7"/);
+});

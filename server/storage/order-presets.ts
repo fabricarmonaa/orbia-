@@ -409,7 +409,7 @@ export const orderPresetsStorage = {
     const label = String(payload.label || "").trim();
     if (!label) throw badRequest("PRESET_VALIDATION_ERROR", "label es requerido");
 
-    // Enforce max 3 active presets per type
+    // Enforce max active presets per type
     const existingActive = await db
       .select({ id: orderTypePresets.id })
       .from(orderTypePresets)
@@ -688,7 +688,7 @@ export const orderPresetsStorage = {
       sortOrder: (maxSort?.sortOrder ?? -1) + 1,
       config,
       isActive: true,
-      visibleInTracking: Boolean(payload.visibleInTracking),
+      visibleInTracking: payload.visibleInTracking ?? true,
       useInAgenda: Boolean(payload.useInAgenda),
       deletedAt: null,
     };

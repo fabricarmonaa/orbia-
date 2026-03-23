@@ -78,7 +78,7 @@ export const orderFieldDefinitions = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     isSystemDefault: boolean("is_system_default").notNull().default(false),
     // Etapa B: visibility in public tracking page
-    visibleInTracking: boolean("visible_in_tracking").notNull().default(false),
+    visibleInTracking: boolean("visible_in_tracking").notNull().default(true),
     // Etapa Agenda: si este campo alimenta eventos de agenda automáticamente
     useInAgenda: boolean("use_in_agenda").notNull().default(false),
     deletedAt: timestamp("deleted_at"),

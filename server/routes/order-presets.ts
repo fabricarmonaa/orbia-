@@ -96,10 +96,15 @@ function ensurePresetIdParam(req: any, res: any, next: any) {
   return next();
 }
 
+function applyNoStore(res: any) {
+  res.setHeader("Cache-Control", "no-store");
+}
+
 export function registerOrderPresetRoutes(app: Express) {
   // ── Types ──────────────────────────────────────────────────────────────
   app.get("/api/order-presets/types", tenantAuth, async (req, res) => {
     try {
+      applyNoStore(res);
       const data = await orderPresetsStorage.listOrderTypes(req.auth!.tenantId!);
       return res.json({ data });
     } catch (err) {
@@ -114,6 +119,7 @@ export function registerOrderPresetRoutes(app: Express) {
     validateParams(codeParamSchema),
     async (req, res) => {
       try {
+        applyNoStore(res);
         const result = await orderPresetsStorage.listPresetsByType(
           req.auth!.tenantId!,
           firstParam(req.params.code)
@@ -193,6 +199,7 @@ export function registerOrderPresetRoutes(app: Express) {
     validateParams(presetIdParamSchema),
     async (req, res) => {
       try {
+        applyNoStore(res);
         const includeInactive = req.query.includeInactive === "1" || req.query.includeInactive === "true";
         const result = await orderPresetsStorage.listFieldsByPreset(
           req.auth!.tenantId!,

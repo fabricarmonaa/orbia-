@@ -209,7 +209,7 @@ export function TrackingView({ branding, order, appName, mode = "public", error,
                           {images.map((img, imageIdx) => (
                             <a
                               key={`${group.key}-img-${imageIdx}`}
-                              href={img.downloadUrl || img.previewUrl || "#"}
+                              href={img.previewUrl || img.downloadUrl || "#"}
                               target="_blank"
                               rel="noreferrer noopener"
                               className={`block rounded-md overflow-hidden border bg-black/5 ${trackingRender === "carousel" ? "w-48 h-48 flex-shrink-0" : trackingRender === "list" ? "w-full h-40" : "aspect-square"}`}
