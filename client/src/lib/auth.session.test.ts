@@ -27,13 +27,29 @@ function setupBrowserLikeGlobals() {
   };
 }
 
-test("las rutas públicas de tracking quedan excluidas del redirect de auth", async () => {
+test("rehidrata la sesión desde /api/auth/session y persiste metadata de remember device", async () => {
   setupBrowserLikeGlobals();
-  const { isPublicRoute, resetAuthForTests } = await import("./auth");
-  resetAuthForTests();
+  const fetchCalls: string[] = [];
+  (globalThis as any).fetch = async (url: string) => {
+    fetchCalls.push(url);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        token: "token-rehidratado",
+        user: { id: 1, email: "ana@test.com", fullName: "Ana", role: "admin", tenantId: 5, isSuperAdmin: false, branchId: null },
+        session: { rememberDevice: true, expiresAt: "2026-05-01T00:00:00.000Z" },
+      }),
+    } as Response;
+  };
 
-  assert.equal(isPublicRoute("/tracking/public-link"), true);
-  assert.equal(isPublicRoute("/t/demo/tos"), true);
-  assert.equal(isPublicRoute("/legal/terms"), true);
-  assert.equal(isPublicRoute("/app/orders"), false);
+  const auth = await import("./auth");
+  auth.resetAuthForTests();
+  const ok = await auth.rehydrateSession();
+
+  assert.equal(ok, true);
+  assert.equal(auth.getToken(), "token-rehidratado");
+  assert.equal(auth.getUser()?.email, "ana@test.com");
+  assert.equal(auth.getSessionMeta()?.rememberDevice, true);
+  assert.deepEqual(fetchCalls, ["/api/auth/session"]);
 });

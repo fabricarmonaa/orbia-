@@ -1,13 +1,13 @@
 import { useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { stopSessionActivity } from "@/lib/auth";
+import { isPublicRoute, stopSessionActivity } from "@/lib/auth";
 
 export function SessionLifecycleManager() {
   const { toast } = useToast();
 
   useEffect(() => {
-    const isPublicTracking = window.location.pathname.startsWith("/tracking/");
+    const isPublicTracking = isPublicRoute(window.location.pathname);
     const storedMessage = sessionStorage.getItem("orbia_logout_message");
     if (storedMessage && !isPublicTracking) {
       toast({ title: storedMessage });
@@ -16,7 +16,7 @@ export function SessionLifecycleManager() {
 
     const onLogout = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
-      if (detail?.message && !window.location.pathname.startsWith("/tracking/")) {
+      if (detail?.message && !isPublicRoute(window.location.pathname)) {
         toast({ title: detail.message });
       }
     };

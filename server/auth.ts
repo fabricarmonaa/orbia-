@@ -99,8 +99,8 @@ export interface TenantPlanInfo {
   limits: PlanLimits;
 }
 
-export function generateToken(payload: JWTPayload): string {
-  return jwt.sign(payload, getSessionSecret(), { expiresIn: "24h", algorithm: "HS256" });
+export function generateToken(payload: JWTPayload, options?: { expiresIn?: string | number }): string {
+  return jwt.sign(payload, getSessionSecret(), { expiresIn: options?.expiresIn || "24h", algorithm: "HS256" });
 }
 
 export function verifyToken(token: string): JWTPayload {

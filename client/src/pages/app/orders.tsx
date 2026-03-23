@@ -64,6 +64,7 @@ import {
   resolveOrderFieldDefinition,
   resolveRenderableOrderFields,
 } from "@shared/order-fields";
+import { clearOrderDraft, loadOrderDraft, saveOrderDraft } from "./order-draft";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -99,10 +100,6 @@ type MessageTemplate = {
   isActive: boolean;
 };
 
-const ORDER_DRAFT_STORAGE_KEY = "orbia_order_draft_v2";
-
-type NativeOrderFieldKind = "customer" | "phone" | "description" | "paid" | "total";
-
 function emptyOrderDraft(type = "PEDIDO") {
   return {
     type,
@@ -119,10 +116,6 @@ function emptyOrderDraft(type = "PEDIDO") {
     deliveryCity: "",
     deliveryAddressNotes: "",
   };
-}
-
-function getDraftKey(type: string, presetId?: number) {
-  return `${ORDER_DRAFT_STORAGE_KEY}:${String(type || "PEDIDO").toUpperCase()}:${presetId || "default"}`;
 }
 
 export default function OrdersPage() {
@@ -172,24 +165,6 @@ export default function OrdersPage() {
     [resolvedPresetFields]
   );
 
-  const nativeVisibility = useMemo(() => {
-    if (!newOrder.orderPresetId) {
-      return { customer: true, phone: true, description: true, paid: true, total: true };
-    }
-    const activeKinds = new Set<NativeOrderFieldKind>();
-    for (const field of resolvedPresetFields) {
-      const kind = resolveNativeOrderFieldKind(field);
-      if (kind) activeKinds.add(kind);
-    }
-    return {
-      customer: activeKinds.has("customer"),
-      phone: activeKinds.has("phone"),
-      description: activeKinds.has("description"),
-      paid: activeKinds.has("paid"),
-      total: activeKinds.has("total"),
-    };
-  }, [resolvedPresetFields, newOrder.orderPresetId]);
-
   useEffect(() => {
     fetchData();
     void loadPresetsForType(newOrder.type || "PEDIDO");
@@ -225,9 +200,12 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!dialogOpen || draftRestored) return;
     try {
-      const raw = sessionStorage.getItem(getDraftKey(newOrder.type, newOrder.orderPresetId));
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { newOrder?: typeof newOrder; customFieldInputs?: typeof customFieldInputs };
+      const parsed = loadOrderDraft<typeof newOrder, typeof customFieldInputs>({
+        user,
+        type: newOrder.type,
+        presetId: newOrder.orderPresetId,
+      });
+      if (!parsed) return;
       if (parsed.newOrder) setNewOrder((prev) => ({ ...prev, ...parsed.newOrder }));
       if (parsed.customFieldInputs) setCustomFieldInputs(parsed.customFieldInputs);
     } catch {
@@ -235,19 +213,19 @@ export default function OrdersPage() {
     } finally {
       setDraftRestored(true);
     }
-  }, [dialogOpen, draftRestored, newOrder.type, newOrder.orderPresetId]);
+  }, [dialogOpen, draftRestored, newOrder.type, newOrder.orderPresetId, user]);
 
   useEffect(() => {
     if (!dialogOpen) return;
     try {
-      sessionStorage.setItem(
-        getDraftKey(newOrder.type, newOrder.orderPresetId),
-        JSON.stringify({ newOrder, customFieldInputs })
+      saveOrderDraft(
+        { user, type: newOrder.type, presetId: newOrder.orderPresetId },
+        { newOrder, customFieldInputs }
       );
     } catch {
       // ignore storage failures
     }
-  }, [dialogOpen, newOrder, customFieldInputs]);
+  }, [dialogOpen, newOrder, customFieldInputs, user]);
 
   async function loadPresetsForType(typeCode: string) {
     const requestId = ++presetLoadSeqRef.current;
@@ -370,7 +348,7 @@ export default function OrdersPage() {
       setDialogOpen(false);
       setNewOrder(emptyOrderDraft("PEDIDO"));
       setCustomFieldInputs({});
-      sessionStorage.removeItem(getDraftKey(newOrder.type, newOrder.orderPresetId));
+      clearOrderDraft({ user, type: newOrder.type, presetId: newOrder.orderPresetId });
       setDraftRestored(false);
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -553,6 +531,201 @@ export default function OrdersPage() {
     }
   }
 
+  function renderPresetField(field: OrderPresetField) {
+    const kind = resolveNativeOrderFieldKind(field);
+    const resolved = resolveOrderFieldDefinition(field);
+    const moneyBadge = kind === "total"
+      ? (!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
+        ? "Sin monto"
+        : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
+          ? "Saldado ✓"
+          : "Deuda")
+      : null;
+
+    if (kind === "customer") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>{field.label}{field.required ? " *" : ""}</Label>
+            <button
+              type="button"
+              className="text-xs text-primary hover:underline flex items-center gap-1"
+              onClick={() => setQuickAddCustomerOpen(true)}
+              title="Agregar cliente nuevo"
+            >
+              + Nuevo cliente
+            </button>
+          </div>
+          <CustomerAutocomplete
+            value={newOrder.customerName}
+            onChange={(val, customer) => {
+              setNewOrder({
+                ...newOrder,
+                customerName: val,
+                customerPhone: customer?.phone || newOrder.customerPhone,
+                customerEmail: customer?.email || newOrder.customerEmail,
+              });
+            }}
+          />
+          <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
+        </div>
+      );
+    }
+
+    if (kind === "phone") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <Input
+            placeholder={resolved.placeholder || "Ej: 11 1234-5678"}
+            value={newOrder.customerPhone}
+            onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
+            data-testid="input-customer-phone"
+          />
+        </div>
+      );
+    }
+
+    if (kind === "description") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <Textarea
+            placeholder={resolved.placeholder || "Ingrese descripción..."}
+            value={newOrder.description}
+            onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
+            data-testid="input-description"
+          />
+        </div>
+      );
+    }
+
+    if (kind === "paid" || kind === "total") {
+      const isPaid = kind === "paid";
+      return (
+        <div key={field.id} className="space-y-2 bg-primary/5 border border-primary/20 p-3 rounded-md">
+          <div className="flex items-center justify-between">
+            <Label>{field.label}{field.required ? " *" : ""}</Label>
+            {moneyBadge ? <span className="text-[10px] font-medium opacity-70">{moneyBadge}</span> : null}
+          </div>
+          <Input
+            type="number"
+            step="0.01"
+            placeholder={resolved.placeholder || (isPaid ? "Monto pagado" : "Monto total")}
+            value={isPaid ? newOrder.paidAmount : newOrder.totalAmount}
+            min={0}
+            max={isPaid ? (newOrder.totalAmount || undefined) : undefined}
+            onChange={(e) => {
+              if (isPaid) {
+                const val = parseFloat(e.target.value);
+                const tot = parseFloat(newOrder.totalAmount);
+                if (!isNaN(val) && !isNaN(tot) && val > tot) return;
+                setNewOrder({ ...newOrder, paidAmount: e.target.value });
+                return;
+              }
+              setNewOrder({ ...newOrder, totalAmount: e.target.value });
+            }}
+            data-testid={isPaid ? "input-paid-amount" : "input-total-amount"}
+          />
+          {resolved.normalizedType === "MONEY" && (resolved.currencyCode || "ARS") ? (
+            <p className="text-xs text-muted-foreground">Moneda: {resolved.currencyCode || "ARS"}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    const fieldState = customFieldInputs[field.id] || {};
+    return (
+      <div key={field.id} className="space-y-3 border rounded-md p-3">
+        <div className="flex items-center justify-between">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fieldState.visibleOverride ?? field.visibleInTracking}
+              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), visibleOverride: e.target.checked } }))}
+            />
+            Mostrar en tracking
+          </label>
+        </div>
+        {field.fieldType === "TEXT" && (
+          <Input
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "TEXT_LONG" && (
+          <Textarea
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {(field.fieldType === "NUMBER" || field.fieldType === "MONEY") && (
+          <Input
+            type="number"
+            step="0.01"
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueNumber || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "DATE" && (
+          <Input
+            type="date"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "TIME" && (
+          <Input
+            type="time"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "DATETIME" && (
+          <Input
+            type="datetime-local"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "SELECT" && (
+          <Select value={fieldState.valueText || ""} onValueChange={(value) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: value } }))}>
+            <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+            <SelectContent>
+              {((field.config?.options || []) as string[]).map((option) => (
+                <SelectItem key={`${field.id}-${option}`} value={option}>{option}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {field.fieldType === "CHECKBOX" && (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={fieldState.valueText === "true"}
+              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.checked ? "true" : "false" } }))}
+            />
+            Seleccionado
+          </label>
+        )}
+        {field.fieldType === "FILE" && (
+          <FileFieldInput
+            orderId="new"
+            fieldDefinitionId={field.id}
+            allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
+            currentAttachmentId={fieldState.fileStorageKey || null}
+            onUploadSuccess={(attachmentId) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), fileStorageKey: `att:${attachmentId}` } }))}
+            onRemove={() => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), fileStorageKey: null } }))}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -649,188 +822,9 @@ export default function OrdersPage() {
                     </Select>
                   </div>
                 </div>
-                {nativeVisibility.customer && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Cliente</Label>
-                    <button
-                      type="button"
-                      className="text-xs text-primary hover:underline flex items-center gap-1"
-                      onClick={() => setQuickAddCustomerOpen(true)}
-                      title="Agregar cliente nuevo"
-                    >
-                      + Nuevo cliente
-                    </button>
-                  </div>
-                  <CustomerAutocomplete
-                    value={newOrder.customerName}
-                    onChange={(val, customer) => {
-                      setNewOrder({
-                        ...newOrder,
-                        customerName: val,
-                        customerPhone: customer?.phone || newOrder.customerPhone,
-                        customerEmail: customer?.email || newOrder.customerEmail,
-                      });
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
+                <div className="space-y-3">
+                  {resolvedPresetFields.map((field) => renderPresetField(field))}
                 </div>
-                )}
-                {nativeVisibility.phone && (
-                <div className="space-y-2">
-                  <Label>Teléfono (Opcional)</Label>
-                  <Input
-                    placeholder="Ej: 11 1234-5678"
-                    value={newOrder.customerPhone}
-                    onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
-                    data-testid="input-customer-phone"
-                  />
-                </div>
-                )}
-                {(nativeVisibility.paid || nativeVisibility.total) && (
-                <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
-                  {nativeVisibility.paid ? (
-                  <div className="space-y-2">
-                    <Label>Seña o Pago</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ej: 5000"
-                      value={newOrder.paidAmount}
-                      min={0}
-                      max={newOrder.totalAmount || undefined}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        const tot = parseFloat(newOrder.totalAmount);
-                        if (!isNaN(val) && !isNaN(tot) && val > tot) return;
-                        setNewOrder({ ...newOrder, paidAmount: e.target.value });
-                      }}
-                      data-testid="input-paid-amount"
-                    />
-                  </div>
-                  ) : <div />}
-                  {nativeVisibility.total ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>Valor Total</Label>
-                      <span className="text-[10px] font-medium opacity-70">
-                        {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
-                          ? "Sin monto"
-                          : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
-                            ? "Saldado ✓"
-                            : "Deuda"}
-                      </span>
-                    </div>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ej: 10000"
-                      value={newOrder.totalAmount}
-                      onChange={(e) => setNewOrder({ ...newOrder, totalAmount: e.target.value })}
-                      data-testid="input-total-amount"
-                    />
-                  </div>
-                  ) : <div />}
-                </div>
-                )}
-
-                {nativeVisibility.description && (
-                <div className="space-y-2">
-                  <Label>Descripción (Opcional)</Label>
-                  <Textarea
-                    placeholder="Ingrese descripción..."
-                    value={newOrder.description}
-                    onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
-                    data-testid="input-description"
-                  />
-                </div>
-                )}
-                {customPresetFields.length > 0 && (
-                  <div className="space-y-3 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos adicionales</p>
-                    {customPresetFields.map((field) => (
-                      <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
-                        <div className="flex items-center justify-between">
-                          <Label>{field.label}{field.required ? " *" : ""}</Label>
-                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={customFieldInputs[field.id]?.visibleOverride ?? field.visibleInTracking}
-                              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), visibleOverride: e.target.checked } }))}
-                            />
-                            Visible
-                          </label>
-                        </div>
-                        {field.fieldType === "TEXT" || field.fieldType === "TEXT_LONG" || field.fieldType === "DATE" || field.fieldType === "TIME" || field.fieldType === "DATETIME" ? (
-                          <Input
-                            type={field.fieldType === "DATE" ? "date" : field.fieldType === "TIME" ? "time" : field.fieldType === "DATETIME" ? "datetime-local" : "text"}
-                            value={customFieldInputs[field.id]?.valueText || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
-                          />
-                        ) : field.fieldType === "SELECT" ? (
-                          <Select value={customFieldInputs[field.id]?.valueText || ""} onValueChange={(val) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: val } }))}>
-                            <SelectTrigger><SelectValue placeholder="Seleccionar opción" /></SelectTrigger>
-                            <SelectContent>
-                              {((field.config as any)?.options || []).map((opt: string) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        ) : field.fieldType === "CHECKBOX" ? (
-                          <div className="flex flex-col gap-2">
-                            {((field.config as any)?.options?.length ? (field.config as any).options : ["Marcar"]).map((opt: string) => {
-                              const isMultiple = (field.config as any)?.options?.length > 1;
-                              const currentValue = customFieldInputs[field.id]?.valueText || "false";
-                              const isChecked = isMultiple
-                                ? currentValue.split(",").includes(opt)
-                                : currentValue === "true";
-
-                              return (
-                                <label key={opt} className="text-sm flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={(e) => {
-                                      setCustomFieldInputs((prev) => {
-                                        const prevObj = prev[field.id] || {};
-                                        let newValue = "false";
-                                        if (isMultiple) {
-                                          const prevVals = prevObj.valueText?.split(",").filter((x: string) => x) || [];
-                                          const nextVals = e.target.checked
-                                            ? [...prevVals, opt]
-                                            : prevVals.filter((x: string) => x !== opt);
-                                          newValue = nextVals.join(",");
-                                        } else {
-                                          newValue = e.target.checked ? "true" : "false";
-                                        }
-                                        return { ...prev, [field.id]: { ...prevObj, valueText: newValue } };
-                                      });
-                                    }}
-                                  />
-                                  {opt}
-                                </label>
-                              );
-                            })}
-                          </div>
-                        ) : field.fieldType === "NUMBER" || field.fieldType === "MONEY" ? (
-                          <Input
-                            type="number"
-                            step="0.01"
-                            placeholder={resolveOrderFieldDefinition(field).placeholder || (field.fieldType === "MONEY" ? "0,00" : "")}
-                            value={customFieldInputs[field.id]?.valueNumber || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
-                          />
-                        ) : (
-                          <FileFieldInput
-                            orderId={"new"}
-                            fieldDefinitionId={field.id}
-                            allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                            onUploadSuccess={() => { }}
-                            onRemove={() => { }}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
                 {addonStatus.delivery && (
                   <div className="space-y-3 p-3 rounded-md bg-muted/50">
                     <div className="flex items-center justify-between gap-4">

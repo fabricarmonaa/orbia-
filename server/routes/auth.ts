@@ -25,6 +25,19 @@ import { randomUUID } from "crypto";
 import { userGoogleConnections } from "@shared/schema";
 import { buildGoogleAuthUrl, decodeState, exchangeGoogleCode, fetchGoogleProfile, encryptGoogleToken, getAllowedParentOrigins, getRedirectUri, validateParentOrigin } from "../services/google-oauth";
 import { createPublicTrialSignup } from "../services/public-signup";
+import {
+  clearRefreshCookie,
+  createRefreshSession,
+  getAccessTokenTtlSeconds,
+  getRefreshCookieName,
+  getRefreshSessionByToken,
+  isRefreshSessionUsable,
+  readCookie,
+  revokeRefreshSession,
+  revokeRefreshSessionsForUser,
+  serializeRefreshCookie,
+  touchRefreshSession,
+} from "../services/auth-refresh-sessions";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -43,6 +56,7 @@ const superLoginSchema = z.object({
 const tenantLoginSchema = z.object({
   email: z.string().trim().email().max(120),
   password: z.string().min(1).max(256),
+  rememberDevice: z.boolean().optional(),
 });
 
 const forgotPasswordSchema = z.object({
@@ -165,6 +179,33 @@ async function logSuperSecurity(superAdminId: number | null, action: string, met
 
 
 export function registerAuthRoutes(app: Express) {
+  function buildTenantAuthPayload(user: any) {
+    return {
+      userId: user.id,
+      email: user.email,
+      role: user.role,
+      tenantId: user.tenantId,
+      isSuperAdmin: false,
+      branchId: user.branchId,
+      scope: user.scope || "TENANT",
+    };
+  }
+
+  async function issueTenantSession(req: Request, res: any, user: any, rememberDevice: boolean) {
+    const refresh = await createRefreshSession({
+      tenantId: user.tenantId,
+      userId: user.id,
+      rememberDevice,
+      deviceLabel: rememberDevice ? "remember-device" : "session-device",
+      ipAddress: getClientIp(req),
+      userAgent: req.headers["user-agent"] || null,
+    });
+    res.setHeader("Set-Cookie", serializeRefreshCookie(refresh.token, refresh.expiresAt));
+    return generateToken(buildTenantAuthPayload(user), {
+      expiresIn: `${getAccessTokenTtlSeconds()}s`,
+    });
+  }
+
   app.post("/api/auth/forgot-password", forgotPasswordLimiter, async (req, res) => {
     try {
       const { email } = forgotPasswordSchema.parse(req.body || {});
@@ -346,6 +387,13 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/logout", async (req, res) => {
     try {
+      const refreshToken = readCookie(req.headers.cookie, getRefreshCookieName());
+      if (refreshToken) {
+        const session = await getRefreshSessionByToken(refreshToken);
+        if (session) {
+          await revokeRefreshSession(session.id);
+        }
+      }
       const authHeader = req.headers.authorization;
       if (authHeader?.startsWith("Bearer ")) {
         const token = authHeader.substring(7);
@@ -367,8 +415,10 @@ export function registerAuthRoutes(app: Express) {
           // Stateless JWT best effort.
         }
       }
+      res.setHeader("Set-Cookie", clearRefreshCookie());
       return res.json({ ok: true });
     } catch {
+      res.setHeader("Set-Cookie", clearRefreshCookie());
       return res.json({ ok: true });
     }
   });
@@ -382,6 +432,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(400).json({ error: "Usuario inválido", code: "USER_INVALID" });
       }
       await storage.updateUser(userId, tenantId, { tokenInvalidBefore: new Date() as any });
+      await revokeRefreshSessionsForUser(tenantId, userId);
       await storage.createAuditLog({
         tenantId,
         userId,
@@ -392,6 +443,100 @@ export function registerAuthRoutes(app: Express) {
       return res.json({ ok: true });
     } catch {
       return res.status(500).json({ error: "No se pudo cerrar todas las sesiones", code: "LOGOUT_ALL_ERROR" });
+    }
+  });
+
+  app.post("/api/auth/refresh", async (req, res) => {
+    try {
+      const refreshToken = readCookie(req.headers.cookie, getRefreshCookieName());
+      if (!refreshToken) {
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(401).json({ error: "Sesión no disponible", code: "AUTH_REFRESH_REQUIRED" });
+      }
+
+      const session = await getRefreshSessionByToken(refreshToken);
+      if (!session || !isRefreshSessionUsable(session)) {
+        if (session) await revokeRefreshSession(session.id);
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(401).json({ error: "Sesión vencida", code: "AUTH_REFRESH_EXPIRED" });
+      }
+
+      const user = await storage.getUserById(session.userId, session.tenantId);
+      if (!user || user.disabled || !user.isActive || user.deletedAt) {
+        await revokeRefreshSession(session.id);
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(401).json({ error: "Usuario inválido", code: "AUTH_INVALID" });
+      }
+
+      if (user.tokenInvalidBefore && session.createdAt <= new Date(user.tokenInvalidBefore)) {
+        await revokeRefreshSession(session.id);
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(401).json({ error: "Sesión revocada", code: "AUTH_REFRESH_REVOKED" });
+      }
+
+      await touchRefreshSession(session.id);
+      const token = generateToken(buildTenantAuthPayload(user), { expiresIn: `${getAccessTokenTtlSeconds()}s` });
+      return res.json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          tenantId: user.tenantId,
+          isSuperAdmin: false,
+          branchId: user.branchId,
+          scope: user.scope || "TENANT",
+          avatarUrl: user.avatarUrl || null,
+        },
+        session: { rememberDevice: session.rememberDevice, expiresAt: session.expiresAt },
+      });
+    } catch (err) {
+      console.error("[auth:refresh]", err);
+      res.setHeader("Set-Cookie", clearRefreshCookie());
+      return res.status(500).json({ error: "No se pudo renovar la sesión", code: "AUTH_REFRESH_ERROR" });
+    }
+  });
+
+  app.get("/api/auth/session", async (req, res) => {
+    try {
+      const refreshToken = readCookie(req.headers.cookie, getRefreshCookieName());
+      if (!refreshToken) return res.status(204).send();
+
+      const session = await getRefreshSessionByToken(refreshToken);
+      if (!session || !isRefreshSessionUsable(session)) {
+        if (session) await revokeRefreshSession(session.id);
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(204).send();
+      }
+
+      const user = await storage.getUserById(session.userId, session.tenantId);
+      if (!user || user.disabled || !user.isActive || user.deletedAt) {
+        await revokeRefreshSession(session.id);
+        res.setHeader("Set-Cookie", clearRefreshCookie());
+        return res.status(204).send();
+      }
+
+      await touchRefreshSession(session.id);
+      const token = generateToken(buildTenantAuthPayload(user), { expiresIn: `${getAccessTokenTtlSeconds()}s` });
+      return res.json({
+        token,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+          tenantId: user.tenantId,
+          isSuperAdmin: false,
+          branchId: user.branchId,
+          scope: user.scope || "TENANT",
+          avatarUrl: user.avatarUrl || null,
+        },
+        session: { rememberDevice: session.rememberDevice, expiresAt: session.expiresAt },
+      });
+    } catch (err) {
+      console.error("[auth:session]", err);
+      return res.status(500).json({ error: "No se pudo rehidratar la sesión", code: "AUTH_SESSION_ERROR" });
     }
   });
 
@@ -700,7 +845,7 @@ export function registerAuthRoutes(app: Express) {
 
   app.post("/api/auth/login", strictLoginLimiter, tenantLoginLimiter, async (req, res) => {
     try {
-      const { email, password } = tenantLoginSchema.parse(req.body);
+      const { email, password, rememberDevice } = tenantLoginSchema.parse(req.body);
       
       const user = await storage.getUserByEmail(email);
       if (!user || !user.isActive || user.disabled || !user.tenantId) {
@@ -760,15 +905,7 @@ export function registerAuthRoutes(app: Express) {
       }
       const weakEvaluation = evaluatePassword(password, { tenantCode: tenant.code, tenantName: tenant.name, email: user.email });
       setPasswordWeakFlag(user.id, weakEvaluation.score < 45);
-      const token = generateToken({
-        userId: user.id,
-        email: user.email,
-        role: user.role,
-        tenantId: tenant.id,
-        isSuperAdmin: false,
-        branchId: user.branchId,
-        scope: user.scope || "TENANT",
-      });
+      const token = await issueTenantSession(req, res, { ...user, tenantId: tenant.id }, rememberDevice === true);
       res.json({
         token,
         user: {
@@ -784,6 +921,10 @@ export function registerAuthRoutes(app: Express) {
           passwordWeak: weakEvaluation.score < 45,
         },
         subscriptionWarning,
+        session: {
+          rememberDevice: rememberDevice === true,
+          accessTokenExpiresInSec: getAccessTokenTtlSeconds(),
+        },
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {

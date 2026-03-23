@@ -12,6 +12,7 @@ export const ORDER_FIELD_TYPES = [
 ] as const;
 
 export type OrderFieldType = (typeof ORDER_FIELD_TYPES)[number];
+export type NativeOrderFieldKind = "customer" | "phone" | "description" | "paid" | "total";
 
 export type OrderFieldDefinitionLike = {
   id: number;
@@ -56,7 +57,13 @@ export function normalizeSemanticKey(value: string | null | undefined): string {
     .replace(/^_+|_+$/g, "");
 }
 
-const SEMANTIC_KIND_BY_KEY: Record<string, "customer" | "phone" | "description" | "paid" | "total"> = {
+const FIELD_TYPE_ALIASES: Record<string, OrderFieldType> = {
+  CURRENCY: "MONEY",
+  MONEDA: "MONEY",
+  DINERO: "MONEY",
+};
+
+const SEMANTIC_KIND_BY_KEY: Record<string, NativeOrderFieldKind> = {
   cliente: "customer",
   customer: "customer",
   customer_name: "customer",
@@ -81,7 +88,15 @@ const SEMANTIC_KIND_BY_KEY: Record<string, "customer" | "phone" | "description" 
   monto_total: "total",
 };
 
-export function resolveNativeOrderFieldKind(def: Pick<OrderFieldDefinitionLike, "fieldKey" | "label">): "customer" | "phone" | "description" | "paid" | "total" | null {
+export const NATIVE_ORDER_FIELD_KINDS = ["customer", "phone", "description", "paid", "total"] as const;
+
+export function normalizeOrderFieldType(value: string): OrderFieldType | string {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (FIELD_TYPE_ALIASES[normalized]) return FIELD_TYPE_ALIASES[normalized];
+  return normalized;
+}
+
+export function resolveNativeOrderFieldKind(def: Pick<OrderFieldDefinitionLike, "fieldKey" | "label">): NativeOrderFieldKind | null {
   const candidates = [normalizeSemanticKey(def.fieldKey), normalizeSemanticKey(def.label)].filter(Boolean);
   for (const candidate of candidates) {
     if (SEMANTIC_KIND_BY_KEY[candidate]) return SEMANTIC_KIND_BY_KEY[candidate];
@@ -95,7 +110,7 @@ export function isNativeOrderField(def: Pick<OrderFieldDefinitionLike, "fieldKey
 
 export function resolveOrderFieldDefinition<T extends OrderFieldDefinitionLike>(field: T): ResolvedOrderFieldDefinition<T> {
   const config = (field.config || {}) as Record<string, unknown>;
-  const normalizedType = String(field.fieldType || "").trim().toUpperCase();
+  const normalizedType = normalizeOrderFieldType(field.fieldType);
   const visibleInForm = config.visibleInForm !== false;
   const visibleInTracking = field.visibleInTracking === true;
   const showWhenEmpty = config.showWhenEmpty === true;
@@ -116,6 +131,62 @@ export function resolveOrderFieldDefinition<T extends OrderFieldDefinitionLike>(
     currencyCode,
     active,
     deleted,
+  };
+}
+
+export function buildNativeOrderFieldTemplate(kind: NativeOrderFieldKind) {
+  if (kind === "customer") {
+    return {
+      fieldKey: "customer_name",
+      label: "Cliente",
+      fieldType: "TEXT" as OrderFieldType,
+      required: false,
+      visibleInTracking: false,
+      sortOrder: 0,
+      config: { visibleInForm: true, placeholder: "Nombre del cliente" },
+    };
+  }
+  if (kind === "phone") {
+    return {
+      fieldKey: "customer_phone",
+      label: "Teléfono",
+      fieldType: "TEXT" as OrderFieldType,
+      required: false,
+      visibleInTracking: false,
+      sortOrder: 1,
+      config: { visibleInForm: true, placeholder: "Teléfono del cliente" },
+    };
+  }
+  if (kind === "description") {
+    return {
+      fieldKey: "description",
+      label: "Descripción",
+      fieldType: "TEXT_LONG" as OrderFieldType,
+      required: false,
+      visibleInTracking: false,
+      sortOrder: 2,
+      config: { visibleInForm: true, placeholder: "Detalle del pedido / encargo / turno / servicio" },
+    };
+  }
+  if (kind === "paid") {
+    return {
+      fieldKey: "paid_amount",
+      label: "Seña o Pago",
+      fieldType: "MONEY" as OrderFieldType,
+      required: false,
+      visibleInTracking: false,
+      sortOrder: 3,
+      config: { visibleInForm: true, currencyCode: "ARS", placeholder: "Monto pagado" },
+    };
+  }
+  return {
+    fieldKey: "total_amount",
+    label: "Valor Total",
+    fieldType: "MONEY" as OrderFieldType,
+    required: false,
+    visibleInTracking: true,
+    sortOrder: 4,
+    config: { visibleInForm: true, currencyCode: "ARS", placeholder: "Monto total" },
   };
 }
 

@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildNativeOrderFieldTemplate,
   formatMoneyValue,
+  normalizeOrderFieldType,
   resolveNativeOrderFieldKind,
   resolveOrderFieldDefinition,
   resolveRenderableOrderFields,
@@ -86,4 +88,16 @@ test("tracking público oculta vacíos por defecto y puede mostrarlos con showWh
 
 test("resuelve correctamente el binding semántico de cliente", () => {
   assert.equal(resolveNativeOrderFieldKind({ fieldKey: "customer_name", label: "Cliente" }), "customer");
+});
+
+test("normaliza aliases de dinero y expone templates nativos monetarios", () => {
+  assert.equal(normalizeOrderFieldType("currency"), "MONEY");
+  assert.equal(normalizeOrderFieldType("dinero"), "MONEY");
+
+  const paid = buildNativeOrderFieldTemplate("paid");
+  const total = buildNativeOrderFieldTemplate("total");
+
+  assert.equal(paid.fieldType, "MONEY");
+  assert.equal(total.fieldKey, "total_amount");
+  assert.equal(total.visibleInTracking, true);
 });

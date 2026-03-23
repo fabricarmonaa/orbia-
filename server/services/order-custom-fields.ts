@@ -1,6 +1,6 @@
 import { and, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { db } from "../db";
-import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions, orders } from "@shared/schema";
+import { orderFieldDefinitions, orderFieldValues, orderTypeDefinitions, orderTypePresets, orders } from "@shared/schema";
 import { badRequest, notFound } from "../lib/http-errors";
 import {
   isNativeOrderField,
@@ -45,6 +45,22 @@ export async function validateAndNormalizeCustomFields(
   orderPresetId?: number | null
 ) {
   const typeRow = await resolveTypeOrThrow(tenantId, orderTypeCode);
+
+  if (orderPresetId) {
+    const [preset] = await db
+      .select({ id: orderTypePresets.id, orderTypeId: orderTypePresets.orderTypeId })
+      .from(orderTypePresets)
+      .where(and(eq(orderTypePresets.id, orderPresetId), eq(orderTypePresets.tenantId, tenantId)));
+    if (!preset) {
+      throw notFound("PRESET_NOT_FOUND", "Preset no encontrado");
+    }
+    if (preset.orderTypeId !== typeRow.id) {
+      throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El preset no pertenece al tipo seleccionado", {
+        orderPresetId,
+        orderTypeCode: typeRow.code,
+      });
+    }
+  }
 
   // Condición base: del tenant, del tipo, y activos
   const conditions = [

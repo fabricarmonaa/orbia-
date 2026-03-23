@@ -8,25 +8,25 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { badRequest, notFound, HttpError } from "../lib/http-errors";
-import { ORDER_FIELD_TYPES, resolveOrderFieldDefinition } from "@shared/order-fields";
+import {
+  buildNativeOrderFieldTemplate,
+  resolveNativeOrderFieldKind,
+  resolveOrderFieldDefinition,
+} from "@shared/order-fields";
+import {
+  normalizeFieldTypeInput,
+  normalizeOrderPresetFieldConfig,
+  ORDER_PRESET_ALLOWED_FILE_EXTENSIONS,
+} from "./order-presets.shared";
 
 // ─────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────
-const ALLOWED_FIELD_TYPES = new Set(ORDER_FIELD_TYPES);
-const ALLOWED_FILE_EXTENSIONS = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"] as const;
 const MAX_PRESETS_PER_TYPE = 3;
 
 // ─────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────
-function sanitizeExtension(value: string): string {
-  return String(value || "")
-    .trim()
-    .toLowerCase()
-    .replace(/^\./, "");
-}
-
 function slugifyFieldKey(label: string): string {
   const base = label
     .normalize("NFD")
@@ -46,99 +46,6 @@ export function slugifyPresetCode(label: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 80) || "preset";
-}
-
-function normalizeFieldType(value: string): "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME" {
-  const normalized = String(value || "").trim().toUpperCase();
-  if (!ALLOWED_FIELD_TYPES.has(normalized as any)) {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "fieldType inválido");
-  }
-  return normalized as any;
-}
-
-function normalizeGenericConfig(base: Record<string, unknown>) {
-  if (base.placeholder !== undefined && typeof base.placeholder !== "string") {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "placeholder debe ser texto");
-  }
-  if (base.defaultValue !== undefined && typeof base.defaultValue !== "string" && typeof base.defaultValue !== "number" && base.defaultValue !== null) {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue inválido");
-  }
-  if (base.visibleInForm !== undefined) base.visibleInForm = base.visibleInForm !== false;
-  if (base.showWhenEmpty !== undefined) base.showWhenEmpty = base.showWhenEmpty === true;
-  return base;
-}
-
-function normalizeConfig(fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME", config: unknown): Record<string, unknown> {
-  const base =
-    config && typeof config === "object" && !Array.isArray(config)
-      ? { ...(config as Record<string, unknown>) }
-      : {};
-  normalizeGenericConfig(base);
-
-  if (fieldType === "SELECT" || fieldType === "CHECKBOX") {
-    const source = (base as any).options;
-    const rawOptions = Array.isArray(source)
-      ? source
-      : (typeof source === "string" ? source.split(",") : []);
-    const options = Array.from(new Set(rawOptions.map((x: unknown) => String(x || "").trim()).filter(Boolean))).slice(0, 100);
-    if (fieldType === "SELECT" && options.length === 0) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "El campo desplegable requiere opciones");
-    if (options.length > 0) base.options = options;
-    else delete (base as any).options;
-    return base;
-  }
-
-  if (fieldType === "MONEY") {
-    const currencyCode = typeof base.currencyCode === "string" && base.currencyCode.trim()
-      ? base.currencyCode.trim().toUpperCase()
-      : "ARS";
-    base.currencyCode = currencyCode;
-    if (base.defaultValue !== undefined && base.defaultValue !== null && base.defaultValue !== "") {
-      const parsed = Number(base.defaultValue);
-      if (Number.isNaN(parsed)) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue debe ser numérico para dinero");
-      }
-      base.defaultValue = parsed;
-    }
-    return base;
-  }
-
-  if (fieldType === "NUMBER") {
-    if (base.defaultValue !== undefined && base.defaultValue !== null && base.defaultValue !== "") {
-      const parsed = Number(base.defaultValue);
-      if (Number.isNaN(parsed)) {
-        throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "defaultValue debe ser numérico");
-      }
-      base.defaultValue = parsed;
-    }
-    return base;
-  }
-
-  if (fieldType !== "FILE") return base;
-
-  const raw = (base.allowedExtensions ?? ALLOWED_FILE_EXTENSIONS) as unknown;
-  if (!Array.isArray(raw)) {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "allowedExtensions debe ser array");
-  }
-
-  const normalized = Array.from(
-    new Set(raw.map((x) => sanitizeExtension(String(x))).filter(Boolean))
-  );
-  if (normalized.length === 0) {
-    throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "allowedExtensions no puede estar vacío");
-  }
-
-  const invalid = normalized.filter((ext) => !ALLOWED_FILE_EXTENSIONS.includes(ext as any));
-  if (invalid.length > 0) {
-    throw badRequest(
-      "ORDER_PRESET_VALIDATION_ERROR",
-      `Extensiones no permitidas: ${invalid.join(", ")}`,
-      { allowed: ALLOWED_FILE_EXTENSIONS }
-    );
-  }
-
-  base.allowedExtensions = normalized;
-  base.requiredOnCreate = false;
-  return base;
 }
 
 async function getTypeOrThrow(tenantId: number, code: string) {
@@ -327,6 +234,77 @@ async function cloneMissingSystemDefaultsForPreset(tenantId: number, orderTypeId
   }
 }
 
+async function ensureCanonicalNativeFieldsForPreset(tenantId: number, orderTypeId: number, presetId: number) {
+  const existing = await db
+    .select()
+    .from(orderFieldDefinitions)
+    .where(
+      and(
+        eq(orderFieldDefinitions.tenantId, tenantId),
+        eq(orderFieldDefinitions.orderTypeId, orderTypeId),
+        eq(orderFieldDefinitions.presetId, presetId),
+        sql`${orderFieldDefinitions.deletedAt} IS NULL`
+      )
+    )
+    .orderBy(asc(orderFieldDefinitions.sortOrder), asc(orderFieldDefinitions.id));
+
+  const existingByKind = new Map<string, typeof existing[number]>();
+  for (const field of existing) {
+    const kind = resolveNativeOrderFieldKind(field);
+    if (!kind || existingByKind.has(kind)) continue;
+    existingByKind.set(kind, field);
+  }
+
+  for (const kind of ["customer", "phone", "description", "paid", "total"] as const) {
+    const template = buildNativeOrderFieldTemplate(kind);
+    const current = existingByKind.get(kind);
+    if (!current) {
+      await db.insert(orderFieldDefinitions).values({
+        tenantId,
+        orderTypeId,
+        presetId,
+        fieldKey: template.fieldKey,
+        label: template.label,
+        fieldType: template.fieldType,
+        required: template.required,
+        sortOrder: template.sortOrder,
+        config: template.config,
+        isActive: true,
+        isSystemDefault: true,
+        visibleInTracking: template.visibleInTracking,
+        useInAgenda: false,
+        deletedAt: null,
+      });
+      continue;
+    }
+
+    const normalizedCurrentType = normalizeFieldTypeInput(String(current.fieldType || ""));
+    const expectedType = template.fieldType;
+    const currentConfig = current.config && typeof current.config === "object" && !Array.isArray(current.config)
+      ? { ...(current.config as Record<string, unknown>) }
+      : {};
+    const mergedConfig = normalizeOrderPresetFieldConfig(expectedType, { ...template.config, ...currentConfig });
+    const needsUpdate = current.isSystemDefault !== true
+      || normalizedCurrentType !== expectedType
+      || current.fieldKey !== template.fieldKey
+      || current.label !== template.label
+      || current.sortOrder !== template.sortOrder;
+
+    if (needsUpdate) {
+      await db.update(orderFieldDefinitions)
+        .set({
+          fieldKey: template.fieldKey,
+          label: template.label,
+          fieldType: expectedType,
+          sortOrder: template.sortOrder,
+          config: mergedConfig,
+          isSystemDefault: true,
+        })
+        .where(eq(orderFieldDefinitions.id, current.id));
+    }
+  }
+}
+
 // ─────────────────────────────────────────────
 // Storage API
 // ─────────────────────────────────────────────
@@ -376,7 +354,8 @@ export const orderPresetsStorage = {
   // ── Presets ──────────────────────────────────────────────────────────────
   async listPresetsByType(tenantId: number, code: string) {
     const typeRow = await getTypeOrThrow(tenantId, code);
-    await ensureDefaultPresetAndAttachLegacyFields(tenantId, typeRow.id);
+    const defaultPreset = await ensureDefaultPresetAndAttachLegacyFields(tenantId, typeRow.id);
+    await ensureCanonicalNativeFieldsForPreset(tenantId, typeRow.id, defaultPreset.id);
     const presets = await db
       .select()
       .from(orderTypePresets)
@@ -463,6 +442,7 @@ export const orderPresetsStorage = {
 
     const [created] = await db.insert(orderTypePresets).values(values).returning();
     await cloneMissingSystemDefaultsForPreset(tenantId, typeRow.id, created.id);
+    await ensureCanonicalNativeFieldsForPreset(tenantId, typeRow.id, created.id);
     return { type: typeRow, preset: created };
   },
 
@@ -515,6 +495,7 @@ export const orderPresetsStorage = {
   async listFieldsByPreset(tenantId: number, presetId: number, options?: { includeInactive?: boolean }) {
     const preset = await getPresetOrThrow(tenantId, presetId);
     await ensureDefaultPresetAndAttachLegacyFields(tenantId, preset.orderTypeId);
+    await ensureCanonicalNativeFieldsForPreset(tenantId, preset.orderTypeId, preset.id);
     const includeInactive = options?.includeInactive ?? false;
     const conditions = [
       eq(orderFieldDefinitions.tenantId, tenantId),
@@ -545,6 +526,10 @@ export const orderPresetsStorage = {
           eq(orderTypePresets.code, "default")
         )
       );
+
+    if (defaultPreset?.id) {
+      await ensureCanonicalNativeFieldsForPreset(tenantId, typeRow.id, defaultPreset.id);
+    }
 
     // If we have a default preset, return its fields; otherwise fall back to unassigned fields
     const fields = await db
@@ -583,8 +568,8 @@ export const orderPresetsStorage = {
     const label = String(payload.label || "").trim();
     if (!label) throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "label es requerido");
 
-    const fieldType = normalizeFieldType(payload.fieldType);
-    const config = normalizeConfig(fieldType, payload.config);
+    const fieldType = normalizeFieldTypeInput(payload.fieldType);
+    const config = normalizeOrderPresetFieldConfig(fieldType, payload.config);
     if (fieldType === "FILE" && payload.required) {
       throw badRequest("ORDER_PRESET_VALIDATION_ERROR", "Los archivos adjuntos no pueden marcarse como requeridos en el alta inicial");
     }
@@ -688,7 +673,7 @@ export const orderPresetsStorage = {
     if (patch.visibleInTracking !== undefined) update.visibleInTracking = Boolean(patch.visibleInTracking);
     if (patch.useInAgenda !== undefined) update.useInAgenda = Boolean(patch.useInAgenda);
     if (patch.config !== undefined)
-      update.config = normalizeConfig(current.fieldType as any, patch.config);
+      update.config = normalizeOrderPresetFieldConfig(current.fieldType as any, patch.config);
 
     const [saved] = await db
       .update(orderFieldDefinitions)
@@ -839,4 +824,3 @@ export const orderPresetsStorage = {
   },
 };
 
-export const ORDER_PRESET_ALLOWED_FILE_EXTENSIONS = ALLOWED_FILE_EXTENSIONS;
