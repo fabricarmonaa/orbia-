@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  buildPresetDeleteRequest,
+  buildPresetFieldsRequest,
+  buildPresetListRequest,
   canCreateMoreOrderPresets,
   getActiveOrderPresets,
   getEmptyOrderPresetFieldForm,
@@ -27,4 +30,19 @@ test("los campos nuevos arrancan visibles en tracking por defecto", () => {
   assert.equal(pickVisibleTrackingDefault(undefined), true);
   assert.equal(pickVisibleTrackingDefault(null), true);
   assert.equal(pickVisibleTrackingDefault(false), false);
+});
+
+test("las requests reales de presets usan endpoint correcto y cache-buster", () => {
+  assert.deepEqual(buildPresetDeleteRequest(27), {
+    method: "DELETE",
+    url: "/api/order-presets/presets/27",
+  });
+  assert.equal(
+    buildPresetListRequest("PEDIDO", 123),
+    "/api/order-presets/types/PEDIDO/presets?_=123",
+  );
+  assert.equal(
+    buildPresetFieldsRequest(99, { includeInactive: true, nonce: 456 }),
+    "/api/order-presets/presets/99/fields?includeInactive=1&_=456",
+  );
 });

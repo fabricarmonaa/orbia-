@@ -15,6 +15,9 @@ import { useToast } from "@/hooks/use-toast";
 import { ArrowDown, ArrowUp, Pencil, Plus, Eye, EyeOff, Trash2 } from "lucide-react";
 import { resolveFileFieldBehavior } from "@shared/order-fields";
 import {
+  buildPresetDeleteRequest,
+  buildPresetFieldsRequest,
+  buildPresetListRequest,
   canCreateMoreOrderPresets,
   getActiveOrderPresets,
   getEmptyOrderPresetFieldForm,
@@ -262,7 +265,7 @@ export function OrderPresetsSettings() {
     if (!code) return;
     setLoadingPresets(true);
     try {
-      const json = await apiJson<{ data: OrderPreset[] }>(`/api/order-presets/types/${encodeURIComponent(code)}/presets`, { cache: "no-store" });
+      const json = await apiJson<{ data: OrderPreset[] }>(buildPresetListRequest(code), { cache: "no-store" });
       const nextPresets = json.data || [];
       setPresets(nextPresets);
       if (nextPresets.length > 0) {
@@ -289,7 +292,7 @@ export function OrderPresetsSettings() {
     }
     setLoadingFields(true);
     try {
-      const json = await apiJson<{ data: OrderField[] }>(`/api/order-presets/presets/${presetId}/fields?includeInactive=1`, { cache: "no-store" });
+      const json = await apiJson<{ data: OrderField[] }>(buildPresetFieldsRequest(presetId, { includeInactive: true }), { cache: "no-store" });
       setFields(json.data || []);
     } catch (err: any) {
       toast({ title: "Error al cargar campos", description: err?.message || "No se pudo cargar", variant: "destructive" });
@@ -360,8 +363,9 @@ export function OrderPresetsSettings() {
   async function deletePreset(preset: OrderPreset) {
     setSaving(true);
     try {
-      const json = await apiJson<{ data?: { fallbackPresetId?: number | null } }>(`/api/order-presets/presets/${preset.id}`, {
-        method: "DELETE",
+      const request = buildPresetDeleteRequest(preset.id);
+      const json = await apiJson<{ data?: { fallbackPresetId?: number | null } }>(request.url, {
+        method: request.method,
       });
       setPresets((prev) => prev.filter((current) => current.id !== preset.id));
       if (json?.data?.fallbackPresetId) {

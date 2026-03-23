@@ -57,6 +57,7 @@ import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePr
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
 import { MediaGroupFieldInput, type MediaGroupItem } from "@/components/orders/MediaGroupFieldInput";
+import { buildPresetFieldsRequest, buildPresetListRequest } from "@/components/settings/order-presets-ui";
 import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
 import {
   buildFileStorageKeyFromTokens,
@@ -243,7 +244,7 @@ export default function OrdersPage() {
   async function loadPresetsForType(typeCode: string) {
     const requestId = ++presetLoadSeqRef.current;
     try {
-      const res = await apiRequest("GET", `/api/order-presets/types/${encodeURIComponent(typeCode)}/presets`);
+      const res = await apiRequest("GET", buildPresetListRequest(typeCode));
       const json = await res.json();
       if (requestId !== presetLoadSeqRef.current) return;
       const list = (json?.data || []).filter((preset: OrderPreset) => preset.isActive);
@@ -271,7 +272,7 @@ export default function OrdersPage() {
       return;
     }
     try {
-      const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
+      const res = await apiRequest("GET", buildPresetFieldsRequest(presetId));
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
       setPresetFields(allFields);

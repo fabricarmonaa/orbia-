@@ -22,6 +22,24 @@ export function canCreateMoreOrderPresets<T extends OrderPresetSummary>(presets:
   return getActiveOrderPresets(presets).length < MAX_ACTIVE_ORDER_PRESETS_PER_TYPE;
 }
 
+export function buildPresetDeleteRequest(presetId: number) {
+  return {
+    method: "DELETE" as const,
+    url: `/api/order-presets/presets/${presetId}`,
+  };
+}
+
+export function buildPresetListRequest(code: string, nonce: number | string = Date.now()) {
+  return `/api/order-presets/types/${encodeURIComponent(code)}/presets?_=${encodeURIComponent(String(nonce))}`;
+}
+
+export function buildPresetFieldsRequest(presetId: number, options?: { includeInactive?: boolean; nonce?: number | string }) {
+  const params = new URLSearchParams();
+  if (options?.includeInactive) params.set("includeInactive", "1");
+  params.set("_", String(options?.nonce ?? Date.now()));
+  return `/api/order-presets/presets/${presetId}/fields?${params.toString()}`;
+}
+
 export function getEmptyOrderPresetFieldForm() {
   return {
     label: "",
