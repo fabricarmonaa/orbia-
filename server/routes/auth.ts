@@ -493,7 +493,7 @@ export function registerAuthRoutes(app: Express) {
       });
     } catch (err) {
       console.error("[auth:refresh]", err);
-      res.setHeader("Set-Cookie", clearRefreshCookie());
+      // Error transitorio del backend: no invalidamos la cookie para evitar logout agresivo.
       return res.status(500).json({ error: "No se pudo renovar la sesión", code: "AUTH_REFRESH_ERROR" });
     }
   });

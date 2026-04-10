@@ -2,7 +2,8 @@ import { useMemo, useRef, useState, type ChangeEvent } from "react";
 import { ArrowDown, ArrowUp, FileIcon, Loader2, Trash2, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
-import { getToken } from "@/lib/auth";
+import { authFetch } from "@/lib/auth";
+import { optimizeImageFile, validateUploadFile } from "@/lib/image-upload";
 import { parseFileStorageTokens } from "@shared/order-fields";
 
 export type MediaGroupItem = {
@@ -55,17 +56,6 @@ export function MediaGroupFieldInput({
     return "grid-cols-1 sm:grid-cols-2";
   }, [maxFiles]);
 
-  async function authenticatedFetch(url: string, init?: RequestInit) {
-    const token = getToken();
-    return fetch(url, {
-      ...init,
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(init?.headers || {}),
-      },
-    });
-  }
-
   function buildPreviewUrl(item: MediaGroupItem) {
     const attachmentId = getAttachmentIdFromStorageKey(item.storageKey);
     if (!attachmentId) return null;
@@ -100,12 +90,15 @@ export function MediaGroupFieldInput({
           throw new Error(`Solo se permiten: ${normalizedExtensions.join(", ")}`);
         }
 
+        const preparedFile = file.type.startsWith("image/") ? await optimizeImageFile(file) : file;
+        if (preparedFile.type.startsWith("image/")) validateUploadFile(preparedFile);
+
         const formData = new FormData();
-        formData.append("file", file);
+        formData.append("file", preparedFile);
         formData.append("fieldDefinitionId", String(fieldDefinitionId));
         if (isDraftMode && draftKey) formData.append("draftKey", draftKey);
 
-        const res = await authenticatedFetch(
+        const res = await authFetch(
           isDraftMode ? "/api/orders/draft-attachments" : `/api/orders/${orderId}/attachments`,
           { method: "POST", body: formData },
         );
@@ -114,9 +107,9 @@ export function MediaGroupFieldInput({
 
         uploaded.push({
           storageKey: payload.data.storageKey || `att:${payload.data.attachmentId}`,
-          originalName: payload.data.originalName || file.name,
-          mimeType: payload.data.mimeType || file.type || null,
-          sizeBytes: payload.data.sizeBytes || file.size || null,
+          originalName: payload.data.originalName || preparedFile.name,
+          mimeType: payload.data.mimeType || preparedFile.type || null,
+          sizeBytes: payload.data.sizeBytes || preparedFile.size || null,
         });
       }
 
@@ -139,7 +132,7 @@ export function MediaGroupFieldInput({
       const url = item.storageKey.startsWith("draftatt:")
         ? `/api/orders/draft-attachments/${attachmentId}${query}`
         : `/api/orders/${orderId}/attachments/${attachmentId}`;
-      const res = await authenticatedFetch(url, { method: "DELETE" });
+      const res = await authFetch(url, { method: "DELETE" });
       const payload = await res.json().catch(() => null);
       if (!res.ok) throw new Error(payload?.error?.message || "No se pudo eliminar el archivo");
       onChange(items.filter((current) => current.storageKey !== item.storageKey));
@@ -169,7 +162,7 @@ export function MediaGroupFieldInput({
             <div key={item.storageKey} className="rounded-lg border bg-muted/20 p-3 space-y-3">
               {isImage ? (
                 <a href={previewUrl || "#"} target="_blank" rel="noreferrer noopener" className="block overflow-hidden rounded-md border aspect-square bg-black/5">
-                  <img src={previewUrl || ""} alt={item.originalName || "Imagen"} className="h-full w-full object-cover" />
+                  <img src={previewUrl || ""} alt={item.originalName || "Imagen"} loading="lazy" decoding="async" className="h-full w-full object-cover" />
                 </a>
               ) : (
                 <div className="flex h-28 items-center justify-center rounded-md border bg-background">

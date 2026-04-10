@@ -2,7 +2,8 @@ import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Download, FileIcon, Loader2, Trash2, UploadCloud } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getToken } from "@/lib/auth";
+import { authFetch } from "@/lib/auth";
+import { optimizeImageFile, validateUploadFile } from "@/lib/image-upload";
 
 type UploadResult = {
   attachmentId: number;
@@ -46,17 +47,6 @@ export function FileFieldInput({
   const isDraftMode = orderId === "new";
   const normalizedExtensions = allowedExtensions.map((ext) => String(ext || "").toLowerCase());
 
-  async function authenticatedFetch(url: string, init?: RequestInit) {
-    const token = getToken();
-    return fetch(url, {
-      ...init,
-      headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...(init?.headers || {}),
-      },
-    });
-  }
-
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -84,8 +74,11 @@ export function FileFieldInput({
 
     setIsUploading(true);
     try {
+      const preparedFile = file.type.startsWith("image/") ? await optimizeImageFile(file) : file;
+      if (preparedFile.type.startsWith("image/")) validateUploadFile(preparedFile);
+
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", preparedFile);
       formData.append("fieldDefinitionId", String(fieldDefinitionId));
       if (isDraftMode && draftKey) {
         formData.append("draftKey", draftKey);
@@ -94,7 +87,7 @@ export function FileFieldInput({
       const url = isDraftMode
         ? "/api/orders/draft-attachments"
         : `/api/orders/${orderId}/attachments`;
-      const res = await authenticatedFetch(url, {
+      const res = await authFetch(url, {
         method: "POST",
         body: formData,
       });
@@ -130,14 +123,14 @@ export function FileFieldInput({
         const draftAttachmentId = parseAttachmentId(currentAttachmentId, "draftatt");
         if (draftAttachmentId) {
           const query = draftKey ? `?draftKey=${encodeURIComponent(draftKey)}` : "";
-          const res = await authenticatedFetch(`/api/orders/draft-attachments/${draftAttachmentId}${query}`, { method: "DELETE" });
+          const res = await authFetch(`/api/orders/draft-attachments/${draftAttachmentId}${query}`, { method: "DELETE" });
           const payload = await res.json().catch(() => null);
           if (!res.ok) throw new Error(payload?.error?.message || "No se pudo eliminar el adjunto temporal");
         }
       } else {
         const attachmentId = parseAttachmentId(currentAttachmentId, "att");
         if (attachmentId) {
-          const res = await authenticatedFetch(`/api/orders/${orderId}/attachments/${attachmentId}`, { method: "DELETE" });
+          const res = await authFetch(`/api/orders/${orderId}/attachments/${attachmentId}`, { method: "DELETE" });
           const payload = await res.json().catch(() => null);
           if (!res.ok) throw new Error(payload?.error?.message || "No se pudo eliminar el adjunto");
         }
@@ -164,7 +157,7 @@ export function FileFieldInput({
   async function handleDownload() {
     if (!downloadUrl) return;
     try {
-      const resp = await authenticatedFetch(downloadUrl);
+      const resp = await authFetch(downloadUrl);
       if (!resp.ok) throw new Error("Archivo no encontrado");
       const blob = await resp.blob();
       const filenameMatch = resp.headers.get("content-disposition")?.match(/filename="?([^"]+)"?/);

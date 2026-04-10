@@ -39,6 +39,16 @@ let refreshPromise: Promise<boolean> | null = null;
 let rehydratePromise: Promise<boolean> | null = null;
 let unauthorizedHandled = false;
 
+const TERMINAL_REFRESH_CODES = new Set([
+  "AUTH_REFRESH_REQUIRED",
+  "AUTH_REFRESH_EXPIRED",
+  "AUTH_REFRESH_REVOKED",
+  "AUTH_INVALID",
+  "TOKEN_INVALID",
+  "TOKEN_REQUIRED",
+  "AUTH_REQUIRED",
+]);
+
 function notifyListeners() {
   listeners.forEach((l) => l());
 }
@@ -85,6 +95,12 @@ function reasonMessage(reason: LogoutReason) {
   if (reason === "invalid") return "Tu sesión no es válida. Iniciá sesión nuevamente.";
   if (reason === "offline") return "Se perdió la conexión. Volvé a iniciar sesión cuando recuperes internet.";
   return "Sesión finalizada.";
+}
+
+function isTerminalRefreshResponse(status: number, code?: string | null) {
+  if (status !== 401) return false;
+  const normalizedCode = String(code || "").toUpperCase();
+  return TERMINAL_REFRESH_CODES.has(normalizedCode);
 }
 
 export function isPublicRoute(pathname: string) {
@@ -154,14 +170,17 @@ async function requestSessionRefresh() {
     try {
       const res = await fetch("/api/auth/refresh", { method: "POST" });
       if (!res.ok) {
-        clearAuthState();
+        const payload = await parseApiError(res).catch(() => ({ code: undefined } as { code?: string }));
+        if (isTerminalRefreshResponse(res.status, payload.code)) {
+          clearAuthState();
+        }
         return false;
       }
       const payload = await res.json();
       login(payload.token, payload.user, payload.session || null);
       return true;
     } catch {
-      clearAuthState();
+      // Error transitorio de red: no destruimos sesión local.
       return false;
     } finally {
       refreshPromise = null;
@@ -267,17 +286,7 @@ export function logout(reason: LogoutReason = "manual") {
 
 export function handleUnauthorizedCode(code?: string) {
   const normalizedCode = (code || "").toUpperCase();
-  if (![
-    "AUTH_EXPIRED",
-    "AUTH_INVALID",
-    "AUTH_REQUIRED",
-    "TOKEN_EXPIRED",
-    "TOKEN_INVALID",
-    "TOKEN_REQUIRED",
-    "AUTH_REFRESH_REQUIRED",
-    "AUTH_REFRESH_EXPIRED",
-    "AUTH_REFRESH_REVOKED",
-  ].includes(normalizedCode)) return;
+  if (!["AUTH_EXPIRED", "AUTH_INVALID", "AUTH_REQUIRED", "TOKEN_EXPIRED", "TOKEN_INVALID", "TOKEN_REQUIRED", "AUTH_REFRESH_REQUIRED", "AUTH_REFRESH_EXPIRED", "AUTH_REFRESH_REVOKED"].includes(normalizedCode)) return;
   if (unauthorizedHandled) return;
   unauthorizedHandled = true;
   const reason = (normalizedCode === "AUTH_EXPIRED" || normalizedCode === "TOKEN_EXPIRED" || normalizedCode === "AUTH_REFRESH_EXPIRED")
@@ -364,17 +373,29 @@ export function useAuth() {
 
 export async function authFetch(url: string, options: RequestInit = {}): Promise<Response> {
   await rehydrateSession();
-  const token = getToken();
-  const headers: Record<string, string> = {
-    ...((options.headers as Record<string, string>) || {}),
+
+  const makeRequest = () => {
+    const token = getToken();
+    const headers: Record<string, string> = {
+      ...((options.headers as Record<string, string>) || {}),
+    };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+    if (options.body && typeof options.body === "string") {
+      headers["Content-Type"] = "application/json";
+    }
+    return fetch(url, { ...options, headers });
   };
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+
+  let response = await makeRequest();
+  if (response.status === 401) {
+    const refreshed = await requestSessionRefresh();
+    if (refreshed) {
+      response = await makeRequest();
+    }
   }
-  if (options.body && typeof options.body === "string") {
-    headers["Content-Type"] = "application/json";
-  }
-  return fetch(url, { ...options, headers });
+  return response;
 }
 
 export async function apiRequest(

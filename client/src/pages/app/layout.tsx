@@ -92,7 +92,7 @@ export default function AppLayout() {
 
   return (
     <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
+      <div className="flex min-h-[100dvh] w-full overflow-hidden">
         <AppSidebar />
         <div className="flex flex-col flex-1 min-w-0">
           <header className="flex items-center justify-between gap-4 p-3 border-b bg-card sticky top-0 z-50">
@@ -101,7 +101,7 @@ export default function AppLayout() {
           </header>
           <SubscriptionBanner />
           <BusinessOnboardingModal />
-          <main className="flex-1 overflow-auto p-4 sm:p-6">
+          <main className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 overscroll-y-contain">
             <Switch>
               {user?.role !== "CASHIER" && <Route path="/app/orders" component={OrdersPage} />}
               {user?.role !== "CASHIER" && <Route path="/app/cash" component={CashPage} />}

@@ -39,24 +39,16 @@ export function SessionLifecycleManager() {
       stopSessionActivity();
     };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        stopSessionActivity();
-      }
-    };
-
     window.addEventListener("orbia:logout", onLogout as EventListener);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     window.addEventListener("beforeunload", onBeforeUnload);
-    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.removeEventListener("orbia:logout", onLogout as EventListener);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("beforeunload", onBeforeUnload);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [toast]);
 
