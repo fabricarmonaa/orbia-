@@ -474,7 +474,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(401).json({ error: "Sesión revocada", code: "AUTH_REFRESH_REVOKED" });
       }
 
-      await touchRefreshSession(session.id);
+      const touchedSession = await touchRefreshSession(session.id);
       const token = generateToken(buildTenantAuthPayload(user), { expiresIn: `${getAccessTokenTtlSeconds()}s` });
       return res.json({
         token,
@@ -489,7 +489,10 @@ export function registerAuthRoutes(app: Express) {
           scope: user.scope || "TENANT",
           avatarUrl: user.avatarUrl || null,
         },
-        session: { rememberDevice: session.rememberDevice, expiresAt: session.expiresAt },
+        session: {
+          rememberDevice: touchedSession?.rememberDevice ?? session.rememberDevice,
+          expiresAt: touchedSession?.expiresAt ?? session.expiresAt,
+        },
       });
     } catch (err) {
       console.error("[auth:refresh]", err);
@@ -517,7 +520,7 @@ export function registerAuthRoutes(app: Express) {
         return res.status(204).send();
       }
 
-      await touchRefreshSession(session.id);
+      const touchedSession = await touchRefreshSession(session.id);
       const token = generateToken(buildTenantAuthPayload(user), { expiresIn: `${getAccessTokenTtlSeconds()}s` });
       return res.json({
         token,
@@ -532,7 +535,10 @@ export function registerAuthRoutes(app: Express) {
           scope: user.scope || "TENANT",
           avatarUrl: user.avatarUrl || null,
         },
-        session: { rememberDevice: session.rememberDevice, expiresAt: session.expiresAt },
+        session: {
+          rememberDevice: touchedSession?.rememberDevice ?? session.rememberDevice,
+          expiresAt: touchedSession?.expiresAt ?? session.expiresAt,
+        },
       });
     } catch (err) {
       console.error("[auth:session]", err);

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useLocation } from "wouter";
-import { getToken, getUser, gracefulLogout } from "@/lib/auth";
+import { getToken, getUser, gracefulLogout, rehydrateSession } from "@/lib/auth";
 
 export function AuthGuard() {
   const [location, setLocation] = useLocation();
@@ -43,37 +43,42 @@ export function AuthGuard() {
       };
     }
 
-    const token = getToken();
-    const user = getUser();
-    if (!token) {
-      void gracefulLogout("required");
-      return;
-    }
-
-    if (isSuperPath && !user?.isSuperAdmin) {
-      void gracefulLogout("invalid");
-      return;
-    }
-
-    if (isTenantPath && user?.isSuperAdmin) {
-      void gracefulLogout("invalid");
-      return;
-    }
-
-    const validationEndpoint = isSuperPath ? "/api/super/security" : "/api/me";
     let active = true;
-    fetch(validationEndpoint, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then(async (res) => {
-        if (!active) return;
-        if (res.status === 401 || res.status === 403) {
-          await gracefulLogout("invalid");
-        }
+    void (async () => {
+      await rehydrateSession();
+      if (!active) return;
+
+      const token = getToken();
+      const user = getUser();
+      if (!token) {
+        await gracefulLogout("required");
+        return;
+      }
+
+      if (isSuperPath && !user?.isSuperAdmin) {
+        await gracefulLogout("invalid");
+        return;
+      }
+
+      if (isTenantPath && user?.isSuperAdmin) {
+        await gracefulLogout("invalid");
+        return;
+      }
+
+      const validationEndpoint = isSuperPath ? "/api/super/security" : "/api/me";
+      fetch(validationEndpoint, {
+        headers: { Authorization: `Bearer ${token}` },
       })
-      .catch(() => {
-        // noop
-      });
+        .then(async (res) => {
+          if (!active) return;
+          if (res.status === 401 || res.status === 403) {
+            await gracefulLogout("invalid");
+          }
+        })
+        .catch(() => {
+          // noop
+        });
+    })();
 
     return () => {
       active = false;
