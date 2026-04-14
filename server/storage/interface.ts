@@ -76,8 +76,8 @@ export interface IStorage {
   getOrderStatusById(id: number, tenantId: number): Promise<OrderStatus | undefined>;
   createOrderStatus(data: InsertOrderStatus): Promise<OrderStatus>;
 
-  getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
-  getOrderById(id: number, tenantId: number): Promise<Order | undefined>;
+  getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number; includeArchived?: boolean; includeDeleted?: boolean }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
+  getOrderById(id: number, tenantId: number, options?: { includeDeleted?: boolean }): Promise<Order | undefined>;
   getOrderByTrackingId(trackingId: string): Promise<Order | undefined>;
   createOrder(data: InsertOrder): Promise<Order>;
   updateOrderStatus(id: number, tenantId: number, statusId: number | null, statusCode?: string | null): Promise<void>;
@@ -85,6 +85,8 @@ export interface IStorage {
   linkOrderSale(id: number, tenantId: number, saleId: number, salePublicToken: string | null): Promise<void>;
   getNextOrderNumber(tenantId: number): Promise<number>;
   countOrders(tenantId: number, branchId?: number | null): Promise<number>;
+  archiveOrder(id: number, tenantId: number, archived: boolean): Promise<Order | null>;
+  softDeleteOrder(id: number, tenantId: number): Promise<Order | null>;
 
   getOrderHistory(orderId: number, tenantId: number): Promise<any[]>;
   createOrderHistory(data: InsertOrderStatusHistory): Promise<void>;
@@ -173,7 +175,7 @@ export interface IStorage {
   getSttInteractionByIdempotency(tenantId: number, userId: number, idempotencyKey: string): Promise<SttInteraction | undefined>;
   getSttInteractionsByTenant(tenantId: number, userId?: number | null, limit?: number): Promise<SttInteraction[]>;
 
-  getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
+  getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number; includeArchived?: boolean; includeDeleted?: boolean }): Promise<{ data: Order[]; meta: { limit: number; offset: number; nextCursor: string | null } }>;
   getCashSessionsByBranch(tenantId: number, branchId: number): Promise<CashSession[]>;
   getCashMovementsByBranch(tenantId: number, branchId: number): Promise<CashMovement[]>;
   getBranchById(id: number, tenantId: number): Promise<Branch | undefined>;

@@ -46,6 +46,11 @@ export function FileFieldInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isDraftMode = orderId === "new";
   const normalizedExtensions = allowedExtensions.map((ext) => String(ext || "").toLowerCase());
+  const accept = [
+    ...normalizedExtensions.map((ext) => `.${ext}`),
+    "image/*",
+    "application/pdf",
+  ].join(",");
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -226,7 +231,8 @@ export function FileFieldInput({
             className="hidden"
             ref={fileInputRef}
             onChange={handleFileChange}
-            accept={normalizedExtensions.map((ext) => `.${ext}`).join(",")}
+            accept={accept}
+            capture={normalizedExtensions.some((ext) => ["jpg", "jpeg", "png", "webp", "heic", "heif"].includes(ext)) ? "environment" : undefined}
           />
           <p className="text-xs text-muted-foreground">
             Extensiones permitidas: {normalizedExtensions.join(", ")}

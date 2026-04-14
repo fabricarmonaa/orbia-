@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import fs from "fs";
-import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
@@ -17,6 +16,7 @@ import {
   shouldDisplayOrderFieldInTracking,
 } from "@shared/order-fields";
 import { buildPublicTrackingAttachmentUrl, isTrackingAttachmentVisible } from "./tracking.helpers";
+import { resolveAttachmentAbsolutePath } from "../services/attachment-paths";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 

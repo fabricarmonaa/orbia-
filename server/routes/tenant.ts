@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { storage } from "../storage";
 import { tenantAuth, getTenantPlan, enforceBranchScope, blockBranchScope, requireTenantAdmin, comparePassword } from "../auth";
-import { profileUpload } from "./uploads";
+import { tenantLogoUpload } from "./uploads";
 import { handleSingleUpload } from "../middleware/upload-guards";
 import { createRateLimiter } from "../middleware/rate-limit";
 import { z } from "zod";
@@ -39,7 +39,7 @@ const tenantConfigSchema = z.object({
   trackingPrimaryColor: z.string().trim().max(30).optional(),
   trackingAccentColor: z.string().trim().max(30).optional(),
   trackingBgColor: z.string().trim().max(30).optional(),
-  trackingTosText: z.string().trim().max(200).optional(),
+  trackingTosText: z.string().trim().max(5000).optional(),
 });
 
 const dashboardSettingsSchema = z.object({
@@ -538,11 +538,11 @@ export function registerTenantRoutes(app: Express) {
     requireTenantAdmin,
     blockBranchScope,
     logoUploadLimiter,
-    handleSingleUpload(profileUpload, "logo"),
+    handleSingleUpload(tenantLogoUpload, "logo"),
     async (req, res) => {
       try {
         if (!req.file) return res.status(400).json({ error: "No se subió archivo" });
-        const logoUrl = `/uploads/profiles/${req.file.filename}`;
+        const logoUrl = `/uploads/tenant-logos/${req.file.filename}`;
         const config = await storage.upsertConfig({
           tenantId: req.auth!.tenantId!,
           logoUrl,

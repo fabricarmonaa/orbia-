@@ -4,6 +4,8 @@ import { fileTypeFromFile } from "file-type";
 import { randomUUID } from "crypto";
 import { db } from "../db";
 import { orderAttachments, orderFieldValues, orderFieldDefinitions } from "@shared/schema/order-presets";
+import { tenants } from "@shared/schema";
+import { resolveAttachmentAbsolutePath } from "./attachment-paths";
 import { eq, and } from "drizzle-orm";
 import { HttpError } from "../lib/http-errors";
 import { buildFileStorageKeyFromTokens, parseFileStorageTokens, resolveFileFieldBehavior } from "@shared/order-fields";
@@ -43,7 +45,7 @@ export async function validateAndStoreAttachment(
         throw new HttpError(400, "INVALID_FIELD_TYPE", "El campo no es de tipo archivo");
     }
 
-    const allowedExtensions = (fieldDef.config as any)?.allowedExtensions || ["pdf", "jpg", "png", "jpeg"];
+    const allowedExtensions = (fieldDef.config as any)?.allowedExtensions || ["pdf", "jpg", "png", "jpeg", "jfif", "heic", "heif"];
     const fileBehavior = resolveFileFieldBehavior(fieldDef.config);
     const originalExt = originalName.split(".").pop()?.toLowerCase();
 
@@ -60,12 +62,15 @@ export async function validateAndStoreAttachment(
     // 4. Validar Magic Bytes usando file-type
     const fileTypeResult = await fileTypeFromFile(tmpPath);
     if (!fileTypeResult) {
-        await fs.unlink(tmpPath).catch(console.error);
-        throw new HttpError(400, "INVALID_FILE", "El archivo no tiene un formato reconocido");
+        // Algunos archivos iPad/Safari pueden no detectar magic bytes (ej. ciertos HEIC/PDF).
+        if (!["application/pdf", "image/heic", "image/heif", "image/jpeg", "image/png", "image/webp"].includes(String(mimeType || "").toLowerCase())) {
+            await fs.unlink(tmpPath).catch(console.error);
+            throw new HttpError(400, "INVALID_FILE", "El archivo no tiene un formato reconocido");
+        }
     }
 
     // Comparamos extensiones, si file-type detecta "exe" pero el nombre dice "pdf", rechazamos.
-    if (!allowedExtensions.includes(fileTypeResult.ext)) {
+    if (fileTypeResult && !allowedExtensions.includes(fileTypeResult.ext)) {
         await fs.unlink(tmpPath).catch(console.error);
         throw new HttpError(
             400,
@@ -80,7 +85,9 @@ export async function validateAndStoreAttachment(
     const absoluteDir = path.join(STORAGE_ROOT, relativeDir);
     await fs.mkdir(absoluteDir, { recursive: true });
 
-    const storedName = `${tenantId}_${orderId}_${fieldDef.fieldKey}_${randomUUID()}.${fileTypeResult.ext}`;
+    const finalExt = fileTypeResult?.ext || originalExt || "bin";
+    const finalMime = fileTypeResult?.mime || mimeType || "application/octet-stream";
+    const storedName = `${tenantId}_${orderId}_${fieldDef.fieldKey}_${randomUUID()}.${finalExt}`;
     const relativeFilePath = path.join(relativeDir, storedName);
     const absoluteDestPath = path.join(STORAGE_ROOT, relativeFilePath);
 
@@ -99,7 +106,7 @@ export async function validateAndStoreAttachment(
                     fieldDefinitionId,
                     originalName,
                     storedName,
-                    mimeType: fileTypeResult.mime,
+                    mimeType: finalMime,
                     sizeBytes,
                     storagePath: relativeFilePath.replace(/\\/g, "/"), // Normalizar separators
                 })
@@ -202,17 +209,20 @@ export async function deleteAttachment(tenantId: number, orderId: number, attach
     const { absolutePath, attachment } = await getAttachmentPath(tenantId, orderId, attachmentId);
 
     await db.transaction(async (tx) => {
-        // Buscar si está asignado al order_field_values y limpiarlo
-        await tx
-            .update(orderFieldValues)
-            .set({ fileStorageKey: null })
-            .where(
-                and(
-                    eq(orderFieldValues.tenantId, tenantId),
-                    eq(orderFieldValues.orderId, orderId),
-                    eq(orderFieldValues.fileStorageKey, `att:${attachmentId}`)
-                )
-            );
+        const fieldRows = await tx
+            .select({ id: orderFieldValues.id, fileStorageKey: orderFieldValues.fileStorageKey })
+            .from(orderFieldValues)
+            .where(and(eq(orderFieldValues.tenantId, tenantId), eq(orderFieldValues.orderId, orderId)));
+
+        for (const row of fieldRows) {
+            const tokens = parseFileStorageTokens(String(row.fileStorageKey || ""));
+            if (!tokens.some((token) => token.kind === "att" && token.id === attachmentId)) continue;
+            const remaining = tokens.filter((token) => !(token.kind === "att" && token.id === attachmentId));
+            await tx
+                .update(orderFieldValues)
+                .set({ fileStorageKey: remaining.length ? buildFileStorageKeyFromTokens(remaining) : null })
+                .where(eq(orderFieldValues.id, row.id));
+        }
 
         await tx
             .delete(orderAttachments)

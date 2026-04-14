@@ -49,6 +49,7 @@ export function MediaGroupFieldInput({
   const isDraftMode = orderId === "new";
   const normalizedExtensions = allowedExtensions.map((ext) => String(ext || "").toLowerCase());
   const acceptedMime = acceptMode === "images" ? "image/*" : undefined;
+  const accept = [acceptedMime, ...normalizedExtensions.map((ext) => `.${ext}`), "application/pdf"].filter(Boolean).join(",");
 
   const gridColumns = useMemo(() => {
     if (maxFiles >= 6) return "grid-cols-2 xl:grid-cols-3";
@@ -204,7 +205,8 @@ export function MediaGroupFieldInput({
             type="file"
             multiple
             className="hidden"
-            accept={[acceptedMime, ...normalizedExtensions.map((ext) => `.${ext}`)].filter(Boolean).join(",")}
+            accept={accept}
+            capture={acceptMode === "images" ? "environment" : undefined}
             onChange={handleFilesSelected}
           />
           <p className="text-xs text-muted-foreground">

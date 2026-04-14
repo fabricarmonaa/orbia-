@@ -18,6 +18,7 @@ import { db } from "../db";
 import {
     orders,
     tenants,
+    orderAttachments,
 } from "@shared/schema";
 import { eq, and } from "drizzle-orm";
 import { validateOrderScope } from "../services/orders-service";
@@ -276,4 +277,38 @@ export function registerAttachmentRoutes(app: Express) {
             }
         }
     );
+
+
+    // Compatibilidad legacy: descarga por attachmentId sin orderId en URL
+    app.get(
+        "/api/orders/attachments/:attachmentId",
+        tenantAuth,
+        enforceBranchScope,
+        validateParams(draftAttachmentParamSchema),
+        async (req, res) => {
+            try {
+                const tenantId = req.auth!.tenantId!;
+                const attachmentId = Number(req.params.attachmentId);
+                const [attachment] = await db
+                    .select()
+                    .from(orderAttachments)
+                    .where(and(eq(orderAttachments.id, attachmentId), eq(orderAttachments.tenantId, tenantId)))
+                    .limit(1);
+                if (!attachment) throw new HttpError(404, "ATTACHMENT_NOT_FOUND", "Archivo no encontrado");
+
+                const scopeCheck = await validateOrderScope(tenantId, attachment.orderId, req.auth!.scope as any, req.auth!.branchId);
+                if (!scopeCheck.ok) throw new HttpError(scopeCheck.status, "ORDER_SCOPE_FORBIDDEN", scopeCheck.message);
+
+                const { absolutePath } = await getAttachmentPath(tenantId, attachment.orderId, attachmentId);
+                return res.download(absolutePath, attachment.originalName);
+            } catch (err: any) {
+                if (err instanceof HttpError) {
+                    return res.status(err.status).json({ error: { code: err.code, message: err.message } });
+                }
+                console.error("Legacy attachment download error:", err);
+                return res.status(500).json({ error: { code: "DOWNLOAD_ERROR", message: "Error al descargar el archivo" } });
+            }
+        }
+    );
+
 }

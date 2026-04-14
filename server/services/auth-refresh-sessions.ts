@@ -6,7 +6,7 @@ import { db } from "../db";
 const REFRESH_COOKIE_NAME = "orbia_refresh";
 const ACCESS_TOKEN_TTL_SECONDS = Number(process.env.AUTH_ACCESS_TOKEN_TTL_SECONDS || 60 * 60 * 2);
 const REFRESH_SHORT_TTL_DAYS = Number(process.env.AUTH_REFRESH_SHORT_TTL_DAYS || 3);
-const REFRESH_REMEMBER_TTL_DAYS = Number(process.env.AUTH_REFRESH_REMEMBER_TTL_DAYS || 45);
+const REFRESH_REMEMBER_TTL_DAYS = Number(process.env.AUTH_REFRESH_REMEMBER_TTL_DAYS || 3650);
 
 export function getAccessTokenTtlSeconds() {
   return ACCESS_TOKEN_TTL_SECONDS;
@@ -98,7 +98,16 @@ export async function getRefreshSessionByToken(token: string) {
 }
 
 export async function touchRefreshSession(id: number) {
-  const [session] = await db.update(authRefreshSessions).set({ lastSeenAt: new Date() }).where(eq(authRefreshSessions.id, id)).returning();
+  const [current] = await db.select().from(authRefreshSessions).where(eq(authRefreshSessions.id, id)).limit(1);
+  if (!current) return null;
+  const nextExpiresAt = current.rememberDevice
+    ? getRefreshSessionExpiry(true)
+    : current.expiresAt;
+  const [session] = await db
+    .update(authRefreshSessions)
+    .set({ lastSeenAt: new Date(), expiresAt: nextExpiresAt })
+    .where(eq(authRefreshSessions.id, id))
+    .returning();
   return session || null;
 }
 

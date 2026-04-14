@@ -18,6 +18,7 @@ import { generatePublicToken } from "../utils/public-token";
 import { syncOrderAgendaEvents } from "../services/agenda";
 import { cashStorage } from "../storage/cash";
 import { clearRemainingDraftAttachments, promoteDraftAttachmentsForOrder } from "../services/order-draft-attachments";
+import { isValidPhone, normalizePhone } from "@shared/validation/contact";
 
 /** Decimal-safe payment status calculation (tolerates floating-point rounding) */
 function calcPaymentStatus(paid: number, total: number): "UNPAID" | "PARTIAL" | "PAID" {
@@ -31,6 +32,8 @@ const ordersListQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
   page: z.coerce.number().int().min(1).optional(),
   cursor: z.string().min(1).optional(),
+  includeArchived: z.coerce.boolean().optional(),
+  includeDeleted: z.coerce.boolean().optional(),
 });
 
 const sanitizeOptionalShort = (max: number) =>
@@ -95,6 +98,11 @@ const linkSaleSchema = z.object({
 });
 
 
+const archiveOrderSchema = z.object({
+  archived: z.boolean().default(true),
+});
+
+
 async function ensureOrderStatusResolved(tenantId: number, order: any) {
   if (!order) return order;
   const currentCode = String(order.statusCode || "").trim();
@@ -134,7 +142,7 @@ export function registerOrderRoutes(app: Express) {
     try {
       const tenantId = req.auth!.tenantId!;
       const query = ordersListQuerySchema.parse(req.query || {});
-      const pagination = { limit: query.limit, page: query.page, cursor: query.cursor };
+      const pagination = { limit: query.limit, page: query.page, cursor: query.cursor, includeArchived: query.includeArchived, includeDeleted: query.includeDeleted };
       const result = (req.auth!.scope === "BRANCH" && req.auth!.branchId)
         ? await storage.getOrdersByBranch(tenantId, req.auth!.branchId, pagination)
         : await storage.getOrders(tenantId, pagination);
@@ -151,6 +159,10 @@ export function registerOrderRoutes(app: Express) {
   app.post("/api/orders", tenantAuth, enforceBranchScope, validateBody(createOrderSchema), async (req, res) => {
     try {
       const payload = req.body as z.infer<typeof createOrderSchema>;
+      const normalizedCustomerPhone = normalizePhone(payload.customerPhone || null);
+      if (!isValidPhone(payload.customerPhone || null)) {
+        return res.status(400).json({ error: "Teléfono inválido", code: "ORDER_PHONE_INVALID" });
+      }
       const tenantId = req.auth!.tenantId!;
       const userId = req.auth!.userId;
       const idemKey = getIdempotencyKey(req.headers["idempotency-key"] as string | undefined);
@@ -200,7 +212,7 @@ export function registerOrderRoutes(app: Express) {
           orderNumber,
           type: orderTypeCode,
           customerName: payload.customerName || null,
-          customerPhone: payload.customerPhone || null,
+          customerPhone: normalizedCustomerPhone,
           customerEmail: payload.customerEmail || null,
           description: payload.description || null,
           statusCode: resolvedCreateStatusCode,
@@ -331,6 +343,9 @@ export function registerOrderRoutes(app: Express) {
       const tenantId = req.auth!.tenantId!;
       const id = Number(req.params.id);
       const payload = req.body as z.infer<typeof updateOrderSchema>;
+      if (payload.customerPhone !== undefined && !isValidPhone(payload.customerPhone || null)) {
+        return res.status(400).json({ error: "Teléfono inválido", code: "ORDER_PHONE_INVALID" });
+      }
       const current = await storage.getOrderById(id, tenantId);
       if (!current) return res.status(404).json({ error: "Pedido no encontrado" });
 
@@ -361,7 +376,7 @@ export function registerOrderRoutes(app: Express) {
         await tx.update(orders).set({
           type: nextType,
           customerName: payload.customerName !== undefined ? (payload.customerName || null) : current.customerName,
-          customerPhone: payload.customerPhone !== undefined ? (payload.customerPhone || null) : current.customerPhone,
+          customerPhone: payload.customerPhone !== undefined ? normalizePhone(payload.customerPhone || null) : current.customerPhone,
           customerEmail: payload.customerEmail !== undefined ? (payload.customerEmail || null) : current.customerEmail,
           description: payload.description !== undefined ? (payload.description || null) : current.description,
           totalAmount: payload.totalAmount !== undefined ? (payload.totalAmount !== null ? String(payload.totalAmount) : null) : current.totalAmount,
@@ -579,6 +594,36 @@ export function registerOrderRoutes(app: Express) {
     }
   });
 
+
+  app.patch("/api/orders/:id/archive", tenantAuth, enforceBranchScope, validateParams(idParamSchema), validateBody(archiveOrderSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = Number(req.params.id);
+      const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
+      if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
+      const archived = Boolean((req.body as z.infer<typeof archiveOrderSchema>).archived);
+      const updated = await storage.archiveOrder(orderId, tenantId, archived);
+      if (!updated) return res.status(404).json({ error: "Pedido no encontrado" });
+      return res.json({ ok: true, data: updated });
+    } catch (err: any) {
+      if (err instanceof z.ZodError) return res.status(400).json({ error: "Datos inválidos", code: "ORDER_INVALID", details: err.errors });
+      return res.status(500).json({ error: "No se pudo archivar el pedido", code: "ORDER_ARCHIVE_ERROR" });
+    }
+  });
+
+  app.delete("/api/orders/:id", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
+    try {
+      const tenantId = req.auth!.tenantId!;
+      const orderId = Number(req.params.id);
+      const scopeCheck = await validateOrderScope(tenantId, orderId, req.auth!.scope as any, req.auth!.branchId);
+      if (!scopeCheck.ok) return res.status(scopeCheck.status).json({ error: scopeCheck.message });
+      const deleted = await storage.softDeleteOrder(orderId, tenantId);
+      if (!deleted) return res.status(404).json({ error: "Pedido no encontrado" });
+      return res.json({ ok: true });
+    } catch {
+      return res.status(500).json({ error: "No se pudo eliminar el pedido", code: "ORDER_DELETE_ERROR" });
+    }
+  });
 
   app.get("/api/orders/:id/print-data", tenantAuth, enforceBranchScope, validateParams(idParamSchema), async (req, res) => {
     try {

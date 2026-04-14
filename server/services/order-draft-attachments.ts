@@ -82,19 +82,23 @@ async function validateIncomingFile(params: {
 
   const fileTypeResult = await fileTypeFromFile(tmpPath);
   if (!fileTypeResult) {
-    await fs.unlink(tmpPath).catch(() => {});
-    throw new HttpError(400, "INVALID_FILE", "El archivo no tiene un formato reconocido");
+    // Compatibilidad iPad/Safari para formatos válidos sin magic bytes consistente.
+    const byExt = originalExt || "";
+    if (!allowedExtensions.includes(byExt)) {
+      await fs.unlink(tmpPath).catch(() => {});
+      throw new HttpError(400, "INVALID_FILE", "El archivo no tiene un formato reconocido");
+    }
   }
 
-  if (!allowedExtensions.includes(fileTypeResult.ext)) {
+  if (fileTypeResult && !allowedExtensions.includes(fileTypeResult.ext)) {
     await fs.unlink(tmpPath).catch(() => {});
     throw new HttpError(400, "FILE_SPOOFING", `El contenido real del archivo (${fileTypeResult.ext}) no está permitido`);
   }
 
   return {
     fieldDef,
-    detectedExt: fileTypeResult.ext,
-    detectedMime: fileTypeResult.mime,
+    detectedExt: fileTypeResult?.ext || originalExt || "bin",
+    detectedMime: fileTypeResult?.mime || "application/octet-stream",
   };
 }
 
