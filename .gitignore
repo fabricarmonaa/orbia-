@@ -30,3 +30,28 @@ uploads/dummy/*
 .DS_Store
 .vscode/
 .idea/
+
+# ─────────────────────────────────────────────
+# Archivos de debug / temporales / outputs de build
+# (estos archivos fueron eliminados en el hardening de 2026-04-14)
+# ─────────────────────────────────────────────
+query.txt
+query2.txt
+ai.txt
+ai_logs.txt
+web.txt
+web_logs.txt
+web_logs_new.txt
+server_logs.txt
+errors.txt
+test_out.txt
+tsc_out.txt
+tsc_output.log
+tsc.log
+check.log
+status_definitions.code
+update_limits.sql
+
+# Scripts de test ad-hoc en server/ (usar server/**/*.test.ts para tests reales)
+server/test-*.ts
+test-*.ts

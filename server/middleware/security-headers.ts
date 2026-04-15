@@ -8,7 +8,7 @@ export function securityHeaders(req: Request, res: Response, next: NextFunction)
   // OAuth popups (Google Sign-In / Calendar) need a live window.opener channel
   // to postMessage login/connect results back to the main app window.
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
+  res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
   res.setHeader("X-DNS-Prefetch-Control", "off");
   res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
 

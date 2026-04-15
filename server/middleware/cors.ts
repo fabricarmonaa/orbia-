@@ -1,4 +1,5 @@
 import type { Request, Response, NextFunction } from "express";
+import cors from "cors";
 
 const explicitOrigins = [
   process.env.FRONTEND_URL,
@@ -20,32 +21,33 @@ const landingOrigins = [
   "http://127.0.0.1:5001",
 ].filter(Boolean) as string[];
 
-
 export function corsGuard(req: Request, res: Response, next: NextFunction) {
   const origin = req.headers.origin;
-  const isPublicTracking = req.path.startsWith("/api/public/tracking");
+  const isPublicTracking = req.path.startsWith("/api/public/tracking") || req.path.startsWith("/api/public/track");
   const isPublicSignup = req.path === "/api/public/signup" || req.path === "/api/public/onboard";
   const isPublicPlans = req.path === "/api/public/plans";
-
+  
   if (origin) {
     const isAllowed = allowedOrigins.has(origin);
     const isAllowedLandingPublicOrigin = (isPublicSignup || isPublicPlans) && landingOrigins.includes(origin);
-    // La landing también puede iniciar el flujo OAuth de Google Sign-In.
     const isGoogleStartFromLanding = req.path === "/api/auth/google/start" && landingOrigins.includes(origin);
-    if (isAllowed || isPublicTracking || isAllowedLandingPublicOrigin || isGoogleStartFromLanding) {
-      res.setHeader("Access-Control-Allow-Origin", origin);
-      res.setHeader("Vary", "Origin");
-      res.setHeader("Access-Control-Allow-Credentials", "true");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, PATCH, DELETE");
-    } else if (req.path.startsWith("/api")) {
+
+    if (isAllowed || isPublicTracking || isAllowedLandingPublicOrigin || isGoogleStartFromLanding || req.path.startsWith("/webhook/")) {
+      return cors({
+        origin: true,
+        credentials: true,
+        methods: ["GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE"],
+      })(req, res, next);
+    }
+
+    if (req.path.startsWith("/api")) {
       return res.status(403).json({ error: "Origen no permitido" });
     }
   }
 
   if (req.method === "OPTIONS") {
-    return res.status(204).end();
+    return cors({ origin: true, credentials: true })(req, res, next);
   }
 
-  return next();
+  return cors({ origin: false })(req, res, next);
 }

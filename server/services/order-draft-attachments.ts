@@ -12,8 +12,8 @@ import {
 } from "@shared/schema/order-presets";
 import { HttpError } from "../lib/http-errors";
 import { buildFileStorageKeyFromTokens, parseFileStorageTokens, resolveFileFieldBehavior } from "@shared/order-fields";
+import { STORAGE_ROOT } from "./storage-provider";
 
-const STORAGE_ROOT = path.join(process.cwd(), "storage");
 const DEFAULT_ALLOWED = ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"];
 
 function getMaxUploadBytes() {

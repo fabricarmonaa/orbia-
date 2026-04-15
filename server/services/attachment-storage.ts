@@ -9,8 +9,8 @@ import { resolveAttachmentAbsolutePath } from "./attachment-paths";
 import { eq, and } from "drizzle-orm";
 import { HttpError } from "../lib/http-errors";
 import { buildFileStorageKeyFromTokens, parseFileStorageTokens, resolveFileFieldBehavior } from "@shared/order-fields";
-
-const STORAGE_ROOT = path.join(process.cwd(), "storage");
+import { STORAGE_ROOT } from "./storage-provider";
+import { logger } from "./logger";
 
 export async function validateAndStoreAttachment(
     tenantId: number,
@@ -25,7 +25,7 @@ export async function validateAndStoreAttachment(
     // 1. Validar el tamaño (la middleware de multer ya lo hace, pero por las dudas)
     const MAX_SIZE = parseInt(process.env.MAX_ATTACHMENT_BYTES || "10485760", 10);
     if (sizeBytes > MAX_SIZE) {
-        await fs.unlink(tmpPath).catch(console.error);
+        await fs.unlink(tmpPath).catch(logger.error);
         throw new HttpError(400, "ATTACHMENT_TOO_LARGE", `El archivo excede el límite de ${MAX_SIZE / 1024 / 1024}MB`);
     }
 
@@ -36,12 +36,12 @@ export async function validateAndStoreAttachment(
         .where(and(eq(orderFieldDefinitions.id, fieldDefinitionId), eq(orderFieldDefinitions.tenantId, tenantId)));
 
     if (!fieldDef) {
-        await fs.unlink(tmpPath).catch(console.error);
+        await fs.unlink(tmpPath).catch(logger.error);
         throw new HttpError(404, "FIELD_NOT_FOUND", "No se encontró el campo");
     }
 
     if (fieldDef.fieldType !== "FILE") {
-        await fs.unlink(tmpPath).catch(console.error);
+        await fs.unlink(tmpPath).catch(logger.error);
         throw new HttpError(400, "INVALID_FIELD_TYPE", "El campo no es de tipo archivo");
     }
 
@@ -51,7 +51,7 @@ export async function validateAndStoreAttachment(
 
     // 3. Validar extensión "lógica" (nombre del archivo)
     if (!originalExt || !allowedExtensions.includes(originalExt)) {
-        await fs.unlink(tmpPath).catch(console.error);
+        await fs.unlink(tmpPath).catch(logger.error);
         throw new HttpError(
             400,
             "INVALID_EXTENSION",
@@ -64,14 +64,14 @@ export async function validateAndStoreAttachment(
     if (!fileTypeResult) {
         // Algunos archivos iPad/Safari pueden no detectar magic bytes (ej. ciertos HEIC/PDF).
         if (!["application/pdf", "image/heic", "image/heif", "image/jpeg", "image/png", "image/webp"].includes(String(mimeType || "").toLowerCase())) {
-            await fs.unlink(tmpPath).catch(console.error);
+            await fs.unlink(tmpPath).catch(logger.error);
             throw new HttpError(400, "INVALID_FILE", "El archivo no tiene un formato reconocido");
         }
     }
 
     // Comparamos extensiones, si file-type detecta "exe" pero el nombre dice "pdf", rechazamos.
     if (fileTypeResult && !allowedExtensions.includes(fileTypeResult.ext)) {
-        await fs.unlink(tmpPath).catch(console.error);
+        await fs.unlink(tmpPath).catch(logger.error);
         throw new HttpError(
             400,
             "FILE_SPOOFING",
@@ -231,6 +231,6 @@ export async function deleteAttachment(tenantId: number, orderId: number, attach
 
     // Borrar físicamente el archivo
     await fs.unlink(absolutePath).catch((err) => {
-        console.error(`No se pudo eliminar archivo físico: ${absolutePath}`, err);
+        logger.error(`No se pudo eliminar archivo físico: ${absolutePath}`, err);
     });
 }

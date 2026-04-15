@@ -6,6 +6,7 @@ import { createPublicTrialSignup } from "../services/public-signup";
 import { strictSignupLimiter } from "../middleware/http-rate-limit";
 import { storage } from "../storage";
 import { getPlanDisplayName } from "@shared/plan-display";
+import { UPLOADS_ROOT } from "../services/storage-provider";
 
 const ORBIA_LEGAL_SLUG_KEY = "orbia_legal_slug";
 const ORBIA_LEGAL_TERMS_KEY = "orbia_legal_terms";
@@ -66,7 +67,7 @@ export function registerPublicRoutes(app: Express) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(legalHtmlPage("Términos y Condiciones", legal.logoUrl, legal.termsText, legal.updatedAt));
     }
-    const filePath = path.join(process.cwd(), "uploads", "Terminos-y condiciones-ORBIA.pdf");
+    const filePath = path.join(UPLOADS_ROOT, "Terminos-y condiciones-ORBIA.pdf");
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "Archivo no encontrado", code: "FILE_NOT_FOUND" });
     }
@@ -80,7 +81,7 @@ export function registerPublicRoutes(app: Express) {
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.status(200).send(legalHtmlPage("Política de Privacidad", legal.logoUrl, legal.privacyText, legal.updatedAt));
     }
-    const filePath = path.join(process.cwd(), "uploads", "Politica-de-privacidad-ORBIA.pdf");
+    const filePath = path.join(UPLOADS_ROOT, "Politica-de-privacidad-ORBIA.pdf");
     if (!fs.existsSync(filePath)) {
       return res.status(404).json({ error: "Archivo no encontrado", code: "FILE_NOT_FOUND" });
     }

@@ -1,7 +1,6 @@
 import fs from "fs";
 import path from "path";
-
-const STORAGE_ROOT = path.join(process.cwd(), "storage");
+import { STORAGE_ROOT } from "./storage-provider";
 
 function normalizeSafePath(input: string | null | undefined) {
   return path.normalize(String(input || "")).replace(/^(\.\.(\/|\\|$))+/, "");

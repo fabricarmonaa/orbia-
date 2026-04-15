@@ -42,15 +42,10 @@ app.use(
 app.use(express.urlencoded({ extended: false, limit: REQUEST_BODY_LIMIT }));
 app.use(requestContext);
 
-export function log(message: string, source = "express") {
-  const formattedTime = new Date().toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true,
-  });
+import { logger } from "./services/logger";
 
-  console.log(`${formattedTime} [${source}] ${message}`);
+export function log(message: string, source = "express") {
+  logger.info(`[${source}] ${message}`);
 }
 
 app.use((req, res, next) => {
@@ -90,6 +85,28 @@ app.use((req, res, next) => {
     log("[BOOT] Seeding disabled");
   }
 
+  app.get("/health", async (_req, res) => {
+    try {
+      const { db } = await import("./db");
+      const { sql } = await import("drizzle-orm");
+      await db.execute(sql`SELECT 1`);
+      
+      const { getStorageProvider } = await import("./services/storage-provider");
+      const providerType = getStorageProvider().constructor.name;
+
+      res.status(200).json({
+        status: "ok",
+        uptime: process.uptime(),
+        memoryUsage: process.memoryUsage(),
+        db: "connected",
+        storage: providerType,
+      });
+    } catch (err: any) {
+      logger.error("[Health] Falló el chequeo de disponibilidad:", err);
+      res.status(503).json({ status: "error", message: "Database unreachable" });
+    }
+  });
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, req: Request, res: Response, next: NextFunction) => {
@@ -102,7 +119,7 @@ app.use((req, res, next) => {
 
     if (status >= 500) {
       captureServerError(err, { requestId: req.requestId, route: req.path, status, code });
-      console.error("[global-error-handler] Unhandled error:", {
+      logger.error("[global-error-handler] Unhandled error", {
         requestId: req.requestId,
         route: req.path,
         status,
@@ -146,18 +163,36 @@ app.use((req, res, next) => {
     }
   }, 5 * 60 * 1000);
 
+  // Auth refresh sessions cleanup job: clean up expired/revoked sessions every 6 hours.
+  // Prevents auth_refresh_sessions table from growing indefinitely.
+  const { cleanupExpiredRefreshSessions } = await import("./services/auth-refresh-sessions");
+  const sessionCleanupInterval = setInterval(async () => {
+    try {
+      await cleanupExpiredRefreshSessions();
+      log("Auth session cleanup complete", "session-cleanup");
+    } catch (err) {
+      console.error("[session-cleanup] Error during cleanup:", err);
+    }
+  }, 6 * 60 * 60 * 1000); // every 6 hours
+
+  // Backup scheduler
+  const { startBackupScheduler } = await import("./services/backup");
+  startBackupScheduler();
+
   // Railway compatibility: use PORT env var, bind to 0.0.0.0
   process.on("unhandledRejection", (reason) => {
-    console.error("[UNHANDLED_REJECTION]", reason);
+    logger.error("[UNHANDLED_REJECTION]", { reason });
   });
 
   process.on("SIGTERM", () => {
     clearInterval(purgeInterval);
+    clearInterval(sessionCleanupInterval);
     httpServer.close(() => process.exit(0));
   });
 
   process.on("SIGINT", () => {
     clearInterval(purgeInterval);
+    clearInterval(sessionCleanupInterval);
     httpServer.close(() => process.exit(0));
   });
 

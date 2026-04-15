@@ -38,6 +38,7 @@ import {
   serializeRefreshCookie,
   touchRefreshSession,
 } from "../services/auth-refresh-sessions";
+import { logger } from "../services/logger";
 
 type LockState = { failures: number; firstFailureAt: number; lockedUntil?: number };
 const superLoginByIp = new Map<string, LockState>();
@@ -217,7 +218,7 @@ export function registerAuthRoutes(app: Express) {
       };
 
       if (!isMailerConfigured()) {
-        console.error("[auth:forgot-password] mailer no configurado", {
+        logger.error("[auth:forgot-password] mailer no configurado", {
           requestId: req.requestId,
           hasClientId: !!process.env.GMAIL_OAUTH_CLIENT_ID,
           hasClientSecret: !!process.env.GMAIL_OAUTH_CLIENT_SECRET,
@@ -229,7 +230,7 @@ export function registerAuthRoutes(app: Express) {
 
       const user = await storage.getUserByEmail(normalizedEmail);
       if (!user || !user.isActive || user.disabled || !user.tenantId) {
-        console.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
+        logger.warn("[auth:forgot-password] solicitud omitida por usuario inexistente/inactivo", {
           requestId: req.requestId,
           email: normalizedEmail,
           userFound: !!user,
@@ -240,7 +241,7 @@ export function registerAuthRoutes(app: Express) {
 
       const tenant = await storage.getTenantById(user.tenantId);
       if (!tenant || tenant.deletedAt || tenant.isBlocked || !tenant.isActive) {
-        console.warn("[auth:forgot-password] solicitud omitida por tenant inválido/inactivo", {
+        logger.warn("[auth:forgot-password] solicitud omitida por tenant inválido/inactivo", {
           requestId: req.requestId,
           tenantId: user.tenantId,
           email: normalizedEmail,
@@ -252,7 +253,7 @@ export function registerAuthRoutes(app: Express) {
         return res.json(genericResponse);
       }
 
-      console.log("[auth:forgot-password] emitiendo token y enviando mail", {
+      logger.info("[auth:forgot-password] emitiendo token y enviando mail", {
         requestId: req.requestId,
         tenantId: tenant.id,
         userId: user.id,
@@ -291,7 +292,7 @@ export function registerAuthRoutes(app: Express) {
         text: `Recibimos una solicitud para restablecer tu contraseña en Orbia. Si fuiste vos, abrí este enlace: ${resetUrl}. Vence en ${ttlMinutes} minutos y se puede usar una sola vez. Si no fuiste vos, ignorá este mensaje.`,
       });
 
-      console.log("[auth:forgot-password] correo enviado", {
+      logger.info("[auth:forgot-password] correo enviado", {
         requestId: req.requestId,
         tenantId: tenant.id,
         userId: user.id,
@@ -312,7 +313,7 @@ export function registerAuthRoutes(app: Express) {
       if (err instanceof z.ZodError) {
         return res.status(400).json({ error: "Datos inválidos", code: "AUTH_FORGOT_INVALID", details: err.errors });
       }
-      console.error("[auth:forgot-password] error enviando recuperación", {
+      logger.error("[auth:forgot-password] error enviando recuperación", {
         requestId: req.requestId,
         code: err?.code || null,
         message: err?.message || "AUTH_FORGOT_ERROR",
@@ -495,7 +496,7 @@ export function registerAuthRoutes(app: Express) {
         },
       });
     } catch (err) {
-      console.error("[auth:refresh]", err);
+      logger.error("[auth:refresh]", err);
       // Error transitorio del backend: no invalidamos la cookie para evitar logout agresivo.
       return res.status(500).json({ error: "No se pudo renovar la sesión", code: "AUTH_REFRESH_ERROR" });
     }
@@ -541,7 +542,7 @@ export function registerAuthRoutes(app: Express) {
         },
       });
     } catch (err) {
-      console.error("[auth:session]", err);
+      logger.error("[auth:session]", err);
       return res.status(500).json({ error: "No se pudo rehidratar la sesión", code: "AUTH_SESSION_ERROR" });
     }
   });
@@ -623,6 +624,24 @@ export function registerAuthRoutes(app: Express) {
         isSuperAdmin: true,
         branchId: null,
       });
+
+      if (user.tenantId) {
+        const refresh = await createRefreshSession({
+          tenantId: user.tenantId,
+          userId: user.id,
+          rememberDevice: false, // Por seguridad no recordamos dispositivos de superadmin por default a largo plazo
+          deviceLabel: "super-admin-session",
+          ipAddress: ip,
+          userAgent: req.headers["user-agent"] || null,
+        });
+        res.setHeader("Set-Cookie", serializeRefreshCookie(refresh.token, refresh.expiresAt));
+      }
+
+      const sessionData = user.tenantId ? {
+        rememberDevice: false,
+        accessTokenExpiresInSec: getAccessTokenTtlSeconds(),
+      } : undefined;
+
       res.json({
         token,
         user: {
@@ -635,6 +654,7 @@ export function registerAuthRoutes(app: Express) {
           branchId: null,
           avatarUrl: user.avatarUrl || null,
         },
+        session: sessionData,
       });
     } catch (err: any) {
       if (err instanceof z.ZodError) {
@@ -669,7 +689,7 @@ export function registerAuthRoutes(app: Express) {
       }
 
       const redirectUri = getRedirectUri(intent);
-      console.log("[google:start]", {
+      logger.info("[google:start]", {
         requestId: req.requestId,
         intent,
         nodeEnv: process.env.NODE_ENV || null,
@@ -711,7 +731,7 @@ export function registerAuthRoutes(app: Express) {
       // Permitimos la ejecución del script inline sobrescribiendo el CSP global.
       res.setHeader("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'");
 
-      console.log("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
+      logger.info("[google:callback:postmessage]", { requestId: (req as any).requestId, targetOrigin: parentOrigin });
 
       const html = `<!doctype html><html><body><script>
         (function(){
@@ -756,11 +776,11 @@ export function registerAuthRoutes(app: Express) {
       }
 
       if (!code || !state) {
-        console.warn("[google:callback] invalid state/code", { requestId: req.requestId, hasCode: !!code, hasState: !!state, parentOrigin });
+        logger.warn("[google:callback] invalid state/code", { requestId: req.requestId, hasCode: !!code, hasState: !!state, parentOrigin });
         return emit({ ok: false, message: "La autorización de Google no fue válida." }, parentOrigin);
       }
 
-      console.log("[google:callback]", { requestId: req.requestId, nodeEnv: process.env.NODE_ENV || null, parentOrigin, redirectUri: getRedirectUri("login") });
+      logger.info("[google:callback]", { requestId: req.requestId, nodeEnv: process.env.NODE_ENV || null, parentOrigin, redirectUri: getRedirectUri("login") });
       const tokenData = await exchangeGoogleCode(code, "login");
       const profile = await fetchGoogleProfile(tokenData.accessToken);
 
@@ -844,7 +864,7 @@ export function registerAuthRoutes(app: Express) {
 
       return emit({ ok: false, message: "Flujo no soportado en este endpoint." }, parentOrigin);
     } catch (err: any) {
-      console.error("[Google OAuth Callback Error]", err);
+      logger.error("[Google OAuth Callback Error]", err);
       return emit({ ok: false, message: err?.message || "No pudimos completar el acceso con Google.", details: err?.toString() }, parentOrigin);
     }
   });

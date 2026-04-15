@@ -26,14 +26,15 @@ const uploadLimiter = createRateLimiter({
 });
 
 export function registerStaticUploads(app: Express) {
-  app.use("/uploads/profiles", express.static(profileUploadDir));
-  app.use("/uploads/delivery", express.static(deliveryUploadDir));
-  app.use("/uploads/tenant-logos", express.static(tenantLogoDir));
+  const staticOpts = { maxAge: "30d", immutable: true };
+  app.use("/uploads/profiles", express.static(profileUploadDir, staticOpts));
+  app.use("/uploads/delivery", express.static(deliveryUploadDir, staticOpts));
+  app.use("/uploads/tenant-logos", express.static(tenantLogoDir, staticOpts));
   // Compatibilidad legacy de rutas de logo
-  app.use("/uploads/logo", express.static(tenantLogoDir));
-  app.use("/uploads/logos", express.static(tenantLogoDir));
-  app.use("/uploads/app", express.static(appLogoDir));
-  app.use("/uploads/avatars", express.static(avatarDir));
+  app.use("/uploads/logo", express.static(tenantLogoDir, staticOpts));
+  app.use("/uploads/logos", express.static(tenantLogoDir, staticOpts));
+  app.use("/uploads/app", express.static(appLogoDir, staticOpts));
+  app.use("/uploads/avatars", express.static(avatarDir, staticOpts));
 }
 
 export function registerUploadRoutes(app: Express) {

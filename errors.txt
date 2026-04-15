@@ -1,1 +1,0 @@
-server/routes/super.ts(11,10): error TS2305: Module '"../db"' has no exported member 'session'.

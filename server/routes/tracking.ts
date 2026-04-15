@@ -1,10 +1,12 @@
 import type { Express } from "express";
 import fs from "fs";
+import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
 import { orderAttachments } from "@shared/schema";
 import { getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/statuses";
+import { publicTrackingLimiter } from "../middleware/http-rate-limit";
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
 import { normalizeTrackingVisibilityConfig } from "@shared/tracking-config";
@@ -17,6 +19,7 @@ import {
 } from "@shared/order-fields";
 import { buildPublicTrackingAttachmentUrl, isTrackingAttachmentVisible } from "./tracking.helpers";
 import { resolveAttachmentAbsolutePath } from "../services/attachment-paths";
+
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -216,9 +219,9 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
 }
 
 export function registerTrackingRoutes(app: Express) {
-  app.get("/api/public/track/:trackingId", async (req, res) => {
+  app.get("/api/public/track/:trackingId", publicTrackingLimiter, async (req, res) => {
     try {
-      const result = await buildTrackingPayload(req.params.trackingId);
+      const result = await buildTrackingPayload(String(req.params.trackingId));
       return res.status(result.status).json(result.body);
     } catch (err: any) {
       if (process.env.NODE_ENV !== "production") {
@@ -228,9 +231,9 @@ export function registerTrackingRoutes(app: Express) {
     }
   });
 
-  app.get("/api/public/tracking/:trackingId", async (req, res) => {
+  app.get("/api/public/tracking/:trackingId", publicTrackingLimiter, async (req, res) => {
     try {
-      const result = await buildTrackingPayload(req.params.trackingId);
+      const result = await buildTrackingPayload(String(req.params.trackingId));
       return res.status(result.status).json(result.body);
     } catch (err: any) {
       if (process.env.NODE_ENV !== "production") {
@@ -240,7 +243,7 @@ export function registerTrackingRoutes(app: Express) {
     }
   });
 
-  app.get("/api/public/tracking/:trackingId/attachments/:attachmentId", async (req, res) => {
+  app.get("/api/public/tracking/:trackingId/attachments/:attachmentId", publicTrackingLimiter, async (req, res) => {
     try {
       const trackingId = String(req.params.trackingId || "");
       const attachmentId = Number(req.params.attachmentId || 0);

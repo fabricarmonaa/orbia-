@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import type { Request, Response, NextFunction } from "express";
 import { storage } from "./storage";
 import { getSessionSecret } from "./config";
+import { logger } from "./services/logger";
 
 function unauthorizedResponse(res: Response, type: "required" | "expired" | "invalid") {
   if (type == "required") {
@@ -38,9 +39,10 @@ export function isIpAllowedForSuperAdmin(req: Request) {
 }
 
 function buildUpgradeUrl(tenantCode?: string | null) {
-  if (!tenantCode) return "https://wa.me/5492236979026";
+  const phone = (process.env.UPGRADE_WHATSAPP_PHONE || "5492236979026").replace(/\D/g, "");
+  if (!tenantCode) return `https://wa.me/${phone}`;
   const text = `Hola! Mi código de negocio es ${tenantCode} y quiero mejorar mi plan`;
-  return `https://wa.me/5492236979026?text=${encodeURIComponent(text)}`;
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 }
 
 function mapJwtError(err: unknown): "expired" | "invalid" {
@@ -222,6 +224,18 @@ export function tenantAuth(req: Request, res: Response, next: NextFunction) {
       return res.status(403).json({ error: "Acceso denegado" });
     }
 
+    // Rechazar explícitamente payloads con userId inválido.
+    // Los tokens de delivery usan su propio middleware (deliveryAuth) y nunca llegan aquí.
+    // No existe un caso legítimo donde un token de tenant tenga userId <= 0.
+    if (!payload.userId || payload.userId <= 0) {
+      logger.warn("[tenantAuth] payload con userId inválido rechazado", {
+        userId: payload.userId,
+        tenantId: payload.tenantId,
+        scope: payload.scope,
+      });
+      return unauthorizedResponse(res, "invalid");
+    }
+
     storage.getTenantById(payload.tenantId)
       .then(async (tenant) => {
         if (!tenant || tenant.deletedAt) {
@@ -234,14 +248,12 @@ export function tenantAuth(req: Request, res: Response, next: NextFunction) {
           return res.status(403).json({ error: "Cuenta bloqueada por falta de pago. Contacte al administrador.", code: "ACCOUNT_BLOCKED" });
         }
 
-        if (payload.userId > 0) {
-          const user = await storage.getUserById(payload.userId, payload.tenantId!);
-          if (!user || user.deletedAt || !user.isActive || user.disabled) {
-            return unauthorizedResponse(res, "invalid");
-          }
-          if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
-            return unauthorizedResponse(res, "expired");
-          }
+        const user = await storage.getUserById(payload.userId, payload.tenantId!);
+        if (!user || user.deletedAt || !user.isActive || user.disabled) {
+          return unauthorizedResponse(res, "invalid");
+        }
+        if (isTokenRevokedByUser(payload.iat, user.tokenInvalidBefore)) {
+          return unauthorizedResponse(res, "expired");
         }
 
         req.auth = payload;

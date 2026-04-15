@@ -36,3 +36,25 @@ export const strictSttLimiter = rateLimit({
   max: Number(process.env.STT_RATE_LIMIT_PER_MIN || process.env.AI_MAX_CONCURRENT_JOBS || 6),
   ...jsonRateLimit("Límite de STT alcanzado. Esperá y reintentá.", "RATE_LIMIT_STT"),
 });
+
+// 60 req/min por IP para tracking público.
+// Esto permite a un usuario legítimo consultar su pedido muchas veces sin ser bloqueado,
+// pero previene scraping masivo y DoS.
+export const publicTrackingLimiter = rateLimit({
+  windowMs: ONE_MINUTE,
+  max: Number(process.env.PUBLIC_TRACKING_RATE_LIMIT_PER_MIN || 60),
+  keyGenerator: (req: any) => {
+    const trustProxy = process.env.TRUST_PROXY === "true";
+    if (trustProxy) {
+      const forwarded = req.headers?.["x-forwarded-for"];
+      if (typeof forwarded === "string" && forwarded.length > 0) {
+        return `tracking:${forwarded.split(",")[0].trim()}`;
+      }
+    }
+    return `tracking:${req.ip || "unknown"}`;
+  },
+  ...jsonRateLimit(
+    "Demasiadas solicitudes de seguimiento. Intentá nuevamente en un minuto.",
+    "RATE_LIMIT_TRACKING"
+  ),
+});

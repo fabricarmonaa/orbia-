@@ -6,7 +6,10 @@ import { db } from "../db";
 const REFRESH_COOKIE_NAME = "orbia_refresh";
 const ACCESS_TOKEN_TTL_SECONDS = Number(process.env.AUTH_ACCESS_TOKEN_TTL_SECONDS || 60 * 60 * 2);
 const REFRESH_SHORT_TTL_DAYS = Number(process.env.AUTH_REFRESH_SHORT_TTL_DAYS || 3);
-const REFRESH_REMEMBER_TTL_DAYS = Number(process.env.AUTH_REFRESH_REMEMBER_TTL_DAYS || 3650);
+// 90 días: con sliding window (touchRefreshSession renueva en cada uso), 90 días es
+// suficientemente cómodo para el usuario y suficientemente seguro.
+// Antes era 3650 (10 años). Configurable via AUTH_REFRESH_REMEMBER_TTL_DAYS.
+const REFRESH_REMEMBER_TTL_DAYS = Number(process.env.AUTH_REFRESH_REMEMBER_TTL_DAYS || 90);
 
 export function getAccessTokenTtlSeconds() {
   return ACCESS_TOKEN_TTL_SECONDS;
