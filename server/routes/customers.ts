@@ -8,6 +8,7 @@ import { validateBody, validateQuery, validateParams } from "../middleware/valid
 import { escapeLikePattern, sanitizeLongText, sanitizeShortText } from "../security/sanitize";
 import { getCustomersSchemaInfo } from "../services/schema-introspection";
 import { isValidEmail, isValidPhone, normalizePhone as normalizePhoneGlobal, shouldUseStrictEmailValidation } from "@shared/validation/contact";
+import { DNI_MAX_LENGTH, DNI_MIN_LENGTH, getDniValidationError, normalizeDni } from "@shared/validation/dni";
 import { resolvePagination } from "../utils/pagination";
 
 const customerSchema = z.object({
@@ -35,8 +36,7 @@ const activeSchema = z.object({ active: z.boolean() });
 function normalizeDoc(raw: string | null | undefined) {
   const value = sanitizeShortText(raw || "", 50).trim();
   if (!value) return null;
-  const normalized = value.replace(/[^\d]/g, "");
-  return normalized || null;
+  return normalizeDni(value);
 }
 
 function normalizePhone(raw: string | null | undefined) {
@@ -92,8 +92,9 @@ export function registerCustomerRoutes(app: Express) {
       if (!payload.name) {
         return res.status(400).json({ error: "Nombre requerido", code: "CUSTOMER_NAME_REQUIRED" });
       }
-      if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
-        return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
+      const docError = getDniValidationError(body.doc);
+      if (docError) {
+        return res.status(400).json({ error: docError, code: "CUSTOMER_DOC_INVALID" });
       }
       if (!isValidPhone(body.phone)) {
         return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });
@@ -268,11 +269,11 @@ export function registerCustomerRoutes(app: Express) {
         });
       }
 
-      if (!dni || dni.length < 6 || dni.length > 12) {
+      if (!dni || dni.length < DNI_MIN_LENGTH || dni.length > DNI_MAX_LENGTH) {
         return res.status(400).json({
           error: {
             code: "CUSTOMER_DNI_INVALID",
-            message: "DNI inválido",
+            message: `DNI inválido. Usá entre ${DNI_MIN_LENGTH} y ${DNI_MAX_LENGTH} dígitos.`,
           },
         });
       }
@@ -374,8 +375,9 @@ export function registerCustomerRoutes(app: Express) {
         ...(body.phone !== undefined ? { phone: normalizePhone(body.phone) } : {}),
       };
 
-      if (payload.doc && !/^\d{6,15}$/.test(payload.doc)) {
-        return res.status(400).json({ error: "DNI inválido", code: "CUSTOMER_DOC_INVALID" });
+      const docError = getDniValidationError(body.doc);
+      if (docError) {
+        return res.status(400).json({ error: docError, code: "CUSTOMER_DOC_INVALID" });
       }
       if (!isValidPhone(body.phone)) {
         return res.status(400).json({ error: "Ingresá un teléfono válido", code: "CUSTOMER_PHONE_INVALID" });

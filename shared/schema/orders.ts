@@ -79,6 +79,8 @@ export const orders = pgTable(
     createdByBranchId: integer("created_by_branch_id").references(() => branches.id, { onDelete: "set null" }),
     // Etapa A: which preset was used when creating this order
     orderPresetId: integer("order_preset_id"),
+    archivedAt: timestamp("archived_at"),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -88,6 +90,7 @@ export const orders = pgTable(
     index("idx_orders_tenant_status_created").on(table.tenantId, table.statusId, table.createdAt),
     index("idx_orders_tenant_status_code_created").on(table.tenantId, table.statusCode, table.createdAt),
     index("idx_orders_tenant_tracking").on(table.tenantId, table.publicTrackingId),
+    index("idx_orders_tenant_archived_deleted").on(table.tenantId, table.archivedAt, table.deletedAt),
     index("idx_orders_tracking").on(table.publicTrackingId),
   ]
 );

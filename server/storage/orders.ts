@@ -9,39 +9,34 @@ import { resolvePagination } from "../utils/pagination";
 
 export const orderStorage = {
   async getOrderStatuses(tenantId: number) {
-    return db
-      .select()
-      .from(orderStatuses)
-      .where(eq(orderStatuses.tenantId, tenantId))
-      .orderBy(orderStatuses.sortOrder);
+    return db.select().from(orderStatuses).where(eq(orderStatuses.tenantId, tenantId)).orderBy(orderStatuses.sortOrder);
   },
   async getOrderStatusById(id: number, tenantId: number) {
-    const [status] = await db
-      .select()
-      .from(orderStatuses)
-      .where(and(eq(orderStatuses.id, id), eq(orderStatuses.tenantId, tenantId)));
+    const [status] = await db.select().from(orderStatuses).where(and(eq(orderStatuses.id, id), eq(orderStatuses.tenantId, tenantId)));
     return status;
   },
   async createOrderStatus(data: InsertOrderStatus) {
     const [status] = await db.insert(orderStatuses).values(data).returning();
     return status;
   },
-  async getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }) {
+  async getOrders(tenantId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number; includeArchived?: boolean; includeDeleted?: boolean }) {
     const { limit, offset, cursor } = resolvePagination(pagination || {});
+    const includeArchived = Boolean(pagination?.includeArchived);
+    const includeDeleted = Boolean(pagination?.includeDeleted);
     const rows = await db
       .select()
       .from(orders)
-      .where(
-        and(
-          eq(orders.tenantId, tenantId),
-          cursor
-            ? or(
-              lt(orders.createdAt, new Date(cursor.createdAt)),
-              and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
-            )
-            : undefined,
-        )
-      )
+      .where(and(
+        eq(orders.tenantId, tenantId),
+        includeDeleted ? undefined : sql`${orders.deletedAt} IS NULL`,
+        includeArchived ? undefined : sql`${orders.archivedAt} IS NULL`,
+        cursor
+          ? or(
+            lt(orders.createdAt, new Date(cursor.createdAt)),
+            and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+          )
+          : undefined,
+      ))
       .orderBy(desc(orders.createdAt), desc(orders.id))
       .limit(limit)
       .offset(cursor ? 0 : offset);
@@ -50,11 +45,11 @@ export const orderStorage = {
       : null;
     return { data: rows, meta: { limit, offset: cursor ? 0 : offset, nextCursor } };
   },
-  async getOrderById(id: number, tenantId: number) {
+  async getOrderById(id: number, tenantId: number, options?: { includeDeleted?: boolean }) {
     const [order] = await db
       .select()
       .from(orders)
-      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), options?.includeDeleted ? undefined : sql`${orders.deletedAt} IS NULL`));
     return order;
   },
   async getOrderByTrackingId(trackingId: string) {
@@ -62,6 +57,7 @@ export const orderStorage = {
       .select({
         ...getTableColumns(orders),
         tenantSlug: tenants.slug,
+        tenantCode: tenants.code,
       })
       .from(orders)
       .leftJoin(tenants, eq(tenants.id, orders.tenantId))
@@ -73,85 +69,60 @@ export const orderStorage = {
     return order;
   },
   async updateOrderStatus(id: number, tenantId: number, statusId: number | null, statusCode?: string | null) {
-    await db
-      .update(orders)
-      .set({ statusId, statusCode: statusCode || null, updatedAt: new Date() })
-      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+    await db.update(orders).set({ statusId, statusCode: statusCode || null, updatedAt: new Date() }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`));
   },
   async updateOrderTracking(id: number, tenantId: number, trackingId: string, expiresAt: Date | null) {
-    await db
-      .update(orders)
-      .set({ publicTrackingId: trackingId, trackingExpiresAt: expiresAt, trackingRevoked: false })
-      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+    await db.update(orders).set({ publicTrackingId: trackingId, trackingExpiresAt: expiresAt, trackingRevoked: false }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`));
   },
   async linkOrderSale(id: number, tenantId: number, saleId: number, salePublicToken: string | null) {
-    await db
-      .update(orders)
-      .set({ saleId, salePublicToken, updatedAt: new Date() })
-      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId)));
+    await db.update(orders).set({ saleId, salePublicToken, updatedAt: new Date() }).where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`));
   },
 
   async getNextOrderNumber(tenantId: number) {
-    const result = await db
-      .select({ maxNum: sql<number>`COALESCE(MAX(${orders.orderNumber}), 0)` })
-      .from(orders)
-      .where(eq(orders.tenantId, tenantId));
+    const result = await db.select({ maxNum: sql<number>`COALESCE(MAX(${orders.orderNumber}), 0)` }).from(orders).where(eq(orders.tenantId, tenantId));
     return (result[0]?.maxNum || 0) + 1;
   },
   async countOrders(tenantId: number, branchId?: number | null) {
-    const conditions = [eq(orders.tenantId, tenantId)];
+    const conditions = [eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`];
     if (branchId) conditions.push(eq(orders.branchId, branchId));
-    const [result] = await db
-      .select({ count: count() })
-      .from(orders)
-      .where(and(...conditions));
+    const [result] = await db.select({ count: count() }).from(orders).where(and(...conditions));
     return result?.count || 0;
   },
   async getOrderHistory(orderId: number, tenantId: number) {
-    return db
-      .select()
-      .from(orderStatusHistory)
-      .where(and(eq(orderStatusHistory.orderId, orderId), eq(orderStatusHistory.tenantId, tenantId)))
-      .orderBy(desc(orderStatusHistory.createdAt));
+    return db.select().from(orderStatusHistory).where(and(eq(orderStatusHistory.orderId, orderId), eq(orderStatusHistory.tenantId, tenantId))).orderBy(desc(orderStatusHistory.createdAt));
   },
   async createOrderHistory(data: InsertOrderStatusHistory) {
     await db.insert(orderStatusHistory).values(data);
   },
   async getOrderComments(orderId: number, tenantId: number) {
-    return db
-      .select()
-      .from(orderComments)
-      .where(and(eq(orderComments.orderId, orderId), eq(orderComments.tenantId, tenantId)))
-      .orderBy(desc(orderComments.createdAt));
+    return db.select().from(orderComments).where(and(eq(orderComments.orderId, orderId), eq(orderComments.tenantId, tenantId))).orderBy(desc(orderComments.createdAt));
   },
   async getPublicOrderComments(orderId: number) {
-    return db
-      .select()
-      .from(orderComments)
-      .where(and(eq(orderComments.orderId, orderId), eq(orderComments.isPublic, true)))
-      .orderBy(desc(orderComments.createdAt));
+    return db.select().from(orderComments).where(and(eq(orderComments.orderId, orderId), eq(orderComments.isPublic, true))).orderBy(desc(orderComments.createdAt));
   },
   async createOrderComment(data: InsertOrderComment) {
     const [comment] = await db.insert(orderComments).values(data).returning();
     return comment;
   },
-  async getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number }) {
+  async getOrdersByBranch(tenantId: number, branchId: number, pagination?: { limit?: number; page?: number; cursor?: string; offset?: number; includeArchived?: boolean; includeDeleted?: boolean }) {
     const { limit, offset, cursor } = resolvePagination(pagination || {});
+    const includeArchived = Boolean(pagination?.includeArchived);
+    const includeDeleted = Boolean(pagination?.includeDeleted);
     const rows = await db
       .select()
       .from(orders)
-      .where(
-        and(
-          eq(orders.tenantId, tenantId),
-          eq(orders.branchId, branchId),
-          cursor
-            ? or(
-              lt(orders.createdAt, new Date(cursor.createdAt)),
-              and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
-            )
-            : undefined,
-        )
-      )
+      .where(and(
+        eq(orders.tenantId, tenantId),
+        eq(orders.branchId, branchId),
+        includeDeleted ? undefined : sql`${orders.deletedAt} IS NULL`,
+        includeArchived ? undefined : sql`${orders.archivedAt} IS NULL`,
+        cursor
+          ? or(
+            lt(orders.createdAt, new Date(cursor.createdAt)),
+            and(eq(orders.createdAt, new Date(cursor.createdAt)), lt(orders.id, cursor.id))
+          )
+          : undefined,
+      ))
       .orderBy(desc(orders.createdAt), desc(orders.id))
       .limit(limit)
       .offset(cursor ? 0 : offset);
@@ -159,5 +130,21 @@ export const orderStorage = {
       ? Buffer.from(JSON.stringify({ createdAt: rows[rows.length - 1].createdAt, id: rows[rows.length - 1].id }), "utf8").toString("base64url")
       : null;
     return { data: rows, meta: { limit, offset: cursor ? 0 : offset, nextCursor } };
+  },
+  async archiveOrder(id: number, tenantId: number, archived: boolean) {
+    const [order] = await db
+      .update(orders)
+      .set({ archivedAt: archived ? new Date() : null, updatedAt: new Date() })
+      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`))
+      .returning();
+    return order || null;
+  },
+  async softDeleteOrder(id: number, tenantId: number) {
+    const [order] = await db
+      .update(orders)
+      .set({ deletedAt: new Date(), updatedAt: new Date() })
+      .where(and(eq(orders.id, id), eq(orders.tenantId, tenantId), sql`${orders.deletedAt} IS NULL`))
+      .returning();
+    return order || null;
   },
 };

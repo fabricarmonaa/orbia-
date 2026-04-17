@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import fs from "fs";
-import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { storage } from "../storage";
 import { db } from "../db";
@@ -9,6 +8,15 @@ import { getDefaultStatus, getStatuses, normalizeStatusCode } from "../services/
 
 import { getOrderCustomFields } from "../services/order-custom-fields";
 import { normalizeTrackingVisibilityConfig } from "@shared/tracking-config";
+import {
+  formatMoneyValue,
+  parseFileStorageTokens,
+  resolveFileFieldBehavior,
+  resolveNativeOrderFieldKind,
+  shouldDisplayOrderFieldInTracking,
+} from "@shared/order-fields";
+import { buildPublicTrackingAttachmentUrl, isTrackingAttachmentVisible } from "./tracking.helpers";
+import { resolveAttachmentAbsolutePath } from "../services/attachment-paths";
 
 type TrackingResolveResult = { order: Awaited<ReturnType<typeof storage.getOrderByTrackingId>> } | { status: number; body: { error: string } };
 
@@ -20,6 +28,9 @@ async function resolvePublicOrder(trackingId: string): Promise<TrackingResolveRe
   const order = await storage.getOrderByTrackingId(trackingId);
   if (!order) return { status: 404 as const, body: { error: "Seguimiento no encontrado" } };
   if (order.trackingRevoked) return { status: 410 as const, body: { error: "Link de seguimiento revocado" } };
+  if (order.trackingExpiresAt && new Date(order.trackingExpiresAt).getTime() < Date.now()) {
+    return { status: 410 as const, body: { error: "El enlace de seguimiento expiró" } };
+  }
   return { order };
 }
 
@@ -72,62 +83,92 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
 
   const allCustomFields = await getOrderCustomFields(order.id, tenantId);
   const attachmentIds = allCustomFields
-    .map((f) => String(f.fileStorageKey || "").match(/^att:(\d+)$/)?.[1])
-    .filter(Boolean)
-    .map((id) => Number(id));
+    .flatMap((f) => parseFileStorageTokens(f.fileStorageKey).filter((token) => token.kind === "att").map((token) => token.id));
   const attachments = attachmentIds.length
     ? await db.select().from(orderAttachments).where(and(eq(orderAttachments.orderId, order.id), eq(orderAttachments.tenantId, tenantId), inArray(orderAttachments.id, attachmentIds)))
     : [];
   const attachmentById = new Map(attachments.map((a) => [a.id, a]));
 
   const publicCustomFields = trackingVisibility.showDynamicFields ? allCustomFields
-    .filter((f) => {
-      if (f.visibleOverride === true) return true;
-      if (f.visibleOverride === false) return false;
-      return f.visibleInTracking;
-    })
-    .map((f) => {
-      let displayValue: string | null = null;
-      let downloadUrl: string | null = null;
-      let previewUrl: string | null = null;
-      let mimeType: string | null = null;
+    .filter((f) => shouldDisplayOrderFieldInTracking({
+      id: f.fieldId,
+      fieldKey: f.fieldKey,
+      label: f.label,
+      fieldType: String(f.fieldType || ""),
+      visibleInTracking: f.visibleInTracking,
+      config: (f.config || {}) as Record<string, unknown>,
+      isActive: (f as any).isActive !== false,
+      deletedAt: (f as any).deletedAt || null,
+    }, {
+      valueText: f.valueText,
+      valueNumber: f.valueNumber,
+      fileStorageKey: f.fileStorageKey,
+      visibleOverride: f.visibleOverride,
+    }))
+    .flatMap<any>((f) => {
+      const baseField = {
+        label: f.label || "Campo",
+        fieldType: f.fieldType,
+        align: ((f.config as any)?.align as string) || null,
+        updatedAt: (f as any).updatedAt || f.createdAt || null,
+      };
+
       if (f.fieldType === "FILE" && f.fileStorageKey) {
-        const match = String(f.fileStorageKey).match(/^att:(\d+)$/);
-        if (match) {
-          const attachmentId = Number(match[1]);
-          const attachment = attachmentById.get(attachmentId);
-          downloadUrl = `/api/public/tracking/${trackingId}/attachments/${attachmentId}`;
-          mimeType = attachment?.mimeType || null;
-          if (isImageMimeType(mimeType)) {
-            previewUrl = downloadUrl;
-            displayValue = attachment?.originalName || "Imagen adjunta";
-          } else {
-            displayValue = attachment?.originalName || "Archivo adjunto";
-          }
-        }
-      } else if (f.fieldType === "NUMBER") {
+        const fileBehavior = resolveFileFieldBehavior(f.config);
+        const tokens = parseFileStorageTokens(f.fileStorageKey).filter((token) => token.kind === "att");
+        const groupId = `file-field-${f.fieldId}`;
+        const groupLabel = f.label || "Adjuntos";
+
+        return tokens.map((token, index) => {
+          const attachment = attachmentById.get(token.id);
+          const previewUrl = buildPublicTrackingAttachmentUrl(trackingId, token.id);
+          const downloadUrl = buildPublicTrackingAttachmentUrl(trackingId, token.id, { download: true });
+          const mimeType = attachment?.mimeType || null;
+          const isImage = isImageMimeType(mimeType);
+          return {
+            ...baseField,
+            value: attachment?.originalName || (isImage ? "Imagen adjunta" : "Archivo adjunto"),
+            downloadUrl,
+            previewUrl: isImage ? previewUrl : null,
+            mimeType,
+            groupId,
+            groupLabel,
+            slotIndex: index,
+            trackingRender: fileBehavior.trackingRender,
+          };
+        });
+      }
+
+      let displayValue: string | null = null;
+      if (f.fieldType === "NUMBER") {
         displayValue = f.valueNumber !== null ? String(f.valueNumber) : null;
+      } else if (f.fieldType === "MONEY") {
+        displayValue = f.valueNumber !== null
+          ? formatMoneyValue(f.valueNumber, String((f.config as any)?.currencyCode || "ARS"))
+          : null;
       } else {
         displayValue = f.valueText;
       }
 
-      return {
-        label: f.label || "Campo",
+      return [{
+        ...baseField,
         value: displayValue,
-        fieldType: f.fieldType,
-        align: ((f.config as any)?.align as string) || null,
-        groupId: ((f.config as any)?.fileGroupId as string) || null,
-        groupLabel: ((f.config as any)?.groupLabel as string) || null,
-        slotIndex: Number((f.config as any)?.fileSlotIndex || 0) || null,
-        updatedAt: (f as any).updatedAt || f.createdAt || null,
-        downloadUrl,
-        previewUrl,
-        mimeType,
-      };
+        downloadUrl: null,
+        previewUrl: null,
+        mimeType: null,
+        groupId: null,
+        groupLabel: null,
+        slotIndex: null,
+        trackingRender: null,
+      }];
     }) : [];
 
   const safeHistory = trackingVisibility.showStatusHistory ? historyFormatted : [];
   const safeComments = trackingVisibility.showPublicComments ? publicComments : [];
+  const fallbackCustomerName = allCustomFields.find((field) => resolveNativeOrderFieldKind({
+    fieldKey: field.fieldKey,
+    label: field.label,
+  }) === "customer" && String(field.valueText || "").trim())?.valueText || "";
 
   return {
     status: 200,
@@ -139,7 +180,7 @@ async function buildTrackingPayload(trackingId: string): Promise<{ status: numbe
         statusCode: resolvedCurrent?.code || currentCode || null,
         statusLabel: resolvedCurrent?.label || null,
         statusColor: resolvedCurrent?.color || "#6B7280",
-        customerName: order.customerName || "",
+        customerName: order.customerName || fallbackCustomerName || "",
         customerPhone: order.customerPhone || null,
         deliveryAddress: [order.deliveryAddress, order.deliveryCity].filter(Boolean).join(", ") || null,
         createdAt: order.createdAt,
@@ -217,10 +258,7 @@ export function registerTrackingRoutes(app: Express) {
       if (!attachment) return res.status(404).json({ error: "Archivo no encontrado" });
 
       const fields = await getOrderCustomFields(order.id, order.tenantId);
-      const isVisibleAttachment = fields.some((f) => {
-        const visible = f.visibleOverride === true || (f.visibleOverride === null && f.visibleInTracking === true);
-        return visible && String(f.fileStorageKey || "") === `att:${attachment.id}`;
-      });
+      const isVisibleAttachment = isTrackingAttachmentVisible(fields, attachment.id);
       if (!isVisibleAttachment) return res.status(403).json({ error: "Archivo no disponible para tracking público" });
 
       const normalized = path.normalize(attachment.storagePath).replace(/^(\.\.(\/|\\|$))+/, "");

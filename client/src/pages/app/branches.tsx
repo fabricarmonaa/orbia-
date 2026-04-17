@@ -10,6 +10,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -120,6 +121,7 @@ export default function BranchesPage() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Nueva Sucursal</DialogTitle>
+              <DialogDescription>Creá una sucursal operativa nueva. La casa central del sistema no cuenta contra este cupo.</DialogDescription>
             </DialogHeader>
             <form onSubmit={createBranch} className="space-y-4">
               <div className="space-y-2">
@@ -147,6 +149,7 @@ export default function BranchesPage() {
                   placeholder="Ej: 11 4444-5555"
                   value={newBranch.phone}
                   onChange={(e) => setNewBranch({ ...newBranch, phone: e.target.value })}
+                  inputMode="tel"
                   data-testid="input-branch-phone"
                 />
               </div>

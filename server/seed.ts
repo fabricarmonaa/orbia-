@@ -343,6 +343,7 @@ export async function seedDatabase() {
       name: "Casa Central",
       address: "Av. Corrientes 1234, CABA",
       phone: "+54 11 4555-1234",
+      isSystem: true,
       isActive: true,
     });
     await storage.createBranch({

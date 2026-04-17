@@ -2,7 +2,8 @@ import type { Express, Response } from "express";
 import { z } from "zod";
 import { tenantAuth, requireTenantAdmin } from "../auth";
 import { validateBody, validateParams } from "../middleware/validate";
-import { orderPresetsStorage, ORDER_PRESET_ALLOWED_FILE_EXTENSIONS } from "../storage/order-presets";
+import { orderPresetsStorage } from "../storage/order-presets";
+import { ORDER_PRESET_ALLOWED_FILE_EXTENSIONS } from "../storage/order-presets.shared";
 import { HttpError } from "../lib/http-errors";
 
 // ─────────────────────────────────────────────
@@ -31,7 +32,7 @@ const patchPresetSchema = z
 
 const createFieldSchema = z.object({
   label: z.string().trim().min(1).max(160),
-  fieldType: z.enum(["TEXT", "TEXT_LONG", "NUMBER", "FILE", "CHECKBOX", "SELECT", "DATE", "TIME", "DATETIME"]),
+  fieldType: z.string().trim().min(1).max(20),
   required: z.boolean().optional(),
   fieldKey: z.string().trim().min(1).max(80).optional(),
   config: z.record(z.any()).optional(),
@@ -68,9 +69,16 @@ function sendApiError(res: Response, err: unknown) {
       error: { code: err.code, message: err.message, ...(err.extra || {}) },
     });
   }
-  if (process.env.DEBUG_API === "1") {
-    console.error("[order-presets] unexpected", err);
+  if (err && typeof err === "object" && (err as any).code === "23514" && String((err as any).constraint || "") === "ck_order_field_definitions_field_type") {
+    return res.status(400).json({
+      error: {
+        code: "ORDER_PRESET_VALIDATION_ERROR",
+        message: "fieldType inválido para order_field_definitions",
+        constraint: (err as any).constraint,
+      },
+    });
   }
+  console.error("[order-presets] unexpected", err);
   return res
     .status(500)
     .json({ error: { code: "ORDER_PRESET_INTERNAL_ERROR", message: "Error inesperado" } });
@@ -88,10 +96,15 @@ function ensurePresetIdParam(req: any, res: any, next: any) {
   return next();
 }
 
+function applyNoStore(res: any) {
+  res.setHeader("Cache-Control", "no-store");
+}
+
 export function registerOrderPresetRoutes(app: Express) {
   // ── Types ──────────────────────────────────────────────────────────────
   app.get("/api/order-presets/types", tenantAuth, async (req, res) => {
     try {
+      applyNoStore(res);
       const data = await orderPresetsStorage.listOrderTypes(req.auth!.tenantId!);
       return res.json({ data });
     } catch (err) {
@@ -106,6 +119,7 @@ export function registerOrderPresetRoutes(app: Express) {
     validateParams(codeParamSchema),
     async (req, res) => {
       try {
+        applyNoStore(res);
         const result = await orderPresetsStorage.listPresetsByType(
           req.auth!.tenantId!,
           firstParam(req.params.code)
@@ -158,6 +172,25 @@ export function registerOrderPresetRoutes(app: Express) {
     }
   );
 
+  app.delete(
+    "/api/order-presets/presets/:presetId",
+    tenantAuth,
+    ensurePresetIdParam,
+    requireTenantAdmin,
+    validateParams(presetIdParamSchema),
+    async (req, res) => {
+      try {
+        const result = await orderPresetsStorage.deletePreset(
+          req.auth!.tenantId!,
+          Number(req.params.presetId),
+        );
+        return res.json({ data: result });
+      } catch (err) {
+        return sendApiError(res, err);
+      }
+    }
+  );
+
   // ── Fields by preset ────────────────────────────────────────────────────
   app.get(
     "/api/order-presets/presets/:presetId/fields",
@@ -166,6 +199,7 @@ export function registerOrderPresetRoutes(app: Express) {
     validateParams(presetIdParamSchema),
     async (req, res) => {
       try {
+        applyNoStore(res);
         const includeInactive = req.query.includeInactive === "1" || req.query.includeInactive === "true";
         const result = await orderPresetsStorage.listFieldsByPreset(
           req.auth!.tenantId!,
@@ -264,6 +298,24 @@ export function registerOrderPresetRoutes(app: Express) {
     }
   );
 
+  app.delete(
+    "/api/order-presets/fields/:id",
+    tenantAuth,
+    requireTenantAdmin,
+    validateParams(fieldIdParamSchema),
+    async (req, res) => {
+      try {
+        const saved = await orderPresetsStorage.deleteField(
+          req.auth!.tenantId!,
+          Number(req.params.id)
+        );
+        return res.json({ data: saved });
+      } catch (err) {
+        return sendApiError(res, err);
+      }
+    }
+  );
+
   // ── Legacy endpoints (backwards compat – keep for existing UI until migrated) ──
   app.get(
     "/api/order-presets/types/:code/fields",
@@ -326,4 +378,5 @@ export function registerOrderPresetRoutes(app: Express) {
       }
     }
   );
+
 }

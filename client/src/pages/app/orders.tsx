@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { apiRequest, getToken, useAuth } from "@/lib/auth";
 import { queryClient } from "@/lib/queryClient";
@@ -56,7 +56,19 @@ import { useToast } from "@/hooks/use-toast";
 import { WhatsAppMessagePreview } from "@/components/messaging/WhatsAppMessagePreview";
 import type { Order, OrderStatus, OrderComment, OrderStatusHistory, Branch } from "@shared/schema";
 import { FileFieldInput } from "@/components/orders/FileFieldInput";
+import { MediaGroupFieldInput, type MediaGroupItem } from "@/components/orders/MediaGroupFieldInput";
+import { buildPresetFieldsRequest, buildPresetListRequest } from "@/components/settings/order-presets-ui";
 import { CustomerAutocomplete, type CustomerData } from "@/components/orders/CustomerAutocomplete";
+import {
+  buildFileStorageKeyFromTokens,
+  formatMoneyValue,
+  parseFileStorageTokens,
+  resolveFileFieldBehavior,
+  resolveNativeOrderFieldKind,
+  resolveOrderFieldDefinition,
+} from "@shared/order-fields";
+import { pickNextPresetForSelection, resolveOrderCreateLayout } from "./order-create-layout";
+import { clearOrderDraft, getOrderDraftKey, loadOrderDraft, saveOrderDraft } from "./order-draft";
 
 type OrderPreset = { id: number; orderTypeId: number; code: string; label: string; isActive: boolean; sortOrder: number };
 
@@ -64,12 +76,14 @@ type OrderPresetField = {
   id: number;
   fieldKey: string;
   label: string;
-  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
+  fieldType: "TEXT" | "TEXT_LONG" | "NUMBER" | "MONEY" | "FILE" | "CHECKBOX" | "SELECT" | "DATE" | "TIME" | "DATETIME";
   required: boolean;
   sortOrder: number;
   isSystemDefault: boolean;
   visibleInTracking: boolean;
-  config?: { allowedExtensions?: string[] };
+  isActive?: boolean;
+  deletedAt?: string | null;
+  config?: { allowedExtensions?: string[]; options?: string[]; placeholder?: string; defaultValue?: string | number | null; currencyCode?: string; visibleInForm?: boolean; showWhenEmpty?: boolean };
 };
 
 type OrderCustomFieldValue = {
@@ -83,6 +97,17 @@ type OrderCustomFieldValue = {
   visibleOverride?: boolean | null;
 };
 
+type CustomFieldInputState = {
+  valueText?: string;
+  valueNumber?: string;
+  fileStorageKey?: string | null;
+  fileItems?: MediaGroupItem[];
+  visibleOverride?: boolean | null;
+  attachmentName?: string | null;
+  attachmentSizeBytes?: number | null;
+  attachmentMimeType?: string | null;
+};
+
 type MessageTemplate = {
   id: number;
   name: string;
@@ -90,58 +115,22 @@ type MessageTemplate = {
   isActive: boolean;
 };
 
-const ORDER_DRAFT_KEY = "orbia_order_draft_v1";
-
-function normalizeSemanticKey(value: string | null | undefined): string {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "");
-}
-
-const NATIVE_ORDER_FIELD_KEYS = new Set([
-  "cliente",
-  "customer",
-  "customer_name",
-  "nombre_cliente",
-  "telefono",
-  "telefono_cliente",
-  "customer_phone",
-  "phone",
-  "descripcion",
-  "description",
-  "detalle",
-  "sena",
-  "seña",
-  "pago",
-  "senia",
-  "paid_amount",
-  "pagado",
-  "valor_total",
-  "total",
-  "total_amount",
-  "monto_total",
-]);
-
-function isNativeOrderField(field: OrderPresetField): boolean {
-  const key = normalizeSemanticKey(field.fieldKey);
-  if (key && NATIVE_ORDER_FIELD_KEYS.has(key)) return true;
-  const labelKey = normalizeSemanticKey(field.label);
-  return Boolean(labelKey && NATIVE_ORDER_FIELD_KEYS.has(labelKey));
-}
-
-type NativeOrderFieldKind = "customer" | "phone" | "description" | "paid" | "total";
-
-function resolveNativeOrderFieldKind(field: OrderPresetField): NativeOrderFieldKind | null {
-  const values = [normalizeSemanticKey(field.fieldKey), normalizeSemanticKey(field.label)].filter(Boolean);
-  if (values.some((v) => ["cliente", "customer", "customer_name", "nombre_cliente"].includes(v))) return "customer";
-  if (values.some((v) => ["telefono", "telefono_cliente", "customer_phone", "phone"].includes(v))) return "phone";
-  if (values.some((v) => ["descripcion", "description", "detalle"].includes(v))) return "description";
-  if (values.some((v) => ["sena", "seña", "senia", "pago", "paid_amount", "pagado"].includes(v))) return "paid";
-  if (values.some((v) => ["valor_total", "total", "total_amount", "monto_total"].includes(v))) return "total";
-  return null;
+function emptyOrderDraft(type = "PEDIDO") {
+  return {
+    type,
+    orderPresetId: undefined as number | undefined,
+    customerName: "",
+    customerPhone: "",
+    customerEmail: "",
+    description: "",
+    totalAmount: "",
+    paidAmount: "",
+    statusCode: "",
+    requiresDelivery: false,
+    deliveryAddress: "",
+    deliveryCity: "",
+    deliveryAddressNotes: "",
+  };
 }
 
 export default function OrdersPage() {
@@ -171,51 +160,24 @@ export default function OrdersPage() {
   const [renderingTemplateId, setRenderingTemplateId] = useState<number | null>(null);
   const [presets, setPresets] = useState<OrderPreset[]>([]);
   const [presetFields, setPresetFields] = useState<OrderPresetField[]>([]);
-  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }>>({});
+  const [customFieldInputs, setCustomFieldInputs] = useState<Record<number, CustomFieldInputState>>({});
   const [detailCustomFields, setDetailCustomFields] = useState<OrderCustomFieldValue[]>([]);
+  const presetLoadSeqRef = useRef(0);
 
-  const [newOrder, setNewOrder] = useState({
-    type: "PEDIDO",
-    orderPresetId: undefined as number | undefined,
-    customerName: "",
-    customerPhone: "",
-    customerEmail: "",
-    description: "",
-    totalAmount: "",
-    paidAmount: "",
-    statusCode: "",
-    requiresDelivery: false,
-    deliveryAddress: "",
-    deliveryCity: "",
-    deliveryAddressNotes: "",
-  });
+  const [newOrder, setNewOrder] = useState(emptyOrderDraft());
   const [hasCashOpen, setHasCashOpen] = useState<boolean | null>(null);
   const [quickAddCustomerOpen, setQuickAddCustomerOpen] = useState(false);
   const [quickCustomer, setQuickCustomer] = useState({ name: "", phone: "", email: "" });
   const [draftRestored, setDraftRestored] = useState(false);
 
-  const customPresetFields = useMemo(
-    () => presetFields.filter((field) => !isNativeOrderField(field)),
-    [presetFields]
+  const fieldLayout = useMemo(() => resolveOrderCreateLayout(presetFields), [presetFields]);
+  const basePresetFields = fieldLayout.baseFields;
+  const customPresetFields = fieldLayout.customFields;
+  const customPresetSections = fieldLayout.customSections;
+  const currentDraftKey = useMemo(
+    () => getOrderDraftKey({ user, type: newOrder.type, presetId: newOrder.orderPresetId }),
+    [newOrder.orderPresetId, newOrder.type, user]
   );
-
-  const nativeVisibility = useMemo(() => {
-    if (!newOrder.orderPresetId) {
-      return { customer: true, phone: true, description: true, paid: true, total: true };
-    }
-    const activeKinds = new Set<NativeOrderFieldKind>();
-    for (const field of presetFields) {
-      const kind = resolveNativeOrderFieldKind(field);
-      if (kind) activeKinds.add(kind);
-    }
-    return {
-      customer: activeKinds.has("customer"),
-      phone: activeKinds.has("phone"),
-      description: activeKinds.has("description"),
-      paid: activeKinds.has("paid"),
-      total: activeKinds.has("total"),
-    };
-  }, [presetFields, newOrder.orderPresetId]);
 
   useEffect(() => {
     fetchData();
@@ -252,9 +214,12 @@ export default function OrdersPage() {
   useEffect(() => {
     if (!dialogOpen || draftRestored) return;
     try {
-      const raw = sessionStorage.getItem(ORDER_DRAFT_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { newOrder?: typeof newOrder; customFieldInputs?: typeof customFieldInputs };
+      const parsed = loadOrderDraft<typeof newOrder, typeof customFieldInputs>({
+        user,
+        type: newOrder.type,
+        presetId: newOrder.orderPresetId,
+      });
+      if (!parsed) return;
       if (parsed.newOrder) setNewOrder((prev) => ({ ...prev, ...parsed.newOrder }));
       if (parsed.customFieldInputs) setCustomFieldInputs(parsed.customFieldInputs);
     } catch {
@@ -262,29 +227,34 @@ export default function OrdersPage() {
     } finally {
       setDraftRestored(true);
     }
-  }, [dialogOpen, draftRestored]);
+  }, [dialogOpen, draftRestored, newOrder.type, newOrder.orderPresetId, user]);
 
   useEffect(() => {
     if (!dialogOpen) return;
     try {
-      sessionStorage.setItem(ORDER_DRAFT_KEY, JSON.stringify({ newOrder, customFieldInputs }));
+      saveOrderDraft(
+        { user, type: newOrder.type, presetId: newOrder.orderPresetId },
+        { newOrder, customFieldInputs }
+      );
     } catch {
       // ignore storage failures
     }
-  }, [dialogOpen, newOrder, customFieldInputs]);
+  }, [dialogOpen, newOrder, customFieldInputs, user]);
 
   async function loadPresetsForType(typeCode: string) {
+    const requestId = ++presetLoadSeqRef.current;
     try {
-      const res = await apiRequest("GET", `/api/order-presets/types/${encodeURIComponent(typeCode)}/presets`);
+      const res = await apiRequest("GET", buildPresetListRequest(typeCode));
       const json = await res.json();
-      const list = json?.data || [];
+      if (requestId !== presetLoadSeqRef.current) return;
+      const list = (json?.data || []).filter((preset: OrderPreset) => preset.isActive);
       setPresets(list);
-      if (list.length > 0) {
-        const toSelect = list.find((p: any) => p.isActive) || list[0];
-        setNewOrder((prev) => ({ ...prev, orderPresetId: toSelect.id }));
-        await loadFieldsForPreset(toSelect.id);
+      const nextPreset = pickNextPresetForSelection(list, newOrder.orderPresetId);
+      if (nextPreset) {
+        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode, orderPresetId: nextPreset.id }));
+        await loadFieldsForPreset(nextPreset.id);
       } else {
-        setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
+        setNewOrder((prev) => ({ ...emptyOrderDraft(typeCode), statusCode: prev.statusCode }));
         setPresetFields([]);
         setCustomFieldInputs({});
       }
@@ -302,15 +272,21 @@ export default function OrdersPage() {
       return;
     }
     try {
-      const res = await apiRequest("GET", `/api/order-presets/presets/${presetId}/fields`);
+      const res = await apiRequest("GET", buildPresetFieldsRequest(presetId));
       const json = await res.json();
       const allFields: OrderPresetField[] = json?.data || [];
       setPresetFields(allFields);
       setCustomFieldInputs((prev) => {
-        const next: Record<number, { valueText?: string; valueNumber?: string; fileStorageKey?: string; visibleOverride?: boolean | null }> = {};
-        for (const f of allFields) {
-          if (isNativeOrderField(f)) continue;
-          next[f.id] = prev[f.id] || { visibleOverride: null };
+        const next: Record<number, CustomFieldInputState> = {};
+        for (const f of resolveOrderCreateLayout(allFields).customFields) {
+          const resolved = resolveOrderFieldDefinition(f);
+          const fileBehavior = resolveFileFieldBehavior(f.config);
+          next[f.id] = prev[f.id] || {
+            visibleOverride: null,
+            valueText: typeof resolved.defaultValue === "string" ? resolved.defaultValue : undefined,
+            valueNumber: typeof resolved.defaultValue === "number" ? String(resolved.defaultValue) : undefined,
+            fileItems: fileBehavior.mediaMode === "single" ? undefined : [],
+          };
         }
         return next;
       });
@@ -359,11 +335,19 @@ export default function OrdersPage() {
     try {
       const customFields = customPresetFields.map((field) => {
         const raw = customFieldInputs[field.id] || {};
+        const fileBehavior = resolveFileFieldBehavior(field.config);
+        const resolvedStorageKey = field.fieldType === "FILE"
+          ? (
+            fileBehavior.mediaMode === "single"
+              ? (raw.fileStorageKey || null)
+              : buildFileStorageKeyFromTokens((raw.fileItems || []).flatMap((item) => parseFileStorageTokens(item.storageKey)))
+          )
+          : undefined;
         return {
           fieldId: field.id,
           valueText: ["TEXT", "TEXT_LONG", "DATE", "TIME", "DATETIME", "CHECKBOX", "SELECT"].includes(field.fieldType) ? (raw.valueText || "") : undefined,
-          valueNumber: field.fieldType === "NUMBER" ? (raw.valueNumber || null) : undefined,
-          fileStorageKey: field.fieldType === "FILE" ? (raw.fileStorageKey || null) : undefined,
+          valueNumber: ["NUMBER", "MONEY"].includes(field.fieldType) ? (raw.valueNumber || null) : undefined,
+          fileStorageKey: resolvedStorageKey,
           visibleOverride: raw.visibleOverride !== undefined ? raw.visibleOverride : null,
         };
       });
@@ -379,15 +363,16 @@ export default function OrdersPage() {
         deliveryCity: newOrder.requiresDelivery ? newOrder.deliveryCity : null,
         deliveryAddressNotes: newOrder.requiresDelivery ? newOrder.deliveryAddressNotes : null,
         customFields,
+        draftKey: currentDraftKey,
       };
       if (newOrder.orderPresetId) payload.orderPresetId = newOrder.orderPresetId;
 
       await apiRequest("POST", "/api/orders", payload);
       toast({ title: "Pedido creado" });
       setDialogOpen(false);
-      setNewOrder({ type: "PEDIDO", orderPresetId: undefined, customerName: "", customerPhone: "", customerEmail: "", description: "", totalAmount: "", paidAmount: "", statusCode: "", requiresDelivery: false, deliveryAddress: "", deliveryCity: "", deliveryAddressNotes: "" });
+      setNewOrder(emptyOrderDraft("PEDIDO"));
       setCustomFieldInputs({});
-      sessionStorage.removeItem(ORDER_DRAFT_KEY);
+      clearOrderDraft({ user, type: newOrder.type, presetId: newOrder.orderPresetId });
       setDraftRestored(false);
       await loadPresetsForType("PEDIDO");
       fetchData();
@@ -570,6 +555,268 @@ export default function OrdersPage() {
     }
   }
 
+  function getCreateFieldSpanClass(field: OrderPresetField) {
+    const kind = resolveNativeOrderFieldKind(field);
+    if (kind === "customer" || kind === "description") return "md:col-span-2";
+    if (field.fieldType === "TEXT_LONG" || field.fieldType === "FILE" || field.fieldType === "DATETIME") return "md:col-span-2";
+    return "";
+  }
+
+  function buildOrderAttachmentUrl(orderId: number | string, storageKey: string) {
+    const token = parseFileStorageTokens(storageKey).find((current) => current.kind === "att");
+    if (!token || orderId === "new") return null;
+    return `/api/orders/${orderId}/attachments/${token.id}`;
+  }
+
+  function getMediaItemsFromState(field: OrderPresetField, fieldState: CustomFieldInputState) {
+    if (fieldState.fileItems && fieldState.fileItems.length > 0) return fieldState.fileItems;
+    return parseFileStorageTokens(fieldState.fileStorageKey || null).map((token, index) => ({
+      storageKey: token.kind === "att" ? `att:${token.id}` : `draftatt:${token.id}`,
+      originalName: index === 0 ? fieldState.attachmentName || field.label : `${field.label} ${index + 1}`,
+      mimeType: fieldState.attachmentMimeType || null,
+      sizeBytes: fieldState.attachmentSizeBytes || null,
+    }));
+  }
+
+  function renderPresetField(field: OrderPresetField) {
+    const kind = resolveNativeOrderFieldKind(field);
+    const resolved = resolveOrderFieldDefinition(field);
+    const fileBehavior = resolveFileFieldBehavior(field.config);
+    const moneyBadge = kind === "total"
+      ? (!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
+        ? "Sin monto"
+        : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
+          ? "Saldado ✓"
+          : "Deuda")
+      : null;
+
+    if (kind === "customer") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>{field.label}{field.required ? " *" : ""}</Label>
+            <button
+              type="button"
+              className="text-xs text-primary hover:underline flex items-center gap-1"
+              onClick={() => setQuickAddCustomerOpen(true)}
+              title="Agregar cliente nuevo"
+            >
+              + Nuevo cliente
+            </button>
+          </div>
+          <CustomerAutocomplete
+            value={newOrder.customerName}
+            onChange={(val, customer) => {
+              setNewOrder({
+                ...newOrder,
+                customerName: val,
+                customerPhone: customer?.phone || newOrder.customerPhone,
+                customerEmail: customer?.email || newOrder.customerEmail,
+              });
+            }}
+          />
+          <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
+        </div>
+      );
+    }
+
+    if (kind === "phone") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <Input
+            placeholder={resolved.placeholder || "Ej: 11 1234-5678"}
+            value={newOrder.customerPhone}
+            onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
+            data-testid="input-customer-phone"
+          />
+        </div>
+      );
+    }
+
+    if (kind === "description") {
+      return (
+        <div key={field.id} className="space-y-2">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <Textarea
+            placeholder={resolved.placeholder || "Ingrese descripción..."}
+            value={newOrder.description}
+            onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
+            data-testid="input-description"
+          />
+        </div>
+      );
+    }
+
+    if (kind === "paid" || kind === "total") {
+      const isPaid = kind === "paid";
+      return (
+        <div key={field.id} className="space-y-2 bg-primary/5 border border-primary/20 p-3 rounded-md">
+          <div className="flex items-center justify-between">
+            <Label>{field.label}{field.required ? " *" : ""}</Label>
+            {moneyBadge ? <span className="text-[10px] font-medium opacity-70">{moneyBadge}</span> : null}
+          </div>
+          <Input
+            type="number"
+            step="0.01"
+            placeholder={resolved.placeholder || (isPaid ? "Monto pagado" : "Monto total")}
+            value={isPaid ? newOrder.paidAmount : newOrder.totalAmount}
+            min={0}
+            max={isPaid ? (newOrder.totalAmount || undefined) : undefined}
+            onChange={(e) => {
+              if (isPaid) {
+                const val = parseFloat(e.target.value);
+                const tot = parseFloat(newOrder.totalAmount);
+                if (!isNaN(val) && !isNaN(tot) && val > tot) return;
+                setNewOrder({ ...newOrder, paidAmount: e.target.value });
+                return;
+              }
+              setNewOrder({ ...newOrder, totalAmount: e.target.value });
+            }}
+            data-testid={isPaid ? "input-paid-amount" : "input-total-amount"}
+          />
+          {resolved.normalizedType === "MONEY" && (resolved.currencyCode || "ARS") ? (
+            <p className="text-xs text-muted-foreground">Moneda: {resolved.currencyCode || "ARS"}</p>
+          ) : null}
+        </div>
+      );
+    }
+
+    const fieldState = customFieldInputs[field.id] || {};
+    const mediaItems = getMediaItemsFromState(field, fieldState);
+    return (
+      <div key={field.id} className="space-y-3 border rounded-md p-3">
+        <div className="flex items-center justify-between">
+          <Label>{field.label}{field.required ? " *" : ""}</Label>
+          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+            <input
+              type="checkbox"
+              checked={fieldState.visibleOverride ?? field.visibleInTracking}
+              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), visibleOverride: e.target.checked } }))}
+            />
+            Mostrar en tracking
+          </label>
+        </div>
+        {field.fieldType === "TEXT" && (
+          <Input
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "TEXT_LONG" && (
+          <Textarea
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {(field.fieldType === "NUMBER" || field.fieldType === "MONEY") && (
+          <Input
+            type="number"
+            step="0.01"
+            placeholder={resolved.placeholder || undefined}
+            value={fieldState.valueNumber || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "DATE" && (
+          <Input
+            type="date"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "TIME" && (
+          <Input
+            type="time"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "DATETIME" && (
+          <Input
+            type="datetime-local"
+            value={fieldState.valueText || ""}
+            onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
+          />
+        )}
+        {field.fieldType === "SELECT" && (
+          <Select value={fieldState.valueText || ""} onValueChange={(value) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: value } }))}>
+            <SelectTrigger><SelectValue placeholder="Seleccionar..." /></SelectTrigger>
+            <SelectContent>
+              {((field.config?.options || []) as string[]).map((option) => (
+                <SelectItem key={`${field.id}-${option}`} value={option}>{option}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {field.fieldType === "CHECKBOX" && (
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={fieldState.valueText === "true"}
+              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.checked ? "true" : "false" } }))}
+            />
+            Seleccionado
+          </label>
+        )}
+        {field.fieldType === "FILE" && fileBehavior.mediaMode !== "single" && (
+          <MediaGroupFieldInput
+            orderId="new"
+            draftKey={currentDraftKey}
+            fieldDefinitionId={field.id}
+            allowedExtensions={field.config?.allowedExtensions || ["jpg", "png", "jpeg", "jfif"]}
+            acceptMode={fileBehavior.acceptMode}
+            maxFiles={fileBehavior.maxFiles}
+            items={mediaItems}
+            onChange={(items) => setCustomFieldInputs((prev) => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileItems: items,
+                fileStorageKey: buildFileStorageKeyFromTokens(items.flatMap((item) => parseFileStorageTokens(item.storageKey))),
+                attachmentName: items[0]?.originalName || null,
+                attachmentMimeType: null,
+                attachmentSizeBytes: null,
+              },
+            }))}
+          />
+        )}
+        {field.fieldType === "FILE" && fileBehavior.mediaMode === "single" && (
+          <FileFieldInput
+            orderId="new"
+            draftKey={currentDraftKey}
+            fieldDefinitionId={field.id}
+            allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
+            currentAttachmentId={fieldState.fileStorageKey || null}
+            currentAttachmentName={fieldState.attachmentName || null}
+            onUploadSuccess={(result) => setCustomFieldInputs(prev => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileStorageKey: result.storageKey,
+                attachmentName: result.originalName || null,
+                attachmentMimeType: result.mimeType || null,
+                attachmentSizeBytes: result.sizeBytes || null,
+              },
+            }))}
+            onRemoveSuccess={() => setCustomFieldInputs(prev => ({
+              ...prev,
+              [field.id]: {
+                ...(prev[field.id] || {}),
+                fileStorageKey: null,
+                attachmentName: null,
+                attachmentMimeType: null,
+                attachmentSizeBytes: null,
+              },
+            }))}
+          />
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -598,310 +845,198 @@ export default function OrdersPage() {
               </Button>
             </DialogTrigger>
             <DialogContent
-              className="max-w-lg max-h-[90vh] overflow-y-auto"
-              onPointerDownOutside={(e) => e.preventDefault()}
-              onInteractOutside={(e) => {
-                // Allow interactions with shadcn portal elements (Select, Popover, etc.)
-                const target = e.target as HTMLElement;
-                if (target && document.querySelector('[data-radix-popper-content-wrapper]')?.contains(target)) {
-                  return;
-                }
-                e.preventDefault();
-              }}
+              className="w-[96vw] max-w-6xl max-h-[92vh] overflow-hidden p-0"
             >
-              <DialogHeader>
+              <DialogHeader className="border-b px-6 py-5">
                 <DialogTitle>Crear Pedido</DialogTitle>
-                <DialogDescription>Completá los datos del pedido y seleccioná el estado inicial.</DialogDescription>
+                <DialogDescription>Organizá los datos del sistema a la izquierda y la personalización del preset a la derecha.</DialogDescription>
               </DialogHeader>
-              <form onSubmit={createOrder} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label>Tipo</Label>
-                    <Select value={newOrder.type} onValueChange={(v) => { setNewOrder({ ...newOrder, type: v }); void loadPresetsForType(v); }}>
-                      <SelectTrigger data-testid="select-order-type">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="PEDIDO">Pedido</SelectItem>
-                        <SelectItem value="ENCARGO">Encargo</SelectItem>
-                        <SelectItem value="TURNO">Turno</SelectItem>
-                        <SelectItem value="SERVICIO">Servicio</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {presets.length > 0 && (
-                    <div className="space-y-2">
-                      <Label>Preset</Label>
-                      <Select
-                        value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
-                        onValueChange={(v) => {
-                          const pid = Number(v);
-                          if (!Number.isFinite(pid) || pid <= 0) {
-                            setNewOrder({ ...newOrder, orderPresetId: undefined });
-                            setPresetFields([]);
-                            setCustomFieldInputs({});
-                            return;
-                          }
-                          setNewOrder({ ...newOrder, orderPresetId: pid });
-                          void loadFieldsForPreset(pid);
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar preset..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {presets.filter(p => p.isActive).map(p => (
-                            <SelectItem key={p.id} value={String(p.id)}>{p.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  )}
-                  <div className="space-y-2">
-                    <Label>Estado</Label>
-                    <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
-                      <SelectTrigger data-testid="select-order-status">
-                        <SelectValue placeholder="Estado inicial" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
-                          <SelectItem key={s.id} value={String(s.code || "")}>
-                            {(s as any).label || s.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-                {nativeVisibility.customer && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label>Cliente</Label>
-                    <button
-                      type="button"
-                      className="text-xs text-primary hover:underline flex items-center gap-1"
-                      onClick={() => setQuickAddCustomerOpen(true)}
-                      title="Agregar cliente nuevo"
-                    >
-                      + Nuevo cliente
-                    </button>
-                  </div>
-                  <CustomerAutocomplete
-                    value={newOrder.customerName}
-                    onChange={(val, customer) => {
-                      setNewOrder({
-                        ...newOrder,
-                        customerName: val,
-                        customerPhone: customer?.phone || newOrder.customerPhone,
-                        customerEmail: customer?.email || newOrder.customerEmail,
-                      });
-                    }}
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">Buscá un cliente existente o ingresá uno nuevo.</p>
-                </div>
-                )}
-                {nativeVisibility.phone && (
-                <div className="space-y-2">
-                  <Label>Teléfono (Opcional)</Label>
-                  <Input
-                    placeholder="Ej: 11 1234-5678"
-                    value={newOrder.customerPhone}
-                    onChange={(e) => setNewOrder({ ...newOrder, customerPhone: e.target.value })}
-                    data-testid="input-customer-phone"
-                  />
-                </div>
-                )}
-                {(nativeVisibility.paid || nativeVisibility.total) && (
-                <div className="grid grid-cols-2 gap-4 bg-primary/5 border border-primary/20 p-3 rounded-md">
-                  {nativeVisibility.paid ? (
-                  <div className="space-y-2">
-                    <Label>Seña o Pago</Label>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ej: 5000"
-                      value={newOrder.paidAmount}
-                      min={0}
-                      max={newOrder.totalAmount || undefined}
-                      onChange={(e) => {
-                        const val = parseFloat(e.target.value);
-                        const tot = parseFloat(newOrder.totalAmount);
-                        if (!isNaN(val) && !isNaN(tot) && val > tot) return;
-                        setNewOrder({ ...newOrder, paidAmount: e.target.value });
-                      }}
-                      data-testid="input-paid-amount"
-                    />
-                  </div>
-                  ) : <div />}
-                  {nativeVisibility.total ? (
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <Label>Valor Total</Label>
-                      <span className="text-[10px] font-medium opacity-70">
-                        {!newOrder.totalAmount || Number(newOrder.totalAmount) <= 0
-                          ? "Sin monto"
-                          : newOrder.paidAmount && Number(newOrder.paidAmount) >= Number(newOrder.totalAmount)
-                            ? "Saldado ✓"
-                            : "Deuda"}
-                      </span>
-                    </div>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      placeholder="Ej: 10000"
-                      value={newOrder.totalAmount}
-                      onChange={(e) => setNewOrder({ ...newOrder, totalAmount: e.target.value })}
-                      data-testid="input-total-amount"
-                    />
-                  </div>
-                  ) : <div />}
-                </div>
-                )}
-
-                {nativeVisibility.description && (
-                <div className="space-y-2">
-                  <Label>Descripción (Opcional)</Label>
-                  <Textarea
-                    placeholder="Ingrese descripción..."
-                    value={newOrder.description}
-                    onChange={(e) => setNewOrder({ ...newOrder, description: e.target.value })}
-                    data-testid="input-description"
-                  />
-                </div>
-                )}
-                {customPresetFields.length > 0 && (
-                  <div className="space-y-3 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos del pedido</p>
-                    {customPresetFields.map((field) => (
-                      <div key={field.id} className="space-y-3 border-b border-muted pb-3 last:border-0 last:pb-0">
-                        <div className="flex items-center justify-between">
-                          <Label>{field.label}{field.required ? " *" : ""}</Label>
-                          <label className="flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={customFieldInputs[field.id]?.visibleOverride ?? field.visibleInTracking}
-                              onChange={(e) => setCustomFieldInputs(prev => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), visibleOverride: e.target.checked } }))}
-                            />
-                            Visible
-                          </label>
-                        </div>
-                        {field.fieldType === "TEXT" || field.fieldType === "TEXT_LONG" || field.fieldType === "DATE" || field.fieldType === "TIME" || field.fieldType === "DATETIME" ? (
-                          <Input
-                            type={field.fieldType === "DATE" ? "date" : field.fieldType === "TIME" ? "time" : field.fieldType === "DATETIME" ? "datetime-local" : "text"}
-                            value={customFieldInputs[field.id]?.valueText || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: e.target.value } }))}
-                          />
-                        ) : field.fieldType === "SELECT" ? (
-                          <Select value={customFieldInputs[field.id]?.valueText || ""} onValueChange={(val) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueText: val } }))}>
-                            <SelectTrigger><SelectValue placeholder="Seleccionar opción" /></SelectTrigger>
-                            <SelectContent>
-                              {((field.config as any)?.options || []).map((opt: string) => <SelectItem key={opt} value={opt}>{opt}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                        ) : field.fieldType === "CHECKBOX" ? (
-                          <div className="flex flex-col gap-2">
-                            {((field.config as any)?.options?.length ? (field.config as any).options : ["Marcar"]).map((opt: string) => {
-                              const isMultiple = (field.config as any)?.options?.length > 1;
-                              const currentValue = customFieldInputs[field.id]?.valueText || "false";
-                              const isChecked = isMultiple
-                                ? currentValue.split(",").includes(opt)
-                                : currentValue === "true";
-
-                              return (
-                                <label key={opt} className="text-sm flex items-center gap-2">
-                                  <input
-                                    type="checkbox"
-                                    checked={isChecked}
-                                    onChange={(e) => {
-                                      setCustomFieldInputs((prev) => {
-                                        const prevObj = prev[field.id] || {};
-                                        let newValue = "false";
-                                        if (isMultiple) {
-                                          const prevVals = prevObj.valueText?.split(",").filter((x: string) => x) || [];
-                                          const nextVals = e.target.checked
-                                            ? [...prevVals, opt]
-                                            : prevVals.filter((x: string) => x !== opt);
-                                          newValue = nextVals.join(",");
-                                        } else {
-                                          newValue = e.target.checked ? "true" : "false";
-                                        }
-                                        return { ...prev, [field.id]: { ...prevObj, valueText: newValue } };
-                                      });
-                                    }}
-                                  />
-                                  {opt}
-                                </label>
-                              );
-                            })}
+              <form onSubmit={createOrder} className="flex h-full max-h-[calc(92vh-84px)] flex-col">
+                <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+                  <div className="grid gap-4 lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)]">
+                    <div className="space-y-4" data-testid="order-create-system-column">
+                      <div className="rounded-xl border bg-card p-4 shadow-sm">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold">Sistema</h3>
+                            <p className="text-xs text-muted-foreground">Tipo, preset, estado y campos base activos del tipo seleccionado.</p>
                           </div>
-                        ) : field.fieldType === "NUMBER" ? (
-                          <Input
-                            type="number"
-                            value={customFieldInputs[field.id]?.valueNumber || ""}
-                            onChange={(e) => setCustomFieldInputs((prev) => ({ ...prev, [field.id]: { ...(prev[field.id] || {}), valueNumber: e.target.value } }))}
-                          />
+                          <Badge variant="secondary">Base</Badge>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                          <div className="space-y-2">
+                            <Label>Tipo</Label>
+                            <Select value={newOrder.type} onValueChange={(v) => { setDraftRestored(false); setNewOrder((prev) => ({ ...emptyOrderDraft(v), statusCode: prev.statusCode })); setPresetFields([]); setCustomFieldInputs({}); void loadPresetsForType(v); }}>
+                              <SelectTrigger data-testid="select-order-type">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="PEDIDO">Pedido</SelectItem>
+                                <SelectItem value="ENCARGO">Encargo</SelectItem>
+                                <SelectItem value="TURNO">Turno</SelectItem>
+                                <SelectItem value="SERVICIO">Servicio</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {presets.length > 0 && (
+                            <div className="space-y-2">
+                              <Label>Preset</Label>
+                              <Select
+                                value={newOrder.orderPresetId ? String(newOrder.orderPresetId) : ""}
+                                onValueChange={(v) => {
+                                  const pid = Number(v);
+                                  if (!Number.isFinite(pid) || pid <= 0) {
+                                    setNewOrder((prev) => ({ ...prev, orderPresetId: undefined }));
+                                    setPresetFields([]);
+                                    setCustomFieldInputs({});
+                                    return;
+                                  }
+                                  setDraftRestored(false);
+                                  setNewOrder((prev) => ({ ...emptyOrderDraft(prev.type), statusCode: prev.statusCode, orderPresetId: pid }));
+                                  setCustomFieldInputs({});
+                                  void loadFieldsForPreset(pid);
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Seleccionar preset..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {presets.map((p) => (
+                                    <SelectItem key={p.id} value={String(p.id)}>{p.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            <Label>Estado</Label>
+                            <Select value={newOrder.statusCode} onValueChange={(v) => setNewOrder({ ...newOrder, statusCode: v })}>
+                              <SelectTrigger data-testid="select-order-status">
+                                <SelectValue placeholder="Estado inicial" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {statuses.filter((s) => (s as any).isActive !== false).map((s) => (
+                                  <SelectItem key={s.id} value={String(s.code || "")}>
+                                    {(s as any).label || s.name}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+                      </div>
+
+                      {basePresetFields.length > 0 ? (
+                        <div className="rounded-xl border bg-card p-4 shadow-sm">
+                          <div className="mb-4">
+                            <h3 className="text-sm font-semibold">Campos base</h3>
+                            <p className="text-xs text-muted-foreground">Solo se muestran campos nativos activos, no borrados y visibles en formulario.</p>
+                          </div>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            {basePresetFields.map((field) => (
+                              <div key={field.id} className={getCreateFieldSpanClass(field)}>
+                                {renderPresetField(field)}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+
+                      {addonStatus.delivery && (
+                        <div className="rounded-xl border bg-muted/40 p-4 shadow-sm">
+                          <div className="mb-4 flex items-center justify-between gap-4">
+                            <div className="flex items-center gap-2">
+                              <Truck className="w-4 h-4 text-muted-foreground" />
+                              <div>
+                                <Label className="text-sm">Delivery</Label>
+                                <p className="text-xs text-muted-foreground">Activá la entrega solo si corresponde a este pedido.</p>
+                              </div>
+                            </div>
+                            <Switch
+                              checked={newOrder.requiresDelivery}
+                              onCheckedChange={(v) => setNewOrder({ ...newOrder, requiresDelivery: v })}
+                              data-testid="switch-requires-delivery"
+                            />
+                          </div>
+                          {newOrder.requiresDelivery && (
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Calle y número</Label>
+                                <Input
+                                  placeholder="Ingrese calle"
+                                  value={newOrder.deliveryAddress}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryAddress: e.target.value })}
+                                  data-testid="input-delivery-address"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Ciudad</Label>
+                                <Input
+                                  placeholder="Ciudad"
+                                  value={newOrder.deliveryCity}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryCity: e.target.value })}
+                                  data-testid="input-delivery-city"
+                                />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Notas para el delivery</Label>
+                                <Input
+                                  placeholder="Piso, Depto, Descripción"
+                                  value={newOrder.deliveryAddressNotes}
+                                  onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
+                                  data-testid="input-delivery-notes"
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-4" data-testid="order-create-custom-column">
+                      <div className="rounded-xl border bg-card p-4 shadow-sm">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold">Personalización del preset</h3>
+                            <p className="text-xs text-muted-foreground">Campos custom activos del preset actual, agrupados por sección cuando exista configuración.</p>
+                          </div>
+                          <Badge variant="outline">{customPresetFields.length} campo{customPresetFields.length === 1 ? "" : "s"}</Badge>
+                        </div>
+
+                        {customPresetSections.length === 0 ? (
+                          <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                            Este preset no agrega campos personalizados visibles en formulario.
+                          </div>
                         ) : (
-                          <FileFieldInput
-                            orderId={"new"}
-                            fieldDefinitionId={field.id}
-                            allowedExtensions={field.config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                            onUploadSuccess={() => { }}
-                            onRemove={() => { }}
-                          />
+                          <div className="space-y-4">
+                            {customPresetSections.map((section) => (
+                              <section key={section.key} className="rounded-lg border bg-muted/20 p-4">
+                                <div className="mb-3">
+                                  <h4 className="text-sm font-semibold">{section.label}</h4>
+                                  <p className="text-xs text-muted-foreground">Campos configurados específicamente para este preset.</p>
+                                </div>
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  {section.fields.map((field) => (
+                                    <div key={field.id} className={getCreateFieldSpanClass(field)}>
+                                      {renderPresetField(field)}
+                                    </div>
+                                  ))}
+                                </div>
+                              </section>
+                            ))}
+                          </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-                {addonStatus.delivery && (
-                  <div className="space-y-3 p-3 rounded-md bg-muted/50">
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="flex items-center gap-2">
-                        <Truck className="w-4 h-4 text-muted-foreground" />
-                        <Label className="text-sm">Requiere delivery</Label>
-                      </div>
-                      <Switch
-                        checked={newOrder.requiresDelivery}
-                        onCheckedChange={(v) => setNewOrder({ ...newOrder, requiresDelivery: v })}
-                        data-testid="switch-requires-delivery"
-                      />
                     </div>
-                    {newOrder.requiresDelivery && (
-                      <>
-                        <div className="space-y-2">
-                          <Label>Calle y número</Label>
-                          <Input
-                            placeholder="Ingrese calle"
-                            value={newOrder.deliveryAddress}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryAddress: e.target.value })}
-                            data-testid="input-delivery-address"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Ciudad</Label>
-                          <Input
-                            placeholder="Ciudad"
-                            value={newOrder.deliveryCity}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryCity: e.target.value })}
-                            data-testid="input-delivery-city"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label>Notas para el delivery</Label>
-                          <Input
-                            placeholder="Piso, Depto, Descripción"
-                            value={newOrder.deliveryAddressNotes}
-                            onChange={(e) => setNewOrder({ ...newOrder, deliveryAddressNotes: e.target.value })}
-                            data-testid="input-delivery-notes"
-                          />
-                        </div>
-                      </>
-                    )}
                   </div>
-                )}
-                <Button type="submit" className="w-full" data-testid="button-submit-order">
-                  Crear Pedido
-                </Button>
+                </div>
+                <div className="border-t px-4 py-4 sm:px-6">
+                  <div className="flex justify-end">
+                    <Button type="submit" className="w-full sm:w-auto min-w-[220px]" data-testid="button-submit-order">
+                      Crear Pedido
+                    </Button>
+                  </div>
+                </div>
               </form>
             </DialogContent>
           </Dialog>
@@ -1282,33 +1417,55 @@ export default function OrdersPage() {
 
                 {detailCustomFields.length > 0 && (
                   <div className="space-y-4 border rounded-md p-3">
-                    <p className="text-sm font-medium">Campos del pedido</p>
+                    <p className="text-sm font-medium">Campos adicionales</p>
                     <div className="space-y-3">
                       {detailCustomFields.map((f) => (
                         <div key={`${f.fieldId}-${f.fieldKey || "x"}`} className="text-sm flex flex-col justify-between gap-1 border-b border-muted pb-3 last:border-0 last:pb-0">
                           <span className="text-muted-foreground font-medium">{f.label || f.fieldKey || `Campo ${f.fieldId}`}</span>
                           {f.fieldType === "FILE" ? (
-                            <FileFieldInput
-                              orderId={selectedOrder?.id || "new"}
-                              fieldDefinitionId={f.fieldId}
-                              currentAttachmentId={f.fileStorageKey}
-                              allowedExtensions={(f as any).config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
-                              onUploadSuccess={(attId) => {
-                                if (selectedOrder) openDetail(selectedOrder);
-                              }}
-                              onRemove={async () => {
-                                try {
-                                  if (!f.fileStorageKey || !selectedOrder) return;
-                                  const rawAttId = f.fileStorageKey.replace("att:", "");
-                                  await apiRequest("DELETE", `/api/orders/${selectedOrder.id}/attachments/${rawAttId}`);
-                                  openDetail(selectedOrder);
-                                } catch (e: any) {
-                                  // Handled by toast if needed, but the apiRequest throws if not OK
-                                }
-                              }}
-                            />
+                            parseFileStorageTokens(f.fileStorageKey || null).length > 1 ? (
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                {parseFileStorageTokens(f.fileStorageKey || null).map((token, index) => {
+                                  const storageKey = `${token.kind}:${token.id}`;
+                                  const downloadUrl = buildOrderAttachmentUrl(selectedOrder?.id || "new", storageKey);
+                                  return (
+                                    <a
+                                      key={storageKey}
+                                      href={downloadUrl || "#"}
+                                      target="_blank"
+                                      rel="noreferrer noopener"
+                                      className="rounded-md border px-3 py-2 text-sm hover:bg-muted/40"
+                                    >
+                                      {`${f.label || "Archivo"} ${index + 1}`}
+                                    </a>
+                                  );
+                                })}
+                              </div>
+                            ) : (
+                              <FileFieldInput
+                                orderId={selectedOrder?.id || "new"}
+                                fieldDefinitionId={f.fieldId}
+                                currentAttachmentId={f.fileStorageKey}
+                                currentAttachmentName={String((f as any).valueText || f.label || "Archivo adjunto")}
+                                allowedExtensions={(f as any).config?.allowedExtensions || ["pdf", "docx", "xlsx", "jpg", "png", "jpeg", "jfif"]}
+                                onUploadSuccess={() => {
+                                  if (selectedOrder) openDetail(selectedOrder);
+                                }}
+                                onRemoveSuccess={async () => {
+                                  try {
+                                    if (selectedOrder) await openDetail(selectedOrder);
+                                  } catch (e: any) {
+                                    // refresh best-effort
+                                  }
+                                }}
+                              />
+                            )
                           ) : (
-                            <span className="break-all">{f.valueText || f.valueNumber || "-"}</span>
+                            <span className="break-all">
+                              {f.fieldType === "MONEY"
+                                ? (f.valueNumber ? formatMoneyValue(f.valueNumber) : "-")
+                                : (f.valueText || f.valueNumber || "-")}
+                            </span>
                           )}
                         </div>
                       ))}

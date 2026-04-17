@@ -95,6 +95,8 @@ export class DatabaseStorage implements IStorage {
   getPublicOrderComments = orderStorage.getPublicOrderComments;
   createOrderComment = orderStorage.createOrderComment;
   getOrdersByBranch = orderStorage.getOrdersByBranch;
+  archiveOrder = orderStorage.archiveOrder;
+  softDeleteOrder = orderStorage.softDeleteOrder;
 
   getCashSessions = cashStorage.getCashSessions;
   getOpenSession = cashStorage.getOpenSession;

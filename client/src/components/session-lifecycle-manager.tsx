@@ -1,21 +1,22 @@
 import { useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { stopSessionActivity } from "@/lib/auth";
+import { isPublicRoute, stopSessionActivity } from "@/lib/auth";
 
 export function SessionLifecycleManager() {
   const { toast } = useToast();
 
   useEffect(() => {
+    const isPublicTracking = isPublicRoute(window.location.pathname);
     const storedMessage = sessionStorage.getItem("orbia_logout_message");
-    if (storedMessage) {
+    if (storedMessage && !isPublicTracking) {
       toast({ title: storedMessage });
-      sessionStorage.removeItem("orbia_logout_message");
     }
+    if (storedMessage) sessionStorage.removeItem("orbia_logout_message");
 
     const onLogout = (event: Event) => {
       const detail = (event as CustomEvent<{ message?: string }>).detail;
-      if (detail?.message) {
+      if (detail?.message && !isPublicRoute(window.location.pathname)) {
         toast({ title: detail.message });
       }
     };
@@ -38,24 +39,16 @@ export function SessionLifecycleManager() {
       stopSessionActivity();
     };
 
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        stopSessionActivity();
-      }
-    };
-
     window.addEventListener("orbia:logout", onLogout as EventListener);
     window.addEventListener("offline", onOffline);
     window.addEventListener("online", onOnline);
     window.addEventListener("beforeunload", onBeforeUnload);
-    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       window.removeEventListener("orbia:logout", onLogout as EventListener);
       window.removeEventListener("offline", onOffline);
       window.removeEventListener("online", onOnline);
       window.removeEventListener("beforeunload", onBeforeUnload);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [toast]);
 

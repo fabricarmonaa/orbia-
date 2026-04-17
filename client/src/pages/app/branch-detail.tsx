@@ -81,14 +81,23 @@ export default function BranchDetailPage() {
   const [editingUser, setEditingUser] = useState<BranchUser | null>(null);
   const [editUserForm, setEditUserForm] = useState({ fullName: "", branchId: "" });
   const { toast } = useToast();
+  const isTenantAdmin = user?.role === "admin";
+  const isBranchScopedUser = user?.scope === "BRANCH" && user?.branchId != null;
+  const canViewBranch = isTenantAdmin || isBranchScopedUser;
+  const canManageBranch = isTenantAdmin;
+  const backUrl = canManageBranch ? "/app/branches" : "/app";
 
   useEffect(() => {
-    if (user?.role !== "admin") {
+    if (!canViewBranch) {
       setLocation("/app");
       return;
     }
+    if (isBranchScopedUser && user?.branchId && branchId && Number(branchId) !== Number(user.branchId)) {
+      setLocation(`/app/branches/${user.branchId}`);
+      return;
+    }
     if (branchId) fetchData();
-  }, [branchId, setLocation, user?.role]);
+  }, [branchId, canViewBranch, isBranchScopedUser, setLocation, user?.branchId]);
 
   async function fetchData() {
     try {
@@ -96,12 +105,12 @@ export default function BranchDetailPage() {
         apiRequest("GET", "/api/branches"),
         apiRequest("GET", `/api/branches/${branchId}/orders`),
         apiRequest("GET", `/api/branches/${branchId}/cash/movements`),
-        apiRequest("GET", `/api/branch-users?branchId=${branchId}`),
+        canManageBranch ? apiRequest("GET", `/api/branch-users?branchId=${branchId}`) : Promise.resolve(null),
       ]);
       const branchesData = await branchesRes.json();
       const ordersData = await ordersRes.json();
       const movementsData = await movementsRes.json();
-      const usersData = await usersRes.json();
+      const usersData = usersRes ? await usersRes.json() : { data: [] };
 
       const branchList = branchesData.data || [];
       setBranches(branchList);
@@ -246,7 +255,7 @@ export default function BranchDetailPage() {
     });
   }
 
-  if (user?.role !== "admin") {
+  if (!canViewBranch) {
     return null;
   }
 
@@ -262,7 +271,7 @@ export default function BranchDetailPage() {
   if (!branch) {
     return (
       <div className="space-y-4">
-        <Button variant="ghost" onClick={() => setLocation("/app/branches")} data-testid="button-back-branches">
+        <Button variant="ghost" onClick={() => setLocation(backUrl)} data-testid="button-back-branches">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>
@@ -285,7 +294,7 @@ export default function BranchDetailPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-4 flex-wrap">
-        <Button variant="ghost" onClick={() => setLocation("/app/branches")} data-testid="button-back-branches">
+        <Button variant="ghost" onClick={() => setLocation(backUrl)} data-testid="button-back-branches">
           <ArrowLeft className="w-4 h-4 mr-2" />
           Volver
         </Button>
@@ -313,14 +322,16 @@ export default function BranchDetailPage() {
             </div>
           </div>
         </div>
-        <Button
-          variant="destructive"
-          onClick={() => setShowDeleteBranch(true)}
-          data-testid="button-delete-branch"
-        >
-          <Trash2 className="w-4 h-4 mr-2" />
-          Eliminar sucursal
-        </Button>
+        {canManageBranch ? (
+          <Button
+            variant="destructive"
+            onClick={() => setShowDeleteBranch(true)}
+            data-testid="button-delete-branch"
+          >
+            <Trash2 className="w-4 h-4 mr-2" />
+            Eliminar sucursal
+          </Button>
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -365,9 +376,11 @@ export default function BranchDetailPage() {
           <TabsTrigger value="cash" data-testid="tab-branch-cash">
             Movimientos ({movements.length})
           </TabsTrigger>
-          <TabsTrigger value="users" data-testid="tab-branch-users">
-            Usuarios ({branchUsers.length})
-          </TabsTrigger>
+          {canManageBranch ? (
+            <TabsTrigger value="users" data-testid="tab-branch-users">
+              Usuarios ({branchUsers.length})
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="orders" className="mt-4">
@@ -457,7 +470,7 @@ export default function BranchDetailPage() {
           )}
         </TabsContent>
 
-        <TabsContent value="users" className="mt-4">
+        {canManageBranch ? <TabsContent value="users" className="mt-4">
           <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
             <p className="text-sm text-muted-foreground">
               Usuarios con acceso restringido a esta sucursal
@@ -542,10 +555,10 @@ export default function BranchDetailPage() {
               ))}
             </div>
           )}
-        </TabsContent>
+        </TabsContent> : null}
       </Tabs>
 
-      <Dialog open={showAddUser} onOpenChange={setShowAddUser}>
+      {canManageBranch ? <Dialog open={showAddUser} onOpenChange={setShowAddUser}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Agregar usuario de sucursal</DialogTitle>
@@ -607,9 +620,9 @@ export default function BranchDetailPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
-      <Dialog open={showEditUser} onOpenChange={setShowEditUser}>
+      {canManageBranch ? <Dialog open={showEditUser} onOpenChange={setShowEditUser}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Editar permisos</DialogTitle>
@@ -647,9 +660,9 @@ export default function BranchDetailPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
-      <Dialog open={showDeleteUser} onOpenChange={setShowDeleteUser}>
+      {canManageBranch ? <Dialog open={showDeleteUser} onOpenChange={setShowDeleteUser}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Eliminar usuario</DialogTitle>
@@ -666,9 +679,9 @@ export default function BranchDetailPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
-      <Dialog open={!!tempPassword} onOpenChange={() => setTempPassword(null)}>
+      {canManageBranch ? <Dialog open={!!tempPassword} onOpenChange={() => setTempPassword(null)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Contraseña temporal</DialogTitle>
@@ -698,9 +711,9 @@ export default function BranchDetailPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
 
-      <Dialog open={showDeleteBranch} onOpenChange={setShowDeleteBranch}>
+      {canManageBranch ? <Dialog open={showDeleteBranch} onOpenChange={setShowDeleteBranch}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Eliminar sucursal</DialogTitle>
@@ -728,7 +741,7 @@ export default function BranchDetailPage() {
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+      </Dialog> : null}
     </div>
   );
 }

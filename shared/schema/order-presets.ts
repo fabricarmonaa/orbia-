@@ -15,6 +15,7 @@ import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { tenants } from "./tenants";
 import { orders } from "./orders";
+import { users } from "./users";
 
 // ─────────────────────────────────────────────
 // Order type definitions
@@ -48,6 +49,7 @@ export const orderTypePresets = pgTable(
     label: varchar("label", { length: 200 }).notNull(),
     isActive: boolean("is_active").notNull().default(true),
     sortOrder: integer("sort_order").notNull().default(0),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -76,9 +78,10 @@ export const orderFieldDefinitions = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     isSystemDefault: boolean("is_system_default").notNull().default(false),
     // Etapa B: visibility in public tracking page
-    visibleInTracking: boolean("visible_in_tracking").notNull().default(false),
+    visibleInTracking: boolean("visible_in_tracking").notNull().default(true),
     // Etapa Agenda: si este campo alimenta eventos de agenda automáticamente
     useInAgenda: boolean("use_in_agenda").notNull().default(false),
+    deletedAt: timestamp("deleted_at"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -141,7 +144,7 @@ export type InsertOrderFieldDefinition = z.infer<typeof insertOrderFieldDefiniti
 export type OrderFieldDefinition = typeof orderFieldDefinitions.$inferSelect;
 export type OrderFieldDefinitionPublic = Pick<
   OrderFieldDefinition,
-  "id" | "fieldKey" | "label" | "fieldType" | "required" | "sortOrder" | "config" | "isSystemDefault" | "visibleInTracking" | "useInAgenda" | "presetId"
+  "id" | "fieldKey" | "label" | "fieldType" | "required" | "sortOrder" | "config" | "isSystemDefault" | "visibleInTracking" | "useInAgenda" | "presetId" | "deletedAt"
 >;
 
 export const insertOrderFieldValueSchema = createInsertSchema(orderFieldValues).omit({
@@ -184,3 +187,31 @@ export const insertOrderAttachmentSchema = createInsertSchema(orderAttachments).
 });
 export type InsertOrderAttachment = z.infer<typeof insertOrderAttachmentSchema>;
 export type OrderAttachment = typeof orderAttachments.$inferSelect;
+
+export const orderDraftAttachments = pgTable(
+  "order_draft_attachments",
+  {
+    id: serial("id").primaryKey(),
+    tenantId: integer("tenant_id").references(() => tenants.id, { onDelete: "cascade" }).notNull(),
+    userId: integer("user_id").references(() => users.id, { onDelete: "cascade" }).notNull(),
+    fieldDefinitionId: integer("field_definition_id").references(() => orderFieldDefinitions.id, { onDelete: "cascade" }).notNull(),
+    draftKey: varchar("draft_key", { length: 255 }).notNull(),
+    originalName: varchar("original_name", { length: 260 }).notNull(),
+    storedName: varchar("stored_name", { length: 400 }).notNull(),
+    mimeType: varchar("mime_type", { length: 127 }).notNull(),
+    sizeBytes: integer("size_bytes").notNull(),
+    storagePath: text("storage_path").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("idx_order_draft_attachments_tenant_user").on(table.tenantId, table.userId),
+    index("idx_order_draft_attachments_draft_key").on(table.tenantId, table.userId, table.draftKey),
+  ]
+);
+
+export const insertOrderDraftAttachmentSchema = createInsertSchema(orderDraftAttachments).omit({
+  id: true,
+  createdAt: true,
+});
+export type InsertOrderDraftAttachment = z.infer<typeof insertOrderDraftAttachmentSchema>;
+export type OrderDraftAttachment = typeof orderDraftAttachments.$inferSelect;

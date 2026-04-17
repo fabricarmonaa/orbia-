@@ -94,6 +94,7 @@ export async function createPublicTrialSignup(input: PublicSignupInput) {
       .values({
         tenantId: tenant.id,
         name: "Casa Central",
+        isSystem: true,
         isActive: true,
       })
       .returning({ id: branches.id });

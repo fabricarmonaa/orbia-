@@ -9,7 +9,8 @@ import { login, getToken, getUser } from "@/lib/auth";
 import { useToast } from "@/hooks/use-toast";
 import { useBranding } from "@/context/BrandingContext";
 import { BrandLogo } from "@/components/branding/BrandLogo";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const GOOGLE_AUTH_EVENT_TYPE = "orbia-google-auth";
 
@@ -20,6 +21,7 @@ export default function TenantLogin() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [rememberDevice, setRememberDevice] = useState(true);
   const [mode, setMode] = useState<"admin" | "cashier">("admin");
   const [pin, setPin] = useState("");
   const [forgotOpen, setForgotOpen] = useState(false);
@@ -66,7 +68,7 @@ export default function TenantLogin() {
       const endpoint = mode === "cashier" ? "/api/cashiers/login" : "/api/auth/login";
       const body = mode === "cashier"
         ? { tenant_code: tenantCode, pin }
-        : { tenantCode, email, password };
+        : { tenantCode, email, password, rememberDevice };
       const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -74,7 +76,7 @@ export default function TenantLogin() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Error de autenticación");
-      login(data.token, { ...data.user, subscriptionWarning: data.subscriptionWarning });
+      login(data.token, { ...data.user, subscriptionWarning: data.subscriptionWarning }, data.session || null);
       setLocation("/app");
     } catch (err: any) {
       toast({ title: "Error", description: err.message, variant: "destructive" });
@@ -229,6 +231,13 @@ export default function TenantLogin() {
                       Olvidé mi contraseña
                     </button>
                   </div>
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={rememberDevice}
+                      onCheckedChange={(checked) => setRememberDevice(checked === true)}
+                    />
+                    Recordar este dispositivo
+                  </label>
                 </>
               ) : (
                 <div className="space-y-2">
@@ -271,6 +280,7 @@ export default function TenantLogin() {
           <DialogContent>
             <DialogHeader>
               <DialogTitle>Recuperar contraseña</DialogTitle>
+              <DialogDescription>Ingresá tu correo para recibir un enlace de recuperación.</DialogDescription>
             </DialogHeader>
             <form onSubmit={handleForgotPassword} className="space-y-4">
               <p className="text-sm text-muted-foreground">

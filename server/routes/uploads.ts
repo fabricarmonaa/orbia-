@@ -29,6 +29,9 @@ export function registerStaticUploads(app: Express) {
   app.use("/uploads/profiles", express.static(profileUploadDir));
   app.use("/uploads/delivery", express.static(deliveryUploadDir));
   app.use("/uploads/tenant-logos", express.static(tenantLogoDir));
+  // Compatibilidad legacy de rutas de logo
+  app.use("/uploads/logo", express.static(tenantLogoDir));
+  app.use("/uploads/logos", express.static(tenantLogoDir));
   app.use("/uploads/app", express.static(appLogoDir));
   app.use("/uploads/avatars", express.static(avatarDir));
 }

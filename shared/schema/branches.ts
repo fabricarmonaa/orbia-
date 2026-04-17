@@ -22,6 +22,7 @@ export const branches = pgTable(
     name: varchar("name", { length: 200 }).notNull(),
     address: text("address"),
     phone: varchar("phone", { length: 50 }),
+    isSystem: boolean("is_system").notNull().default(false),
     isActive: boolean("is_active").notNull().default(true),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     deletedAt: timestamp("deleted_at"),

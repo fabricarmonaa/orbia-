@@ -40,3 +40,4 @@ export * from './schema/whatsapp';
 
 export * from './schema/password-resets';
 export * from './schema/google';
+export * from './schema/auth-sessions';

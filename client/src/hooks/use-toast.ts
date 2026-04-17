@@ -5,8 +5,8 @@ import type {
   ToastProps,
 } from "@/components/ui/toast"
 
-const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+const TOAST_LIMIT = 3
+const TOAST_REMOVE_DELAY = 4000
 
 type ToasterToast = ToastProps & {
   id: string
@@ -74,9 +74,14 @@ const addToRemoveQueue = (toastId: string) => {
 export const reducer = (state: State, action: Action): State => {
   switch (action.type) {
     case "ADD_TOAST":
+      const deduped = state.toasts.filter((toast) => {
+        const sameTitle = String(toast.title ?? "") === String(action.toast.title ?? "")
+        const sameDescription = String(toast.description ?? "") === String(action.toast.description ?? "")
+        return !(sameTitle && sameDescription)
+      })
       return {
         ...state,
-        toasts: [action.toast, ...state.toasts].slice(0, TOAST_LIMIT),
+        toasts: [action.toast, ...deduped].slice(0, TOAST_LIMIT),
       }
 
     case "UPDATE_TOAST":
@@ -155,11 +160,16 @@ function toast({ ...props }: Toast) {
       ...props,
       id,
       open: true,
+      duration: props.duration ?? TOAST_REMOVE_DELAY,
       onOpenChange: (open) => {
         if (!open) dismiss()
       },
     },
   })
+
+  window.setTimeout(() => {
+    dismiss()
+  }, props.duration ?? TOAST_REMOVE_DELAY)
 
   return {
     id: id,
